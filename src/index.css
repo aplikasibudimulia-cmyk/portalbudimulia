@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+}

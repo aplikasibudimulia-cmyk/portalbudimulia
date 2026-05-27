@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"$img = [System.Drawing.Image]::FromFile\\('C:\\\\Users\\\\Gesta\\\\Pictures\\\\Screenshots\\\\Screenshot 2026-05-26 231353.png'\\); $w = $img.Width; $h = $img.Height; $img.Dispose\\(\\); $ratio = 1800.0/$w; $newH = [int]\\($h*$ratio\\); $bmp = New-Object System.Drawing.Bitmap\\($img2 = [System.Drawing.Image]::FromFile\\('C:\\\\Users\\\\Gesta\\\\Pictures\\\\Screenshots\\\\Screenshot 2026-05-26 231353.png'\\), 1800, $newH\\); $bmp.Save\\('C:\\\\Users\\\\Gesta\\\\Pictures\\\\Screenshots\\\\ss_resized.png'\\); $bmp.Dispose\\(\\); $img2.Dispose\\(\\); Write-Host 'done'\")",
+      "Bash(powershell -File - << 'EOF'\nAdd-Type -AssemblyName System.Drawing\n$src = 'C:\\\\Users\\\\Gesta\\\\Pictures\\\\Screenshots\\\\Screenshot 2026-05-26 231353.png'\n$dst = 'C:\\\\Users\\\\Gesta\\\\Pictures\\\\Screenshots\\\\ss_resized.png'\n$orig = [System.Drawing.Image]::FromFile\\($src\\)\n$ratio = 1800.0 / $orig.Width\n$newH = [int]\\($orig.Height * $ratio\\)\n$bmp = New-Object System.Drawing.Bitmap $orig, 1800, $newH\n$bmp.Save\\($dst\\)\n$orig.Dispose\\(\\); $bmp.Dispose\\(\\)\nWrite-Host \"done\"\nEOF)"
+    ]
+  }
+}
