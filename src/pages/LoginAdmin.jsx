@@ -64,7 +64,7 @@ function LoginAdmin() {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
 
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md animate-slide-up">
 
         <div className="text-center mb-8">
           <div className="inline-flex flex-col items-center gap-2 mb-2">
@@ -151,7 +151,7 @@ function LoginAdmin() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-6">
-          &copy; {new Date().getFullYear()} Portal SKL. All rights reserved.
+          &copy; {new Date().getFullYear()} SIAKD SMP Budi Mulia Jakarta. All rights reserved.
         </p>
       </div>
     </div>
