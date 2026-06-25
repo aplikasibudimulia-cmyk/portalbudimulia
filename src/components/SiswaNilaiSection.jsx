@@ -42,14 +42,14 @@ export default function SiswaNilaiSection({ studentData }) {
         nilai,
         nilai_komponen!inner (
           id,
-          nama_komponen,
+          nama,
           mata_pelajaran_id,
           is_nilai_visible,
           semester_id,
           mata_pelajaran (nama)
         )
       `)
-      .eq('nisn', studentData.nisn)
+      .eq('siswa_nisn', studentData.nisn)
       .eq('nilai_komponen.semester_id', selectedSemesterId)
       .eq('nilai_komponen.is_nilai_visible', true)
 
@@ -72,7 +72,7 @@ export default function SiswaNilaiSection({ studentData }) {
   const sortedMapels = Object.keys(mapelGroups).sort()
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
       <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Nilai Saya</h2>
@@ -123,8 +123,8 @@ export default function SiswaNilaiSection({ studentData }) {
                 <div className="divide-y divide-slate-100">
                   {mapelGroups[mapel].map((g, idx) => (
                     <div key={g.id || idx} className="flex justify-between items-center px-5 py-3 hover:bg-slate-50/50 transition-colors">
-                      <span className="text-sm font-medium text-slate-600">{g.nilai_komponen?.nama_komponen}</span>
-                      <span className="text-base font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-lg">{g.nilai}</span>
+                      <span className="text-sm font-medium text-slate-600">{g.nilai_komponen?.nama}</span>
+                      <span className="text-base font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-2xl">{g.nilai}</span>
                     </div>
                   ))}
                 </div>

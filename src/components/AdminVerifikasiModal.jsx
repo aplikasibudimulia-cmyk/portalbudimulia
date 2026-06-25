@@ -54,18 +54,14 @@ export default function AdminVerifikasiModal({ type, students, onClose }) {
     // We update the DB
     try {
       for (const kode of validKodes) {
-        const { error } = await supabase.from('berkas_pengumuman')
-          .update({ persyaratan_terpenuhi: verifikasiData[kode] })
-          .eq('kode_siswa', kode)
-          .eq('kode_jenis', type.kode_jenis)
+        const { error } = await supabase.from('berkas_pengumuman').upsert({
+          kode_siswa: kode,
+          kode_jenis: type.kode_jenis,
+          persyaratan_terpenuhi: verifikasiData[kode]
+        }, { onConflict: 'kode_siswa,kode_jenis' })
         
-        // If row doesn't exist, upsert instead
         if (error) {
-          await supabase.from('berkas_pengumuman').upsert({
-             kode_siswa: kode,
-             kode_jenis: type.kode_jenis,
-             persyaratan_terpenuhi: verifikasiData[kode]
-          }, { onConflict: 'kode_siswa,kode_jenis' })
+          console.error('Verifikasi Error:', error)
         }
       }
       logActivity({ userRole: 'Administrator', action: 'Verifikasi Persyaratan', details: `Memperbarui verifikasi persyaratan untuk dokumen ${type.nama}.` })
@@ -93,7 +89,7 @@ export default function AdminVerifikasiModal({ type, students, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-5xl h-[90vh] flex flex-col animate-scale-in">
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-5xl h-[90vh] flex flex-col animate-scale-in">
         <div className="p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div>
             <h2 className="text-xl font-bold text-slate-800">Verifikasi Persyaratan: {type.nama}</h2>
@@ -115,7 +111,7 @@ export default function AdminVerifikasiModal({ type, students, onClose }) {
           <div className="flex gap-2">
             <span className="text-xs font-medium text-slate-500 self-center mr-2">Aksi Massal (Hasil Filter):</span>
             {reqs.map(req => (
-              <div key={req.id} className="flex gap-1 border border-slate-200 rounded-lg overflow-hidden bg-white">
+              <div key={req.id} className="flex gap-1 border border-slate-200 rounded-2xl overflow-hidden bg-white">
                 <button 
                   onClick={() => handleBulkToggle(req.id, true)} 
                   className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100"

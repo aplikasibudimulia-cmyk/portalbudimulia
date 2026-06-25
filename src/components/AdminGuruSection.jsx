@@ -365,7 +365,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mb-6">
+      <div className="bg-white border-none rounded-xl shadow-sm overflow-hidden mb-6">
         <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
           <h3 className="font-semibold text-slate-800 text-sm">Daftar Guru / Staff</h3>
         </div>
@@ -447,8 +447,8 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
                       </td>
                       <td className="px-5 py-3 text-center sticky right-0 bg-white shadow-[-4px_0_10px_rgba(0,0,0,0.05)] z-10 group-hover:bg-slate-50">
                         <div className="flex justify-center gap-2">
-                          <button onClick={() => handleEdit(guru)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
-                          <button onClick={() => handleDelete(guru.id, guru.nama_guru)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+                          <button onClick={() => handleEdit(guru)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-colors"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                          <button onClick={() => handleDelete(guru.id, guru.nama_guru)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-colors"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
                         </div>
                       </td>
                     </tr>
@@ -462,10 +462,10 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
 
       {showModal && formData && createPortal(
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] animate-fade-in">
+          <div className="bg-white rounded-xl w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] animate-fade-in">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0">
               <h3 className="font-bold text-lg text-slate-800">{formData.id ? 'Edit Guru' : 'Tambah Guru'}</h3>
-              <button onClick={() => setShowModal(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+              <button onClick={() => setShowModal(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-2xl hover:bg-slate-100"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
             </div>
             
             <form id="guru-form" onSubmit={handleSave} className="p-5 overflow-y-auto space-y-5">
@@ -485,7 +485,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
                   
                   {!isUploadingPhoto && (
                     <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
@@ -498,22 +498,22 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Kode <span className="text-red-500">*</span></label>
-                  <input type="text" required value={formData.kode} onChange={e => setFormData({...formData, kode: e.target.value})} placeholder="g02026" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <input type="text" required value={formData.kode} onChange={e => setFormData({...formData, kode: e.target.value})} placeholder="g02026" className="w-full px-3 py-2 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Nama Lengkap <span className="text-red-500">*</span></label>
-                  <input type="text" required value={formData.nama_guru} onChange={e => setFormData({...formData, nama_guru: e.target.value})} placeholder="Nama Guru" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <input type="text" required value={formData.nama_guru} onChange={e => setFormData({...formData, nama_guru: e.target.value})} placeholder="Nama Guru" className="w-full px-3 py-2 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Username Login <span className="text-red-500">*</span></label>
-                  <input type="text" required value={formData.user_name} onChange={e => setFormData({...formData, user_name: e.target.value})} placeholder="ebm..." className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <input type="text" required value={formData.user_name} onChange={e => setFormData({...formData, user_name: e.target.value})} placeholder="ebm..." className="w-full px-3 py-2 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Kode Akses / Pass <span className="text-red-500">*</span></label>
-                  <input type="text" required value={formData.kode_akses} onChange={e => setFormData({...formData, kode_akses: e.target.value})} placeholder="Password" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <input type="text" required value={formData.kode_akses} onChange={e => setFormData({...formData, kode_akses: e.target.value})} placeholder="Password" className="w-full px-3 py-2 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
                 </div>
               </div>
 
@@ -523,7 +523,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
                   {roles.map(r => {
                     const checked = formData.role_ids.includes(r.id)
                     return (
-                      <label key={r.id} className={`flex items-center gap-2 p-2 border rounded-lg cursor-pointer transition-colors ${checked ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                      <label key={r.id} className={`flex items-center gap-2 p-2 border rounded-2xl cursor-pointer transition-colors ${checked ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'}`}>
                         <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500" checked={checked} 
                           onChange={(e) => {
                             if (e.target.checked) setFormData({...formData, role_ids: [...formData.role_ids, r.id]})
@@ -539,14 +539,17 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
 
               {activeTa ? (
                 <div className="space-y-4">
-                  {formData.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && (
+                  {formData.role_ids.some(rid => {
+                    const r = roles.find(role => role.id === rid)
+                    return r && r.nama?.toLowerCase().includes('wali')
+                  }) && (
                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
                       <label className="block text-sm font-semibold text-slate-800 mb-2">Penugasan Wali Kelas (TA: {activeTa.nama})</label>
                       <div className="flex flex-wrap gap-2">
                         {classes.map(k => {
                           const checked = formData.kelas_assigned.includes(k)
                           return (
-                            <label key={k} className={`flex items-center justify-center px-3 py-1.5 border rounded-lg cursor-pointer transition-colors ${checked ? 'bg-indigo-600 border-indigo-600 text-white font-medium' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'}`}>
+                            <label key={k} className={`flex items-center justify-center px-3 py-1.5 border rounded-2xl cursor-pointer transition-colors ${checked ? 'bg-indigo-600 border-indigo-600 text-white font-medium' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'}`}>
                               <input type="checkbox" className="sr-only" checked={checked}
                                 onChange={(e) => {
                                   if (e.target.checked) setFormData({...formData, kelas_assigned: [...formData.kelas_assigned, k]})
@@ -576,7 +579,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
                     ) : (
                       <div className="space-y-3">
                         {formData.mapel_assigned.map((ma, index) => (
-                          <div key={index} className="bg-white p-3 rounded-lg border border-slate-200">
+                          <div key={index} className="bg-white p-3 rounded-2xl border border-slate-200">
                             <div className="flex gap-2 mb-2">
                               <select value={ma.mapel_id} onChange={(e) => {
                                 const newMapels = [...formData.mapel_assigned]
@@ -633,7 +636,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
                   </div>
                 </div>
               ) : (
-                 <div className="p-3 bg-amber-50 text-amber-700 text-sm rounded-lg border border-amber-200">
+                 <div className="p-3 bg-amber-50 text-amber-700 text-sm rounded-2xl border border-amber-200">
                    Tidak dapat assign kelas karena tidak ada Tahun Ajaran aktif.
                  </div>
               )}

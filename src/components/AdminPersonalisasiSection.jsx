@@ -102,7 +102,7 @@ export default function AdminPersonalisasiSection() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
+      <div className="bg-white border-none rounded-xl shadow-sm p-6">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Pengumuman Dashboard Siswa</h3>
         <p className="text-sm text-slate-500 mb-4">Pesan ini akan langsung terlihat di beranda utama ketika siswa berhasil login.</p>
         <textarea 
@@ -114,7 +114,7 @@ export default function AdminPersonalisasiSection() {
         />
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
+      <div className="bg-white border-none rounded-xl shadow-sm p-6">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Tampilan Profil Beranda Siswa</h3>
         <p className="text-sm text-slate-500 mb-4">Pilih informasi apa saja yang akan ditampilkan di header profil pada Dashboard Siswa (Beranda).</p>
         
@@ -142,7 +142,7 @@ export default function AdminPersonalisasiSection() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
+      <div className="bg-white border-none rounded-xl shadow-sm p-6">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Tema Warna Aplikasi</h3>
         <p className="text-sm text-slate-500 mb-4">Pilih aksen warna yang akan digunakan di seluruh aplikasi, baik untuk panel admin, guru, maupun dashboard siswa.</p>
         

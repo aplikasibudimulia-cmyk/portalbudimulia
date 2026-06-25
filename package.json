@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -12,8 +12,10 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",
     "bcryptjs": "^3.0.3",
+    "html5-qrcode": "^2.3.8",
     "jspdf": "^4.2.1",
     "papaparse": "^5.5.3",
+    "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-pdf": "^10.4.1",
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",

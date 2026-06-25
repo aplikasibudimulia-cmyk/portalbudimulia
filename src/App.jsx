@@ -7,6 +7,7 @@ import Admin from './pages/Admin'
 import LoginAdmin from './pages/LoginAdmin'
 import DashboardGuru from './pages/DashboardGuru'
 import Impersonate from './pages/Impersonate'
+import PresensiTV from './pages/PresensiTV'
 
 function App() {
   useEffect(() => {
@@ -28,6 +29,7 @@ function App() {
         <Route path="/login-admin" element={<LoginAdmin />} />
         <Route path="/dashboard-guru" element={<DashboardGuru />} />
         <Route path="/impersonate" element={<Impersonate />} />
+        <Route path="/presensi-tv" element={<PresensiTV />} />
       </Routes>
     </BrowserRouter>
   )

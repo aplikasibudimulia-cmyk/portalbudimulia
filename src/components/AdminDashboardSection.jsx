@@ -58,18 +58,18 @@ export default function AdminDashboardSection() {
 
   return (
     <div className="animate-slide-up space-y-6">
-      <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 md:p-8 shadow-lg text-white relative overflow-hidden">
+      <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-6 md:p-8 shadow-lg text-white relative overflow-hidden">
         <div className="relative z-10">
           <h2 className="text-2xl md:text-3xl font-bold mb-2">Statistik Utama</h2>
           <p className="text-slate-300 text-sm md:text-base max-w-xl">
-            Ringkasan data operasional SIAKD SMP Budi Mulia Jakarta saat ini.
+            Ringkasan data operasional eBudiMulia SMP Budi Mulia Jakarta saat ini.
           </p>
         </div>
         <svg className="absolute right-0 bottom-0 opacity-10 w-64 h-64 -mb-16 -mr-16 transform rotate-12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 22h20L12 2zm0 3.8l7.5 14.2H4.5L12 5.8z"/></svg>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-4">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start gap-4">
           <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
             <IconUsers />
           </div>
@@ -79,7 +79,7 @@ export default function AdminDashboardSection() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-4">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start gap-4">
           <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
             <IconTeacher />
           </div>
@@ -89,7 +89,7 @@ export default function AdminDashboardSection() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-4">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start gap-4">
           <div className="w-12 h-12 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
             <IconShield />
           </div>
@@ -99,7 +99,7 @@ export default function AdminDashboardSection() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-4">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start gap-4">
           <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
             <IconFile />
           </div>
@@ -110,7 +110,7 @@ export default function AdminDashboardSection() {
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <h3 className="font-bold text-slate-800 mb-4">Aktivitas Berkas</h3>
         <div className="flex items-center gap-6">
           <div className="relative w-32 h-32 flex items-center justify-center">

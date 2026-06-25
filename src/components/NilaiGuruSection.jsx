@@ -366,12 +366,12 @@ export default function NilaiGuruSection({ session, activeTa }) {
       </div>
       
       {/* Context Selectors */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4 shadow-sm">
+      <div className="bg-white border-none rounded-xl p-4 mb-4 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Kelas</label>
             <select value={selectedKelas} onChange={e => setSelectedKelas(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500">
               <option value="">-- Pilih Kelas --</option>
               {allKelas.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
@@ -380,7 +380,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Mata Pelajaran</label>
             <select value={selectedMapelId} onChange={e => setSelectedMapelId(e.target.value)}
               disabled={!selectedKelas}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+              className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
               <option value="">-- Pilih Mapel --</option>
               {mapelsForKelas.map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
             </select>
@@ -389,7 +389,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Semester</label>
             <select value={selectedSemesterId} onChange={e => setSelectedSemesterId(e.target.value)}
               disabled={semesters.length === 0}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+              className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
               <option value="">-- Pilih Semester --</option>
               {semesters.map(s => (
                 <option key={s.id} value={s.id}>
@@ -427,14 +427,14 @@ export default function NilaiGuruSection({ session, activeTa }) {
         <div className="flex flex-col gap-4">
           
           {/* Komponen Nilai Manager */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white border-none rounded-xl shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
               <div>
                 <p className="text-sm font-bold text-slate-800">Komponen Nilai</p>
                 <p className="text-xs text-slate-500 mt-0.5">Tambah/hapus komponen nilai untuk mapel ini</p>
               </div>
               <button onClick={() => setShowAddKomponen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors shadow-sm">
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-2xl transition-colors shadow-sm">
                 <IconPlus /> Tambah Komponen
               </button>
             </div>
@@ -446,21 +446,21 @@ export default function NilaiGuruSection({ session, activeTa }) {
                   <input value={newKomponenNama} onChange={e => setNewKomponenNama(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleAddKomponen()}
                     placeholder="Cth: TP1, PH, PTS, Tugas Harian..."
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                    className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                 </div>
                 <div className="w-24">
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Bobot</label>
                   <input type="number" value={newKomponenBobot} onChange={e => setNewKomponenBobot(e.target.value)}
                     min="0.1" step="0.1"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                    className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                 </div>
                 <div className="flex gap-2 shrink-0">
                   <button onClick={handleAddKomponen} disabled={addingKomponen || !newKomponenNama.trim()}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg disabled:opacity-50">
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-2xl disabled:opacity-50">
                     {addingKomponen ? '...' : 'Simpan'}
                   </button>
                   <button onClick={() => { setShowAddKomponen(false); setNewKomponenNama(''); setNewKomponenBobot('1') }}
-                    className="px-3 py-2 text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 text-xs font-medium rounded-lg">
+                    className="px-3 py-2 text-slate-600 bg-white border-none hover:bg-slate-50 text-xs font-medium rounded-2xl">
                     Batal
                   </button>
                 </div>
@@ -484,7 +484,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                       <button
                         onClick={() => handleToggleVisible(k)}
                         title={k.is_nilai_visible ? 'Nilai terlihat siswa — klik untuk sembunyikan' : 'Nilai disembunyikan dari siswa — klik untuk tampilkan'}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-semibold transition-colors border ${
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded-2xl text-xs font-semibold transition-colors border ${
                           k.is_nilai_visible
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                             : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
@@ -494,7 +494,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                         {k.is_nilai_visible ? 'Terlihat Siswa' : 'Disembunyikan'}
                       </button>
                       <button onClick={() => handleDeleteKomponen(k.id)}
-                        className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-2xl transition-colors">
                         <IconTrash />
                       </button>
                     </div>
@@ -524,7 +524,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
               )}
               
               {uploadResult && (
-                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium ${uploadResult.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-medium ${uploadResult.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                   {uploadResult.error
                     ? `❌ ${uploadResult.error}`
                     : `✅ Berhasil: ${uploadResult.success} | Gagal: ${uploadResult.failed} | Dilewati: ${uploadResult.skipped}`
@@ -537,7 +537,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
           
           {/* Tabel Nilai */}
           {komponen.length > 0 && students.length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-white border-none rounded-xl shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/70">
                 <p className="text-sm font-bold text-slate-800">Tabel Nilai — {selectedKelas} | {selectedMapelNama} | Semester {selectedSemesterObj?.nomor}</p>
                 <p className="text-xs text-slate-500 mt-0.5">Klik nilai untuk mengedit langsung. Auto-save setelah selesai mengetik.</p>
@@ -593,7 +593,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                                     onKeyDown={e => {
                                       if (e.key === 'Enter') e.target.blur()
                                     }}
-                                    className="w-16 text-center text-xs font-bold px-1 py-1.5 border border-transparent rounded-lg bg-transparent hover:border-indigo-300 hover:bg-indigo-50 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                                    className="w-16 text-center text-xs font-bold px-1 py-1.5 border border-transparent rounded-2xl bg-transparent hover:border-indigo-300 hover:bg-indigo-50 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
                                     placeholder="—"
                                   />
                                   {isSaving && (

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import SiswaNilaiSection from '../components/SiswaNilaiSection'
+import SiswaPresensiSection from '../components/SiswaPresensiSection'
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -10,15 +11,17 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [menuTypes, setMenuTypes] = useState([])
   
-  // Sidebar state for mobile
+  // Sidebar state for mobile and desktop collapse
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // Default to collapsed as requested
   
-  // Instead of auto-selecting the first menu, we can make 'null' mean Beranda
   const [selectedType, setSelectedType] = useState(null)
   const [pdfUrl, setPdfUrl] = useState(null)
   const [accessBlocked, setAccessBlocked] = useState(false)
   const [refreshBerkas, setRefreshBerkas] = useState(0)
   const [error, setError] = useState(null)
+  const [studentBerkas, setStudentBerkas] = useState(null)
+  const [isStatusExpanded, setIsStatusExpanded] = useState(false)
 
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
@@ -27,6 +30,7 @@ function Dashboard() {
   const [passwordSuccess, setPasswordSuccess] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [pengumuman, setPengumuman] = useState('')
+  const [loggedTypes, setLoggedTypes] = useState([])
 
   // Photo fallback logic
   const DEFAULT_AVATAR = "https://ui-avatars.com/api/?name=Siswa&background=eff6ff&color=2563eb&size=150"
@@ -135,40 +139,65 @@ function Dashboard() {
         .select('*')
         .eq('kode_siswa', studentData.kode)
         .eq('kode_jenis', selectedType.kode_jenis)
-        .single()
+        .maybeSingle()
+        
+      setStudentBerkas(berkas)
 
-      if (berkas && !berkas.is_accessible) {
-        setPdfUrl(null)
-        setError(null)
-        setAccessBlocked(true)
-        return
-      }
-
-      // Cek Persyaratan
+      // LANGKAH 1: Cek Persyaratan terlebih dahulu
+      // Jika ada persyaratan, semua harus terpenuhi (dicentang admin/guru)
       if (selectedType.persyaratan && selectedType.persyaratan.length > 0) {
         const terpenuhi = berkas?.persyaratan_terpenuhi || {}
         const belumTerpenuhi = selectedType.persyaratan.filter(req => !terpenuhi[req.id])
         if (belumTerpenuhi.length > 0) {
           setPdfUrl(null)
           setAccessBlocked(false)
-          const messages = belumTerpenuhi.map(req => `• ${req.info_gagal || `Akses diblokir karena syarat "${req.nama}" belum terpenuhi.`}`)
-          setError('Akses ditangguhkan karena alasan berikut:\n' + messages.join('\n'))
+          setError('Akses ditangguhkan. Cek Prasyarat Akses.')
           return
         }
       }
 
-      if (berkas && berkas.file_url) {
+      // LANGKAH 2: Cek apakah admin memblokir akses secara individual (is_accessible = false)
+      // Hanya blokir jika record ada DAN is_accessible secara eksplisit = false
+      if (berkas && berkas.is_accessible === false) {
+        setPdfUrl(null)
+        setError(null)
+        setAccessBlocked(true)
+        return
+      }
+
+      // LANGKAH 3: Semua syarat terpenuhi & tidak diblokir — tampilkan dokumen atau pesan belum upload
+      const fileUrl = berkas?.file_url
+      const hasFile = fileUrl && fileUrl !== '-'
+      if (hasFile) {
         setAccessBlocked(false)
         setError(null)
-        setPdfUrl(berkas.file_url)
+        setPdfUrl(fileUrl)
+        
+        logActivity({
+          userRole: 'Siswa',
+          action: 'Unduh Dokumen',
+          details: `Siswa ${studentData.nama_lengkap} membuka dokumen ${selectedType.nama} di browser.`
+        })
       } else {
+        // Persyaratan sudah terpenuhi, tapi dokumen belum diupload oleh sekolah
         setPdfUrl(null)
         setAccessBlocked(false)
-        setError('Dokumen belum tersedia. Silakan hubungi pihak sekolah.')
+        setError('Dokumen belum diunggah oleh sekolah. Silakan cek kembali nanti.')
       }
     }
     checkFileExists()
   }, [selectedType, studentData, refreshBerkas])
+
+  useEffect(() => {
+    if (pdfUrl && selectedType && studentData && !loggedTypes.includes(selectedType.id)) {
+      logActivity({
+        userRole: 'Siswa',
+        action: 'Unduh Dokumen',
+        details: `Siswa ${studentData.nama_lengkap} membuka/mengakses dokumen ${selectedType.nama}.`
+      })
+      setLoggedTypes(prev => [...prev, selectedType.id])
+    }
+  }, [pdfUrl, selectedType, studentData, loggedTypes])
 
   // Polling setiap 1.5 detik agar perubahan dari Admin langsung terasa di siswa
   useEffect(() => {
@@ -197,6 +226,7 @@ function Dashboard() {
 
       setSelectedType(prev => {
         if (!prev) return null
+        if (typeof prev === 'string') return prev // Jangan reset jika PRESENSI atau NILAI
         const updated = applicableTypes.find(t => t.id === prev.id)
         if (!updated) return null
         if (JSON.stringify(updated) === JSON.stringify(prev)) return prev
@@ -304,9 +334,8 @@ function Dashboard() {
   // Either global profile wants it shown OR the current menu type specifically wants it shown
   const isNisnVisible = showProfileConfig.nisn || showNisnMenu
   const isNipdVisible = showProfileConfig.nipd || showNipdMenu
-
   const studentInfoCard = studentData && (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8">
       <div className="flex items-center gap-5 mb-6">
         {showProfileConfig.foto && (
           <img src={photoUrls[photoIndex] || DEFAULT_AVATAR} alt={studentData.nama_lengkap}
@@ -330,19 +359,19 @@ function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {isNisnVisible && (
           <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-400 font-medium mb-1">NISN</p>
+            <p className="text-xs text-slate-500 font-medium mb-1">NISN</p>
             <p className="text-sm font-bold text-slate-700">{studentData.nisn ?? '—'}</p>
           </div>
         )}
         {isNipdVisible && (
           <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-400 font-medium mb-1">NIPD</p>
+            <p className="text-xs text-slate-500 font-medium mb-1">NIPD</p>
             <p className="text-sm font-bold text-slate-700">{studentData.nipd ?? '—'}</p>
           </div>
         )}
         {showTahunLulusMenu && (
           <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
-            <p className="text-xs text-slate-400 font-medium mb-1">Tahun Lulus</p>
+            <p className="text-xs text-slate-500 font-medium mb-1">Tahun Lulus</p>
             <p className="text-sm font-bold text-slate-700">{studentData.tahun_lulus ?? '—'}</p>
           </div>
         )}
@@ -377,59 +406,72 @@ function Dashboard() {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 transform transition-transform duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${sidebarOpen ? 'translate-x-0' : '-translate-x-[150%]'} ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
         
         {/* Sidebar Header */}
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl border border-slate-200 shadow-sm flex items-center justify-center bg-white p-1">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
-            </div>
-            <div>
-              <h2 className="font-bold text-base text-slate-800 leading-tight">SIAKD</h2>
-              <p className="text-xs font-medium text-slate-500">SMP Budi Mulia Jakarta</p>
-            </div>
+        <div className={`px-4 py-6 flex items-center shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-3'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
+            {!sidebarCollapsed && (
+              <div className="animate-fade-in whitespace-nowrap">
+                <h2 className="font-bold text-base text-slate-800 leading-tight">eBudiMulia</h2>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">SMP Budi Mulia</p>
+              </div>
+            )}
           </div>
-          <button className="md:hidden p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
+          {!sidebarCollapsed && (
+            <button className="md:hidden p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors" onClick={() => setSidebarOpen(false)}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          )}
         </div>
         
         {/* Sidebar Menu */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-6 scrollbar-hide">
           
           <div>
-            <div className="px-3 mb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Menu Utama</div>
-            <div className="space-y-1">
+            {!sidebarCollapsed && <div className="px-3 mb-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Menu Utama</div>}
+            <div className="space-y-2">
               <button 
                 onClick={() => { setSelectedType(null); setSidebarOpen(false) }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${!selectedType ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                title="Beranda"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${!selectedType ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
               >
-                <svg className={`w-5 h-5 ${!selectedType ? 'text-indigo-600' : 'text-slate-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-                Beranda
+                <svg className={`w-6 h-6 shrink-0 ${!selectedType ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
+              </button>
+              <button 
+                onClick={() => { setSelectedType('PRESENSI'); setSidebarOpen(false) }}
+                title="Presensi Hari Ini"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'PRESENSI' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PRESENSI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi Hari Ini</span>}
               </button>
               <button 
                 onClick={() => { setSelectedType('NILAI'); setSidebarOpen(false) }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${selectedType === 'NILAI' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                title="Nilai Saya"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'NILAI' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
               >
-                <svg className={`w-5 h-5 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
-                Nilai Saya
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Saya</span>}
               </button>
             </div>
           </div>
 
           {menuTypes.length > 0 && (
             <div>
-              <div className="px-3 mb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pengumuman & Dokumen</div>
-              <div className="space-y-1">
+              {!sidebarCollapsed && <div className="px-3 mb-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-6">Dokumen</div>}
+              <div className="space-y-2">
                 {menuTypes.map(type => (
                   <button 
                     key={type.id} 
+                    title={type.nama}
                     onClick={() => { setSelectedType(type); setSidebarOpen(false) }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${selectedType?.id === type.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                    className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType?.id === type.id ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
                   >
-                    <svg className={`w-5 h-5 shrink-0 ${selectedType?.id === type.id ? 'text-indigo-600' : 'text-slate-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                    <span className="truncate text-left">{type.nama}</span>
+                    <svg className={`w-6 h-6 shrink-0 ${selectedType?.id === type.id ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate text-left">{type.nama}</span>}
                   </button>
                 ))}
               </div>
@@ -439,26 +481,28 @@ function Dashboard() {
         </div>
 
         {/* Sidebar Footer Actions */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50 space-y-2 shrink-0">
+        <div className="p-4 space-y-3 shrink-0">
+           
            <button onClick={() => { setShowPasswordModal(true); setSidebarOpen(false); }}
-             className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-             <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-             Ubah Kode Akses
+             title="Ubah Kode Akses"
+             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
+             <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+             {!sidebarCollapsed && <span className="animate-fade-in">Kode Akses</span>}
            </button>
            <button onClick={handleLogout}
-             className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-all">
-             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-             Keluar Sistem
+             title="Keluar"
+             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-rose-500 hover:bg-rose-100 hover:text-rose-600 transition-all ${sidebarCollapsed ? 'justify-center aspect-square px-0 bg-red-50' : 'gap-4 bg-red-50'}`}>
+             <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+             {!sidebarCollapsed && <span className="animate-fade-in">Keluar</span>}
            </button>
         </div>
-
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50">
         
         {/* Mobile Header */}
-        <div className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 shadow-sm shrink-0">
+        <div className="md:hidden flex items-center justify-between px-4 py-3 bg-transparent border-none shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-slate-500 hover:text-slate-700 bg-slate-50 rounded-lg">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -480,10 +524,109 @@ function Dashboard() {
             {/* Konten Spesifik per Menu */}
             {selectedType === 'NILAI' ? (
               <SiswaNilaiSection studentData={studentData} />
+            ) : selectedType === 'PRESENSI' ? (
+              <SiswaPresensiSection studentData={studentData} />
             ) : selectedType ? (
-              <div>
+              <div className="space-y-6">
+                
+                {/* Status Dokumen & Prasyarat Card */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in transition-all duration-300">
+                  <div 
+                    onClick={() => setIsStatusExpanded(!isStatusExpanded)}
+                    className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        Status Dokumen
+                      </h3>
+                      {!isStatusExpanded && (
+                        <p className="text-xs font-semibold text-slate-500">
+                          {studentBerkas?.file_url && studentBerkas.file_url !== '-' ? 'DOKUMEN TERSEDIA' : 'DOKUMEN BELUM DIUNGGAH'} | {' '}
+                          <span className={!accessBlocked && !error && pdfUrl ? 'text-green-600' : 'text-red-500'}>
+                            {!accessBlocked && !error && pdfUrl ? 'AKSES TERBUKA' : 'AKSES TERTUTUP'}
+                          </span>{' '}
+                          &mdash; <span className="text-indigo-500">KLIK UNTUK DETAIL</span>
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {isStatusExpanded && (
+                        <span className={`px-3 py-1 text-xs font-bold rounded-full ${!accessBlocked && !error && pdfUrl ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                          {!accessBlocked && !error && pdfUrl ? 'AKSES TERBUKA' : 'AKSES TERTUTUP'}
+                        </span>
+                      )}
+                      <svg className={`w-5 h-5 text-slate-500 transform transition-transform duration-300 ${isStatusExpanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                  </div>
+                  
+                  {isStatusExpanded && (
+                    <div className="p-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Kolom Status Ketersediaan File */}
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Ketersediaan File</p>
+                          <div className="flex items-start gap-4">
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${studentBerkas?.file_url && studentBerkas.file_url !== '-' ? 'bg-green-50 text-green-600 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                              {studentBerkas?.file_url && studentBerkas.file_url !== '-' ? (
+                                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                              ) : (
+                                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-800 text-lg mb-0.5">
+                                {studentBerkas?.file_url && studentBerkas.file_url !== '-' ? 'Dokumen Tersedia' : 'Dokumen Belum Diunggah'}
+                              </p>
+                              <p className="text-sm text-slate-500 leading-relaxed">
+                                {studentBerkas?.file_url && studentBerkas.file_url !== '-' 
+                                  ? 'File dokumen/pengumuman resmi Anda sudah diunggah oleh pihak sekolah.' 
+                                  : 'Pihak sekolah belum mengunggah file dokumen untuk Anda. Silakan tunggu.'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Kolom Prasyarat Akses */}
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Prasyarat Akses</p>
+                          {!selectedType.persyaratan || selectedType.persyaratan.length === 0 ? (
+                            <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              <svg className="w-5 h-5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                              Tidak ada prasyarat khusus untuk dokumen ini.
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {selectedType.persyaratan.map((req, idx) => {
+                                const isMet = studentBerkas?.persyaratan_terpenuhi?.[req.id]
+                                return (
+                                  <div key={req.id} className={`flex items-start gap-3 p-3 rounded-xl border ${isMet ? 'bg-green-50/50 border-green-100' : 'bg-red-50/50 border-red-100'}`}>
+                                    <div className={`mt-0.5 shrink-0 ${isMet ? 'text-green-500' : 'text-red-400'}`}>
+                                      {isMet ? (
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                      ) : (
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <p className={`text-sm font-bold ${isMet ? 'text-green-800' : 'text-red-800'}`}>{idx + 1}. {req.nama}</p>
+                                      {!isMet && req.info_gagal && (
+                                        <p className="text-xs text-red-600 mt-1 leading-relaxed">{req.info_gagal}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {accessBlocked && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-amber-200 p-6">
+                  <div className="bg-white rounded-xl shadow-sm border border-amber-200 p-6">
                     <div className="flex items-start gap-4">
                       <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
                         <svg className="w-6 h-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -500,17 +643,25 @@ function Dashboard() {
                 )}
 
                 {!accessBlocked && error && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col items-center justify-center text-center py-12">
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col items-center justify-center text-center py-12">
                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
-                      <svg className="w-8 h-8 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                      {error === 'Akses ditangguhkan. Cek Prasyarat Akses.' && studentBerkas?.file_url && studentBerkas.file_url !== '-' ? (
+                        <svg className="w-8 h-8 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                      ) : (
+                        <svg className="w-8 h-8 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                      )}
                     </div>
-                    <h3 className="text-lg font-bold text-slate-700 mb-2">Dokumen Belum Tersedia</h3>
-                    <p className="text-slate-500 max-w-lg mx-auto whitespace-pre-line text-left">{error}</p>
+                    <h3 className="text-lg font-bold text-slate-700 mb-2">
+                      {error === 'Akses ditangguhkan. Cek Prasyarat Akses.' && studentBerkas?.file_url && studentBerkas.file_url !== '-'
+                        ? 'Akses Dokumen Ditangguhkan'
+                        : 'Dokumen Belum Tersedia'}
+                    </h3>
+                    <p className="text-slate-500 max-w-lg mx-auto whitespace-pre-line text-center">{error}</p>
                   </div>
                 )}
 
                 {!accessBlocked && !error && pdfUrl && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8">
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-8">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                       <div>
                         <h3 className="text-xl font-bold text-slate-800">{selectedType.nama}</h3>
@@ -547,7 +698,7 @@ function Dashboard() {
             {!selectedType && (
               <div className="space-y-6">
                 {pengumuman && (
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 shadow-sm animate-slide-up">
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-6 shadow-sm animate-slide-up">
                     <h3 className="text-base font-bold text-indigo-900 mb-3 flex items-center gap-2">
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                       Pengumuman Sekolah
@@ -555,11 +706,11 @@ function Dashboard() {
                     <p className="text-sm text-indigo-800 leading-relaxed whitespace-pre-wrap">{pengumuman}</p>
                   </div>
                 )}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-10 flex flex-col items-center justify-center text-center">
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-10 flex flex-col items-center justify-center text-center">
                    <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-5">
                      <svg className="w-10 h-10 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                    </div>
-                   <h3 className="text-xl font-bold text-slate-800 mb-2">SIAKD SMP Budi Mulia Jakarta</h3>
+                   <h3 className="text-xl font-bold text-slate-800 mb-2">eBudiMulia SMP Budi Mulia Jakarta</h3>
                    <p className="text-slate-500 max-w-md mx-auto">Silakan pilih jenis pengumuman atau dokumen dari menu di sebelah kiri untuk melihat detailnya.</p>
                 </div>
               </div>
@@ -572,10 +723,10 @@ function Dashboard() {
       {/* Ubah Kode Akses Modal */}
       {showPasswordModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="font-bold text-slate-800 text-lg">Ubah Kode Akses</h3>
-              <button onClick={() => { setShowPasswordModal(false); setPasswordError(''); setPasswordSuccess(false); setOldPassword(''); setNewPassword(''); }} className="text-slate-400 hover:text-slate-600 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-lg">
+              <button onClick={() => { setShowPasswordModal(false); setPasswordError(''); setPasswordSuccess(false); setOldPassword(''); setNewPassword(''); }} className="text-slate-500 hover:text-slate-600 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-lg">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
               </button>
             </div>

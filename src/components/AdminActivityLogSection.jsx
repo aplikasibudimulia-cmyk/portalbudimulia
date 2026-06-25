@@ -42,12 +42,12 @@ export default function AdminActivityLogSection() {
           <h2 className="text-2xl font-bold text-slate-900">Log Aktivitas</h2>
           <p className="text-slate-500 text-sm mt-1">Pemantauan aktivitas yang dilakukan oleh Admin dan Guru.</p>
         </div>
-        <button onClick={fetchLogs} className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 transition-colors">
+        <button onClick={fetchLogs} className="p-2 bg-white border-none rounded-2xl hover:bg-slate-50 text-slate-600 transition-colors">
           <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
         </button>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>

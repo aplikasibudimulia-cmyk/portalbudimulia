@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
 export default function DataPresensiSiswaSection({ session, activeTa }) {
-  const [tanggal, setTanggal] = useState(new Date().toISOString().split('T')[0])
+  const [tanggal, setTanggal] = useState(new Date().toLocaleDateString('en-CA'))
   const [semuaKelas, setSemuaKelas] = useState([])
   const [semuaSiswa, setSemuaSiswa] = useState([])
   const [presensiHariIni, setPresensiHariIni] = useState([])
@@ -19,7 +19,16 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
     fetchDashboardData()
   }, [tanggal, activeTa])
 
-  const fetchDashboardData = async () => {
+  useEffect(() => {
+    const channel = supabase.channel(`realtime_presensi_harian_${tanggal}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `tanggal=eq.${tanggal}` }, () => {
+        fetchDashboardData(true)
+      })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [tanggal])
+
+  const fetchDashboardData = async (isRealtime = false) => {
     setLoading(true)
     try {
       const { data: siswaData } = await supabase
@@ -40,6 +49,28 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       
       if (presensiDataDB) {
         setPresensiHariIni(presensiDataDB)
+        
+        // Sync presensiData (state form) jika sedang membuka kelas
+        if (selectedKelas && siswaData) {
+          const classStudents = siswaData.filter(s => s.kelas === selectedKelas)
+          setPresensiData(prev => {
+            const newData = isRealtime ? { ...prev } : {}
+            classStudents.forEach(s => {
+              const rec = presensiDataDB.find(r => r.siswa_nisn === s.nisn)
+              if (rec) {
+                // Saat realtime: QR scan selalu diapply (tidak boleh ditimpa manual)
+                // Jika bukan realtime (reload penuh), atau siswa belum ada di form: selalu set
+                if (!isRealtime || rec.metode === 'qr_scan' || !newData[s.nisn]) {
+                  newData[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
+                }
+              } else if (!isRealtime) {
+                // Saat reload penuh: hapus entry yang sudah dihapus dari DB
+                delete newData[s.nisn]
+              }
+            })
+            return newData
+          })
+        }
       }
 
     } catch (err) {
@@ -63,66 +94,127 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       
     if (students) {
       setStudentsInClass(students)
-      const existingRecords = presensiHariIni.filter(p => p.kelas === kelasName)
       const dataMap = {}
       students.forEach(s => {
-        const rec = existingRecords.find(r => r.siswa_nisn === s.nisn)
+        const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
         if (rec) {
-          dataMap[s.nisn] = { status: rec.status, time: rec.waktu || null }
+          dataMap[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
         }
       })
       setPresensiData(dataMap)
     }
   }
 
-  const handleStatusChange = (nisn, status) => {
+  const handleStatusChange = async (nisn, status) => {
+    if (presensiData[nisn]?.metode === 'qr_scan') {
+      alert('Presensi QR Code tidak dapat diubah manual.')
+      return
+    }
     const now = new Date().toTimeString().slice(0, 5)
+    const newTime = (status === 'T' || status === 'P') ? (presensiData[nisn]?.time || now) : null
+    
     setPresensiData(prev => ({
       ...prev,
-      [nisn]: { status, time: (status === 'T' || status === 'P') ? (prev[nisn]?.time || now) : null }
+      [nisn]: { status, time: newTime, metode: 'manual' }
     }))
+
+    // Autosave
+    try {
+      setIsSaving(true)
+      const record = {
+        tanggal,
+        tahun_ajaran_id: activeTa?.id || null,
+        kelas: selectedKelas,
+        siswa_nisn: nisn,
+        status,
+        waktu: newTime,
+        metode: 'manual',
+        diinput_oleh: session.id,
+        updated_at: new Date().toISOString()
+      }
+      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn' })
+      if (error) throw error
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleTimeChange = (nisn, time) => {
+  const handleTimeChange = async (nisn, time) => {
     setPresensiData(prev => ({
       ...prev,
       [nisn]: { ...prev[nisn], time }
     }))
+
+    // Autosave
+    try {
+      setIsSaving(true)
+      const pd = presensiData[nisn]
+      if (!pd) return
+      const record = {
+        tanggal,
+        tahun_ajaran_id: activeTa?.id || null,
+        kelas: selectedKelas,
+        siswa_nisn: nisn,
+        status: pd.status,
+        waktu: time,
+        metode: 'manual',
+        diinput_oleh: session.id,
+        updated_at: new Date().toISOString()
+      }
+      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn' })
+      if (error) throw error
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleSimpan = async () => {
-    if (!selectedKelas) return
-    setIsSaving(true)
-    try {
-      const recordsToUpsert = studentsInClass.map(s => {
-        const pd = presensiData[s.nisn]
-        if (!pd) return null
-        return {
+  const handleBulkPresensi = async (status) => {
+    if (!window.confirm(`Set semua siswa yang tampil menjadi ${status}?`)) return
+    const newData = { ...presensiData }
+    const recordsToUpsert = []
+    const nisnsToDelete = []
+
+    filteredStudents.forEach(s => {
+      if (presensiData[s.nisn]?.metode === 'qr_scan') return // Lewati siswa yang sudah scan QR
+      if (status === 'kosong') {
+        delete newData[s.nisn]
+        nisnsToDelete.push(s.nisn)
+      } else {
+        newData[s.nisn] = { status, time: null, metode: 'manual' }
+        recordsToUpsert.push({
           tanggal,
           tahun_ajaran_id: activeTa?.id || null,
           kelas: selectedKelas,
           siswa_nisn: s.nisn,
-          status: pd.status,
-          waktu: pd.time || null,
-          diedit_oleh: session.id,
+          status,
+          waktu: null,
+          metode: 'manual',
+          diinput_oleh: session.id,
           updated_at: new Date().toISOString()
-        }
-      }).filter(Boolean)
-
-      if (recordsToUpsert.length > 0) {
-        await supabase.from('presensi_harian').delete().eq('tanggal', tanggal).eq('kelas', selectedKelas)
-        const { error } = await supabase.from('presensi_harian').insert(recordsToUpsert)
-        if (error) throw error
-        alert(`Data absensi kelas ${selectedKelas} berhasil disimpan!`)
-        fetchDashboardData()
-      } else {
-        await supabase.from('presensi_harian').delete().eq('tanggal', tanggal).eq('kelas', selectedKelas)
-        alert('Data absensi dikosongkan.')
-        fetchDashboardData()
+        })
       }
-    } catch (err) {
-      console.error(err)
-      alert('Gagal menyimpan data presensi.')
+    })
+    setPresensiData(newData)
+
+    // Autosave Massal
+    try {
+      setIsSaving(true)
+      if (status === 'kosong' && nisnsToDelete.length > 0) {
+        await supabase.from('presensi_harian')
+          .delete()
+          .eq('tanggal', tanggal)
+          .in('siswa_nisn', nisnsToDelete)
+      } else if (recordsToUpsert.length > 0) {
+        const { error } = await supabase.from('presensi_harian').upsert(recordsToUpsert, { onConflict: 'tanggal,siswa_nisn' })
+        if (error) throw error
+      }
+    } catch (e) {
+      console.error(e)
+      alert('Gagal menyimpan otomatis: ' + e.message)
     } finally {
       setIsSaving(false)
     }
@@ -152,12 +244,12 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
             type="date" 
             value={tanggal}
             onChange={(e) => setTanggal(e.target.value)}
-            className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer"
+            className="px-4 py-2 bg-white border-none rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer"
           />
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Class Selection Area */}
         <div className="shrink-0 border-b border-slate-100 bg-slate-50 p-4">
           <div className="flex items-center gap-3 mb-3">
@@ -208,17 +300,39 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                   />
                   <svg className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                 </div>
-                <button 
-                  onClick={handleSimpan}
-                  disabled={isSaving}
-                  className={`px-6 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2 shrink-0 ${isSaving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700 active:scale-95'}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                  {isSaving ? 'Menyimpan...' : 'Simpan Presensi'}
-                </button>
+                <div className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 shrink-0 transition-colors ${isSaving ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'}`}>
+                  {isSaving ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                      Menyimpan...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                      Autosave Aktif
+                    </>
+                  )}
+                </div>
               </div>
             </div>
             
+            {/* Aksi Massal Presensi */}
+            <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Set Semua:</span>
+                <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors">Hadir</button>
+                <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors">Terlambat</button>
+                <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit</button>
+                <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin</button>
+                <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpa</button>
+                <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition-colors">Pulang</button>
+              </div>
+              <button onClick={() => handleBulkPresensi('kosong')} className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition-colors flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                Kosongkan Presensi
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-sm border-b border-slate-200 text-slate-500 text-xs">
@@ -256,35 +370,55 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                       <td className="px-6 py-4 text-slate-500 font-medium text-xs">{s.nisn}</td>
                       
                       <td className="px-6 py-3">
-                        <div className="flex items-center gap-2 justify-center">
-                          {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
-                            const isActive = presensiData[s.nisn]?.status === opt;
-                            const colors = {
-                              'H': isActive ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-emerald-500 border-emerald-100 hover:bg-emerald-50',
-                              'T': isActive ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-white text-orange-500 border-orange-100 hover:bg-orange-50',
-                              'S': isActive ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-blue-500 border-blue-100 hover:bg-blue-50',
-                              'I': isActive ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-white text-purple-500 border-purple-100 hover:bg-purple-50',
-                              'A': isActive ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-white text-rose-500 border-rose-100 hover:bg-rose-50',
-                              'P': isActive ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                            }
-                            return (
-                              <button 
-                                key={opt}
-                                onClick={() => handleStatusChange(s.nisn, opt)}
-                                className={`w-9 h-8 rounded-lg text-sm font-bold transition-all border ${colors[opt]}`}
-                              >
-                                {opt}
-                              </button>
-                            )
-                          })}
-                          {(presensiData[s.nisn]?.status === 'T' || presensiData[s.nisn]?.status === 'P') && (
-                            <input 
-                              type="time" 
-                              value={presensiData[s.nisn]?.time || ''}
-                              onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
-                              className="ml-2 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24 transition-all"
-                            />
-                          )}
+                        <div className="flex justify-center">
+                          <div className="flex items-center gap-2 w-[360px]">
+                            {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
+                              const pd = presensiData[s.nisn]
+                              const isActive = pd?.status === opt;
+                              const isLocked = pd?.metode === 'qr_scan'
+                              const baseColors = {
+                                'H': 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+                                'T': 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
+                                'S': 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+                                'I': 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+                                'A': 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+                                'P': 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                              }
+                              const activeColors = {
+                                'H': 'bg-emerald-600 text-white border-emerald-600',
+                                'T': 'bg-orange-500 text-indigo-600 border-orange-500',
+                                'S': 'bg-blue-600 text-indigo-600 border-blue-600',
+                                'I': 'bg-purple-600 text-indigo-600 border-purple-600',
+                                'A': 'bg-rose-600 text-indigo-600 border-rose-600',
+                                'P': 'bg-slate-600 text-indigo-600 border-slate-600'
+                              }
+                              return (
+                                <button 
+                                  key={opt}
+                                  onClick={() => handleStatusChange(s.nisn, opt)}
+                                  disabled={isLocked}
+                                  className={`w-9 h-8 rounded-2xl text-sm font-bold transition-all border shrink-0 ${isActive ? activeColors[opt] : baseColors[opt]} ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                >
+                                  {opt}
+                                </button>
+                              )
+                            })}
+                            {(presensiData[s.nisn]?.status === 'T' || presensiData[s.nisn]?.status === 'P') && (
+                              <input 
+                                type="time" 
+                                value={presensiData[s.nisn]?.time || ''}
+                                onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
+                                disabled={presensiData[s.nisn]?.metode === 'qr_scan'}
+                                className="ml-2 px-2 py-1.5 text-xs border border-slate-200 rounded-2xl bg-slate-50 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24 shrink-0 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                              />
+                            )}
+                            {presensiData[s.nisn]?.metode === 'qr_scan' && (
+                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0" title="Discan oleh Siswa (QR Code)">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                                QR Scan
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>

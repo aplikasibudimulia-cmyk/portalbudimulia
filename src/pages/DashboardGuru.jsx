@@ -5,14 +5,15 @@ import { logActivity } from '../utils/logger'
 import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
 import NilaiGuruSection from '../components/NilaiGuruSection'
+import bcrypt from 'bcryptjs'
 
-const IconDashboard = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
-const IconUsers = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-const IconKey = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
-const IconLogout = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-const IconFile = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-const IconUser = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-const IconNilai = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1" ry="1"/><path d="M9 12h6M9 16h4"/></svg>
+const IconDashboard = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+const IconUsers = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+const IconKey = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+const IconLogout = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+const IconFile = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+const IconUser = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+const IconNilai = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1" ry="1"/><path d="M9 12h6M9 16h4"/></svg>
 
 const Toggle = ({ value, onChange, disabled, colorOn = 'bg-green-500' }) => (
   <button onClick={() => onChange(!value)} disabled={disabled}
@@ -45,7 +46,7 @@ const StudentAvatar = ({ student, fotos, className }) => {
   )
 }
 
-function GuruAnnouncementSection({ type, students, fitur, fotos }) {
+function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
   const [fileAccess, setFileAccess] = useState({})
@@ -79,6 +80,12 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
   useEffect(() => { 
     fetchFiles() 
     fetchActivityLogs()
+
+    const interval = setInterval(() => {
+      fetchActivityLogs()
+    }, 2000)
+
+    return () => clearInterval(interval)
   }, [type.id])
 
   const fetchActivityLogs = async () => {
@@ -94,9 +101,10 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
       .select('kode_siswa, file_name, file_url, is_accessible, persyaratan_terpenuhi')
       .eq('kode_jenis', type.kode_jenis)
     
-    setFiles(new Set(data?.map(f => f.file_name).filter(Boolean) ?? []))
-    setFileUrls(data?.reduce((acc, f) => f.file_name ? {...acc, [f.file_name]: f.file_url} : acc, {}) ?? {})
-    setFileAccess(data?.reduce((acc, f) => f.file_name ? {...acc, [f.file_name]: f.is_accessible} : acc, {}) ?? {})
+    // Filter file_name '-' (placeholder saat belum ada file) agar tidak dihitung sebagai file valid
+    setFiles(new Set(data?.filter(f => f.file_name && f.file_name !== '-').map(f => f.file_name) ?? []))
+    setFileUrls(data?.reduce((acc, f) => f.file_name && f.file_name !== '-' ? {...acc, [f.file_name]: f.file_url} : acc, {}) ?? {})
+    setFileAccess(data?.reduce((acc, f) => f.file_name && f.file_name !== '-' ? {...acc, [f.file_name]: f.is_accessible} : acc, {}) ?? {})
     setFileReqs(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.persyaratan_terpenuhi || {}}), {}) ?? {})
   }
 
@@ -162,9 +170,6 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
     if (error) {
       alert('Gagal mengubah akses global: ' + error.message)
     } else {
-      type.aktif = status // mutate locally for immediate feedback
-      // refresh not entirely needed if we mutate, but we should trigger re-render in parent if possible
-      
       const session = JSON.parse(localStorage.getItem('guru_session') || '{}')
       logActivity({
         userId: session.id,
@@ -172,6 +177,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
         action: 'Ubah Akses Global',
         details: `${status ? 'Membuka' : 'Menutup'} akses global untuk pengumuman: ${type.nama}`
       })
+      // Refresh parent agar state React terupdate dengan benar
+      if (onRefresh) onRefresh()
     }
   }
 
@@ -201,6 +208,29 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
     const url = fileUrls[fileName]
     if (!url) { alert('File tidak ditemukan untuk ' + student.nama_lengkap); return }
     setPreviewPdf({ url, student })
+  }
+
+  const handleResetStatusUnduh = async (nama_lengkap) => {
+    if (!window.confirm(`Yakin ingin mereset status unduh untuk ${nama_lengkap}?`)) return
+    
+    const { error } = await supabase.from('activity_log')
+      .delete()
+      .match({ aksi: 'Unduh Dokumen' })
+      .ilike('detail', `%${type.nama}%`)
+      .ilike('detail', `%${nama_lengkap}%`)
+      
+    if (error) {
+      alert('Gagal mereset status: ' + error.message)
+    } else {
+      fetchActivityLogs()
+      const session = JSON.parse(localStorage.getItem('guru_session') || '{}')
+      logActivity({
+        userId: session.id,
+        userRole: session.role || 'Guru',
+        action: 'Reset Status Unduh',
+        details: `Mereset status unduh dokumen ${type.nama} untuk siswa ${nama_lengkap}.`
+      })
+    }
   }
 
   let filteredStudents = displayStudents
@@ -235,7 +265,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
               <div className="relative flex-1">
                 <input type="text" placeholder="Cari nama atau NISN..." value={search} onChange={e => setSearch(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-                <svg className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <svg className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               </div>
               <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
                 className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
@@ -314,10 +344,20 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
                     })}
                     <td className="text-center px-2 py-2">
                       {activityLogs.some(log => log.detail.includes(s.nama_lengkap)) ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200" title="Siswa telah mengunduh/membuka dokumen">
-                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                          Selesai
-                        </span>
+                        <div className="flex items-center justify-center gap-1">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200" title="Siswa telah mengakses dokumen">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Telah Diakses
+                          </span>
+                          {canKelola && (
+                            <button onClick={() => handleResetStatusUnduh(s.nama_lengkap)} title="Reset Status"
+                              className="p-0.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-500 transition-colors">
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-slate-300 text-[10px] italic">—</span>
                       )}
@@ -384,11 +424,11 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
       {previewPdf && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto py-6 px-4 animate-fade-in" onClick={() => setPreviewPdf(null)}>
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm" />
-          <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+          <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
             {/* Purple Header & Close Button */}
             <div className="relative bg-indigo-600 h-28 shrink-0">
               <button onClick={() => setPreviewPdf(null)}
-                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors">
+                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-indigo-600 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -405,7 +445,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos }) {
                 <p className="text-indigo-600 font-medium text-sm mt-0.5 mb-3">Kelas {previewPdf.student.kelas ?? '—'}</p>
 
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">NISN / NIPD</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">NISN / NIPD</p>
                   <p className="text-slate-800 font-semibold">{previewPdf.student.nisn || '-'}{previewPdf.student.nipd ? ` / ${previewPdf.student.nipd}` : ''}</p>
                 </div>
               </div>
@@ -437,8 +477,16 @@ export default function DashboardGuru() {
   const [session, setSession] = useState(null)
   const [activeMenu, setActiveMenu] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [fitur, setFitur] = useState(new Set())
   const [loading, setLoading] = useState(true)
+  
+  // Password Change States
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passLoading, setPassLoading] = useState(false)
+  const [passMessage, setPassMessage] = useState({ type: '', text: '' })
 
   const [students, setStudents] = useState([])
   const [waliStudents, setWaliStudents] = useState([])
@@ -449,97 +497,6 @@ export default function DashboardGuru() {
   const [activeTa, setActiveTa] = useState(null)
   const [siswaSearch, setSiswaSearch] = useState('')
   const [siswaClassFilter, setSiswaClassFilter] = useState('all')
-  const [mapelFilter, setMapelFilter] = useState('')
-  const [presensiData, setPresensiData] = useState({})
-
-  const handleBulkPresensi = (status) => {
-    if (status === 'kosong') {
-      setPresensiData({})
-      return
-    }
-    const newData = { ...presensiData }
-    const now = new Date().toTimeString().slice(0, 5) // HH:mm
-    filteredMapelStudents.forEach(s => {
-      newData[s.nisn] = { status, time: (status === 'T' || status === 'P') ? now : null }
-    })
-    setPresensiData(newData)
-  }
-
-  const handleStatusChange = (nisn, status) => {
-    const now = new Date().toTimeString().slice(0, 5)
-    setPresensiData(prev => ({
-      ...prev,
-      [nisn]: { status, time: (status === 'T' || status === 'P') ? (prev[nisn]?.time || now) : null }
-    }))
-  }
-
-  const handleTimeChange = (nisn, time) => {
-    setPresensiData(prev => ({
-      ...prev,
-      [nisn]: { ...prev[nisn], time }
-    }))
-  }
-
-  const handleSimpanPresensiMapel = async (s) => {
-    const pd = presensiData[s.nisn]
-    if (!pd) {
-      alert(`Silakan pilih status kehadiran untuk ${s.nama_lengkap} terlebih dahulu.`)
-      return
-    }
-    try {
-      const today = new Date().toISOString().split('T')[0]
-      const record = {
-        tanggal: today,
-        tahun_ajaran_id: activeTa?.id || null,
-        kelas: s.kelas,
-        siswa_nisn: s.nisn,
-        status: pd.status,
-        waktu: pd.time || null,
-        diinput_oleh: session.id,
-        updated_at: new Date().toISOString()
-      }
-      
-      const { error } = await supabase.from('presensi_harian').upsert(record, { onConflict: 'tanggal,siswa_nisn' })
-      if (error) throw error
-      alert(`Kehadiran ${s.nama_lengkap} berhasil disimpan!`)
-    } catch (err) {
-      console.error(err)
-      alert(`Gagal menyimpan kehadiran: ${err.message}`)
-    }
-  }
-
-  const fetchPresensiHariIni = async () => {
-    if (activeMenu !== 'presensi' || filteredMapelStudents.length === 0) return
-    const today = new Date().toISOString().split('T')[0]
-    const nisns = filteredMapelStudents.map(s => s.nisn)
-    if (nisns.length === 0) return
-    
-    const { data } = await supabase.from('presensi_harian')
-      .select('siswa_nisn, status, waktu')
-      .eq('tanggal', today)
-      .in('siswa_nisn', nisns)
-      
-    if (data) {
-      setPresensiData(prev => {
-        const newData = { ...prev }
-        data.forEach(d => {
-          newData[d.siswa_nisn] = { status: d.status, time: d.waktu || null }
-        })
-        return newData
-      })
-    }
-  }
-
-  useEffect(() => {
-    fetchPresensiHariIni()
-  }, [activeMenu, mapelStudents, siswaClassFilter, mapelFilter])
-
-  useEffect(() => {
-    if (session?.mapels?.length > 0 && !mapelFilter) {
-      setMapelFilter(session.mapels[0])
-    }
-  }, [session])
-
   useEffect(() => {
     setSiswaSearch('')
     setSiswaClassFilter('all')
@@ -599,6 +556,13 @@ export default function DashboardGuru() {
     // 3. Fetch Students (Filtered by active year & assigned classes)
     const waliClassesList = activeSession.kelas.filter(k => !activeTaData || k.tahun_ajaran_id === activeTaData.id).map(k => k.kelas)
     const mapelClassesList = activeSession.guru_mapel_raw?.filter(m => !activeTaData || m.tahun_ajaran_id === activeTaData.id).map(m => m.kelas) || []
+    // Revoke 'kelola_pengumuman' and 'lihat_dokumen' feature if the teacher has no assigned wali classes for this active Ta
+    if (waliClassesList.length === 0) {
+      currentFitur.delete('kelola_pengumuman')
+      currentFitur.delete('lihat_dokumen')
+      setFitur(new Set(currentFitur)) // Update state with the revoked feature
+    }
+
     const allAssignedClasses = Array.from(new Set([...waliClassesList, ...mapelClassesList]))
     
     if (allAssignedClasses.length > 0 && activeTaData) {
@@ -625,6 +589,54 @@ export default function DashboardGuru() {
     }
 
     setLoading(false)
+  }
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault()
+    setPassMessage({ type: '', text: '' })
+    
+    if (newPassword !== confirmPassword) {
+      setPassMessage({ type: 'error', text: 'Sandi baru dan konfirmasi tidak cocok!' })
+      return
+    }
+    if (newPassword.length < 6) {
+      setPassMessage({ type: 'error', text: 'Sandi baru minimal 6 karakter!' })
+      return
+    }
+    
+    setPassLoading(true)
+    try {
+      // 1. Fetch current password hash
+      const { data: akun, error: fetchErr } = await supabase.from('akun_pengguna').select('password').eq('id', session.akun_id).single()
+      if (fetchErr) throw new Error("Gagal mengambil data akun.")
+      
+      // 2. Verify old password
+      const isMatch = bcrypt.compareSync(oldPassword, akun.password)
+      if (!isMatch) throw new Error("Sandi lama salah!")
+      
+      // 3. Update new password
+      const salt = bcrypt.genSaltSync(10)
+      const newHash = bcrypt.hashSync(newPassword, salt)
+      
+      const { error: updateErr } = await supabase.from('akun_pengguna').update({ password: newHash }).eq('id', session.akun_id)
+      if (updateErr) throw new Error("Gagal menyimpan sandi baru.")
+      
+      setPassMessage({ type: 'success', text: 'Sandi berhasil diubah!' })
+      setOldPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      
+      logActivity({
+        userId: session.id,
+        userRole: session.app_role || 'Guru',
+        action: 'Ubah Sandi',
+        details: `${session.nama_guru} berhasil mengubah sandi.`
+      })
+      
+    } catch (err) {
+      setPassMessage({ type: 'error', text: err.message })
+    }
+    setPassLoading(false)
   }
 
   const handleLogout = () => {
@@ -665,54 +677,38 @@ export default function DashboardGuru() {
         <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out md:static md:w-64 md:translate-x-0 md:z-auto ${
+      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${
         sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       }`}>
         <div className="p-5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 border border-slate-200 rounded-xl shadow-sm p-1 bg-white shrink-0">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
-            </div>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
             <div>
-              <h2 className="font-bold text-base text-slate-800 leading-tight">SIAKD</h2>
+              <h2 className="font-bold text-base text-slate-800 leading-tight">eBudiMulia</h2>
               <p className="text-xs font-medium text-slate-500">SMP Budi Mulia Jakarta</p>
             </div>
           </div>
-          <button className="md:hidden p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
 
-        <div className="p-5 border-b border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 rounded-full border border-slate-200 bg-white shadow-sm overflow-hidden flex items-center justify-center font-bold text-slate-500 text-lg">
-              {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.charAt(0)}
-            </div>
-            <div className="overflow-hidden">
-              <p className="text-sm font-bold text-slate-800 truncate">{session.nama_guru}</p>
-              <p className="text-xs text-slate-500 truncate">Kode: {session.kode}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {session.roles.map(r => (
-               <span key={r.id} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold uppercase tracking-wider">{r.nama}</span>
-            ))}
-          </div>
-        </div>
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           <button onClick={() => { setActiveMenu('dashboard'); setSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}>
-            <IconDashboard /> Beranda
-          </button>
+            <IconDashboard /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
+            </button>
 
           {(fitur.has('lihat_data_siswa') || fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman') || fitur.has('kelola_presensi_sekolah')) && (
             <>
-              <div className="pt-4 pb-2 px-3">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AKADEMIK</p>
-              </div>
+              {!sidebarCollapsed && (
+                <div className="pt-4 pb-2 px-3 animate-fade-in">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AKADEMIK</p>
+                </div>
+              )}
               
               {fitur.has('lihat_data_siswa') && (
                 <>
@@ -721,8 +717,8 @@ export default function DashboardGuru() {
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                         activeMenu === 'siswa_wali' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                       }`}>
-                      <IconUsers /> Siswa Wali Kelas
-                    </button>
+                      <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Wali Kelas</span>}
+            </button>
                   )}
                   {session.guru_mapel_raw?.length > 0 && (
                     <>
@@ -730,21 +726,14 @@ export default function DashboardGuru() {
                         className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                           activeMenu === 'siswa_mapel' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                         }`}>
-                        <IconUsers /> Siswa Mapel
-                      </button>
-                      <button onClick={() => { setActiveMenu('presensi'); setSidebarOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                          activeMenu === 'presensi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                        }`}>
-                        <svg className="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                        Presensi
-                      </button>
+                        <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Mapel</span>}
+            </button>
                       <button onClick={() => { setActiveMenu('input_nilai'); setSidebarOpen(false); }}
                         className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                           activeMenu === 'input_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                         }`}>
-                        <IconNilai /> Input Nilai
-                      </button>
+                        <IconNilai /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Input Nilai</span>}
+            </button>
                     </>
                   )}
                 </>
@@ -756,15 +745,15 @@ export default function DashboardGuru() {
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                       activeMenu === 'piket_dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                     }`}>
-                    <svg className="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-                    Dashboard Piket
+                    <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Piket</span>}
                   </button>
                   <button onClick={() => { setActiveMenu('data_presensi_siswa'); setSidebarOpen(false); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                       activeMenu === 'data_presensi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                     }`}>
-                    <svg className="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    Data Presensi Siswa
+                    <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Data Presensi Siswa</span>}
                   </button>
                 </>
               )}
@@ -775,60 +764,72 @@ export default function DashboardGuru() {
                     activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                   }`}>
                   <IconFile />
-                  <span className="truncate">{t.nama}</span>
-                </button>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
+              </button>
               ))}
             </>
           )}
 
-          <div className="pt-4 pb-2 px-3">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">PENGATURAN</p>
-          </div>
+          {!sidebarCollapsed && (
+            <div className="pt-4 pb-2 px-3 animate-fade-in">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PENGATURAN</p>
+            </div>
+          )}
           <button onClick={() => { setActiveMenu('profil'); setSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               activeMenu === 'profil' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}>
-            <IconUser /> Profil Saya
-          </button>
+            <IconUser /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Profil Saya</span>}
+            </button>
           <button onClick={() => { setActiveMenu('password'); setSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               activeMenu === 'password' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
             }`}>
-            <IconKey /> Ubah Sandi
-          </button>
+            <IconKey /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Ubah Sandi</span>}
+            </button>
         </nav>
 
         <div className="p-4 border-t border-slate-200 bg-slate-50">
           <button onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors">
-            <IconLogout /> Keluar Sesi
-          </button>
+            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
+            <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}
+            </button>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
-        <header className="md:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-20">
+        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-20">
           <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="p-1.5 -ml-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
+              <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
             </button>
-            <h1 className="font-semibold text-slate-800 text-sm">SIAKD Guru</h1>
+            <h1 className="font-semibold text-slate-800 text-sm md:hidden">eBudiMulia Guru</h1>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="hidden md:block text-right">
+              <p className="text-sm font-bold text-slate-800 leading-tight">{session.nama_guru}</p>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{session.roles.map(r => r.nama).join(', ')}</p>
+            </div>
+            <div className="w-9 h-9 rounded-full border border-slate-200 bg-slate-50 shadow-sm overflow-hidden flex items-center justify-center font-bold text-slate-500 shrink-0">
+              {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.charAt(0)}
+            </div>
           </div>
         </header>
 
         <div className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col ${
-          activeMenu === 'dashboard' && session.roles.some(r => r.nama.toLowerCase() === 'piket') && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0)
+          activeMenu === 'dashboard' && session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0)
             ? 'min-h-0 overflow-hidden'
             : 'overflow-y-auto'
         }`}>
           <div className="w-full flex-1 flex flex-col min-h-0">
             {activeMenu === 'dashboard' && (
               <>
-                {session.roles.some(r => r.nama.toLowerCase() === 'piket') && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
+                {session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
                   <PiketDashboardSection session={session} activeTa={activeTa} />
                 ) : (
-                  <div className="animate-slide-up">
-                    <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 md:p-10 shadow-lg text-white mb-8 relative overflow-hidden">
+                  <div className="animate-slide-up flex flex-col gap-8">
+                    <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-xl p-6 md:p-10 shadow-lg text-white relative overflow-hidden">
                       <div className="relative z-10">
                         <h2 className="text-2xl md:text-3xl font-bold mb-2">Selamat Datang, {session.nama_guru}! 👋</h2>
                         <p className="text-indigo-100 text-sm md:text-base max-w-xl">
@@ -839,27 +840,33 @@ export default function DashboardGuru() {
                       <svg className="absolute right-0 bottom-0 opacity-10 w-64 h-64 -mb-16 -mr-16 transform rotate-12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 22h20L12 2zm0 3.8l7.5 14.2H4.5L12 5.8z"/></svg>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                          <IconUsers /> Statistik Kelas Saya
-                        </h3>
-                        <div className="text-3xl font-black text-indigo-600 mb-1">{students.length}</div>
-                        <p className="text-sm text-slate-500">Total siswa aktif di kelas yang Anda ampu</p>
+                    {(() => {
+                      const activeWaliClasses = session.kelas?.filter(k => !activeTa || k.tahun_ajaran_id === activeTa.id).map(k => k.kelas) || [];
+                      
+                      if (activeWaliClasses.length > 0) {
+                        return <PiketDashboardSection session={session} activeTa={activeTa} filterKelas={activeWaliClasses} />;
+                      }
+                      
+                      return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <IconUsers /> Statistik Kelas Saya
+                          </h3>
+                          <div className="text-3xl font-black text-indigo-600 mb-1">{students.length}</div>
+                          <p className="text-sm text-slate-500">Total siswa aktif di kelas yang Anda ampu</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center items-center text-center">
+                          <p className="text-slate-500 text-sm mb-4">Gunakan menu di sidebar untuk mulai mengelola data akademik siswa atau mengubah profil Anda.</p>
+                          {session.guru_mapel_raw?.length > 0 && (
+                            <button onClick={() => setActiveMenu('siswa_mapel')} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-xl text-sm hover:bg-indigo-100 transition-colors">
+                              Lihat Siswa Mapel &rarr;
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-center items-center text-center">
-                        <p className="text-slate-500 text-sm mb-4">Gunakan menu di sidebar untuk mulai mengelola data akademik siswa atau mengubah profil Anda.</p>
-                        {session.kelas?.length > 0 ? (
-                          <button onClick={() => setActiveMenu('siswa_wali')} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-xl text-sm hover:bg-indigo-100 transition-colors">
-                            Lihat Siswa Wali Kelas &rarr;
-                          </button>
-                        ) : session.guru_mapel_raw?.length > 0 ? (
-                          <button onClick={() => setActiveMenu('siswa_mapel')} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-xl text-sm hover:bg-indigo-100 transition-colors">
-                            Lihat Siswa Mapel &rarr;
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </div>
                 )}
               </>
@@ -872,11 +879,11 @@ export default function DashboardGuru() {
                   <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas perwalian Anda: <strong>{waliClassesStr}</strong></p>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
                   <div className="flex flex-col md:flex-row gap-4 mb-4">
                     <div className="relative flex-1">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg className="h-5 w-5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                        <svg className="h-5 w-5 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
                         </svg>
                       </div>
@@ -917,7 +924,7 @@ export default function DashboardGuru() {
                   )}
                 </div>
 
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm whitespace-nowrap">
                       <thead>
@@ -970,34 +977,17 @@ export default function DashboardGuru() {
                   <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas mata pelajaran Anda: <strong>{mapelClassesStr}</strong></p>
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
                   <div className="flex flex-col md:flex-row gap-4 mb-4">
                     <div className="relative flex-1">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg className="h-5 w-5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                        <svg className="h-5 w-5 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <input type="text" placeholder="Cari nama atau NISN..." value={siswaSearch} onChange={(e) => setSiswaSearch(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition" />
                     </div>
-                    
-                    {session.mapels && session.mapels.length > 0 && (
-                      <div className="flex-shrink-0 relative">
-                        <select 
-                          value={mapelFilter} 
-                          onChange={(e) => setMapelFilter(e.target.value)}
-                          className="w-full md:w-auto pl-4 pr-10 py-2.5 rounded-xl bg-indigo-50 text-indigo-700 font-medium border border-indigo-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition appearance-none cursor-pointer"
-                        >
-                          {session.mapels.map(m => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                        <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-indigo-500">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {uniqueMapelClasses.length > 0 && (
@@ -1032,54 +1022,39 @@ export default function DashboardGuru() {
                   )}
                 </div>
 
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="overflow-x-auto pb-4">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm whitespace-nowrap">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
-                          <th className="px-4 py-4 font-semibold w-12 text-center">No</th>
-                          <th className="px-4 py-4 font-semibold">Nama Siswa</th>
-                          <th className="px-4 py-4 font-semibold text-center">Kelas</th>
-                          <th className="px-4 py-4 font-semibold text-center">Tugas</th>
-                          <th className="px-4 py-4 font-semibold text-center">UTS</th>
-                          <th className="px-4 py-4 font-semibold text-center">UAS</th>
-                          <th className="px-4 py-4 font-semibold text-center sticky right-0 bg-slate-50 border-l border-slate-200 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] z-10">Aksi</th>
+                          <th className="px-5 py-4 font-semibold w-12 text-center">No</th>
+                          <th className="px-5 py-4 font-semibold">Nama Siswa</th>
+                          <th className="px-5 py-4 font-semibold">NISN</th>
+                          <th className="px-5 py-4 font-semibold text-center">Kelas</th>
+                          <th className="px-5 py-4 font-semibold text-center">Mata Pelajaran</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredMapelStudents.length === 0 ? (
-                          <tr><td colSpan="7" className="px-4 py-8 text-center text-slate-500">Tidak ada siswa yang cocok dengan filter.</td></tr>
+                          <tr><td colSpan="5" className="px-5 py-8 text-center text-slate-500">Tidak ada siswa yang cocok dengan filter.</td></tr>
                         ) : filteredMapelStudents.map((s, idx) => (
-                          <tr key={s.id} className="hover:bg-slate-50 bg-white group">
-                            <td className="px-4 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
-                            <td className="px-4 py-4">
-                              <div className="font-semibold text-slate-800">{s.nama_lengkap}</div>
-                              <div className="text-xs text-slate-500 mt-0.5">{s.nisn}</div>
+                          <tr key={s.id} className="hover:bg-slate-50 bg-white">
+                            <td className="px-5 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-slate-200">
+                                  <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
+                                </div>
+                                <div className="font-semibold text-slate-800">{s.nama_lengkap}</div>
+                              </div>
                             </td>
-                            <td className="px-4 py-4 text-center"><span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-medium text-xs border border-indigo-100">{s.kelas}</span></td>
-                            
-                            {/* Mockup Inputs for Grades */}
-                            <td className="px-4 py-3 text-center">
-                              <input type="number" min="0" max="100" className="w-16 px-2 py-1.5 text-sm border border-slate-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 focus:bg-white transition-all" placeholder="0" />
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <input type="number" min="0" max="100" className="w-16 px-2 py-1.5 text-sm border border-slate-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 focus:bg-white transition-all" placeholder="0" />
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <input type="number" min="0" max="100" className="w-16 px-2 py-1.5 text-sm border border-slate-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 focus:bg-white transition-all" placeholder="0" />
-                            </td>
-
-                            <td className="px-4 py-3 text-center sticky right-0 bg-white group-hover:bg-slate-50 border-l border-slate-200 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] z-10 transition-colors">
-                              <div className="flex items-center justify-center gap-2">
-                                <button onClick={() => alert(`Fungsi Simpan Nilai ${mapelFilter} untuk ${s.nama_lengkap} sedang dalam tahap pengembangan UI mockup.`)} 
-                                  className="px-3 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 font-medium text-xs rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1.5">
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                  Simpan
-                                </button>
-                                <button onClick={() => alert('Fungsi tambah jurnal/catatan individu.')} 
-                                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Beri Catatan/Jurnal">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                                </button>
+                            <td className="px-5 py-4 text-slate-500 font-mono text-xs">{s.nisn}</td>
+                            <td className="px-5 py-4 text-center"><span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-medium text-xs border border-indigo-100">{s.kelas}</span></td>
+                            <td className="px-5 py-4 text-center">
+                              <div className="flex flex-wrap gap-1 justify-center">
+                                {session.mapels?.map(m => (
+                                  <span key={m} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-medium border border-slate-200">{m}</span>
+                                ))}
                               </div>
                             </td>
                           </tr>
@@ -1087,179 +1062,14 @@ export default function DashboardGuru() {
                       </tbody>
                     </table>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeMenu === 'presensi' && fitur.has('lihat_data_siswa') && (
-              <div className="animate-slide-up">
-                <div className="mb-6">
-                  <h2 className="text-2xl font-bold text-slate-900">Presensi Mapel</h2>
-                  <p className="text-slate-500 text-sm mt-1">Daftar presensi siswa pada kelas mata pelajaran Anda.</p>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6">
-                  <div className="flex flex-col md:flex-row gap-4 mb-4">
-                    <div className="relative flex-1">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg className="h-5 w-5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <input type="text" placeholder="Cari nama atau NISN..." value={siswaSearch} onChange={(e) => setSiswaSearch(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition" />
-                    </div>
-                    
-                    {session.mapels && session.mapels.length > 0 && (
-                      <div className="flex-shrink-0 relative">
-                        <select 
-                          value={mapelFilter} 
-                          onChange={(e) => setMapelFilter(e.target.value)}
-                          className="w-full md:w-auto pl-4 pr-10 py-2.5 rounded-xl bg-indigo-50 text-indigo-700 font-medium border border-indigo-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition appearance-none cursor-pointer"
-                        >
-                          {session.mapels.map(m => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                        <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-indigo-500">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {uniqueMapelClasses.length > 0 && (
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                      <button 
-                        onClick={() => setSiswaClassFilter('all')}
-                        className={`whitespace-nowrap px-5 py-2 rounded-full text-sm font-medium transition-colors border ${
-                          siswaClassFilter === 'all' 
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                        }`}
-                      >
-                        Semua Kelas ({mapelStudents.length})
-                      </button>
-                      {uniqueMapelClasses.map(c => {
-                        const count = mapelStudents.filter(s => s.kelas === c).length
-                        return (
-                          <button 
-                            key={c}
-                            onClick={() => setSiswaClassFilter(c)}
-                            className={`whitespace-nowrap px-5 py-2 rounded-full text-sm font-medium transition-colors border ${
-                              siswaClassFilter === c 
-                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                            }`}
-                          >
-                            {c} ({count})
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-semibold text-slate-800 text-sm">Aksi Massal Presensi</h3>
-                    <button onClick={() => handleBulkPresensi('kosong')} className="text-xs font-medium text-red-600 hover:text-red-800 transition-colors">
-                      Kosongkan Presensi
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <span className="text-xs font-medium text-slate-500 mr-2">Set Semua:</span>
-                    <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200">Hadir</button>
-                    <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200">Terlambat</button>
-                    <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200">Sakit</button>
-                    <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200">Izin</button>
-                    <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Alpa</button>
-                    <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300">Pulang</button>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="overflow-x-auto pb-4">
-                    <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
-                          <th className="px-4 py-4 font-semibold w-12 text-center">No</th>
-                          <th className="px-4 py-4 font-semibold">Nama Siswa</th>
-                          <th className="px-4 py-4 font-semibold text-center">Kelas</th>
-                          <th className="px-4 py-4 font-semibold text-center">Kehadiran</th>
-                          <th className="px-4 py-4 font-semibold text-center sticky right-0 bg-slate-50 border-l border-slate-200 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] z-10">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredMapelStudents.length === 0 ? (
-                          <tr><td colSpan="5" className="px-4 py-8 text-center text-slate-500">Tidak ada siswa yang cocok dengan filter.</td></tr>
-                        ) : filteredMapelStudents.map((s, idx) => (
-                          <tr key={s.nisn} className="hover:bg-slate-50 bg-white group">
-                            <td className="px-4 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
-                            <td className="px-4 py-4">
-                              <div className="font-semibold text-slate-800">{s.nama_lengkap}</div>
-                              <div className="text-xs text-slate-500 mt-0.5">{s.nisn}</div>
-                            </td>
-                            <td className="px-4 py-4 text-center"><span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-medium text-xs border border-indigo-100">{s.kelas}</span></td>
-                            
-                            <td className="px-4 py-3 min-w-[320px]">
-                              <div className="flex items-center gap-1.5">
-                                {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
-                                  const isActive = presensiData[s.nisn]?.status === opt;
-                                  const baseColors = {
-                                    'H': 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
-                                    'T': 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
-                                    'S': 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
-                                    'I': 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
-                                    'A': 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
-                                    'P': 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
-                                  }
-                                  const activeColors = {
-                                    'H': 'bg-emerald-600 text-white border-emerald-600',
-                                    'T': 'bg-orange-500 text-white border-orange-500',
-                                    'S': 'bg-blue-600 text-white border-blue-600',
-                                    'I': 'bg-purple-600 text-white border-purple-600',
-                                    'A': 'bg-rose-600 text-white border-rose-600',
-                                    'P': 'bg-slate-600 text-white border-slate-600'
-                                  }
-                                  return (
-                                    <button 
-                                      key={opt}
-                                      onClick={() => handleStatusChange(s.nisn, opt)}
-                                      className={`w-8 h-8 rounded text-sm font-bold transition-all border ${isActive ? activeColors[opt] : baseColors[opt]}`}
-                                    >
-                                      {opt}
-                                    </button>
-                                  )
-                                })}
-                                {(presensiData[s.nisn]?.status === 'T' || presensiData[s.nisn]?.status === 'P') && (
-                                  <input 
-                                    type="time" 
-                                    value={presensiData[s.nisn]?.time || ''}
-                                    onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
-                                    className="ml-2 px-2 py-1.5 text-xs border border-slate-300 rounded bg-white text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24"
-                                  />
-                                )}
-                              </div>
-                            </td>
-
-                            <td className="px-4 py-3 text-center sticky right-0 bg-white group-hover:bg-slate-50 border-l border-slate-200 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] z-10 transition-colors">
-                              <div className="flex items-center justify-center gap-2">
-                                <button onClick={() => handleSimpanPresensiMapel(s)} 
-                                  className="px-3 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 font-medium text-xs rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1.5">
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                  Simpan
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="p-4 bg-slate-50 border-t border-slate-100 text-center">
+                    <p className="text-xs text-slate-500">Untuk input nilai, gunakan menu <button onClick={() => setActiveMenu('input_nilai')} className="text-indigo-600 font-semibold hover:underline">Input Nilai →</button></p>
                   </div>
                 </div>
               </div>
             )}
+
+
 
             {menuTypes.map(t => {
               if (activeMenu === t.id) {
@@ -1270,6 +1080,7 @@ export default function DashboardGuru() {
                     students={waliStudents} 
                     fitur={fitur}
                     fotos={fotos}
+                    onRefresh={() => fetchData(session)}
                   />
                 )
               }
@@ -1288,11 +1099,47 @@ export default function DashboardGuru() {
               <div className="animate-slide-up max-w-md">
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold text-slate-900">Ubah Sandi</h2>
-                  <p className="text-slate-500 text-sm mt-1">Ubah kata sandi login Anda untuk keamanan</p>
+                  <p className="text-slate-500 text-sm mt-1">Ubah kata sandi login Anda secara berkala demi keamanan</p>
                 </div>
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                  <p className="text-sm text-slate-600 mb-6">Untuk mengubah sandi, silakan hubungi Administrator Sekolah. (Fitur ubah sandi mandiri sedang dalam pengembangan).</p>
-                </div>
+                
+                {passMessage.text && (
+                  <div className={`p-4 rounded-xl mb-6 flex items-start gap-3 ${passMessage.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                    {passMessage.type === 'success' ? (
+                      <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    ) : (
+                      <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                    )}
+                    <p className="text-sm font-medium leading-tight">{passMessage.text}</p>
+                  </div>
+                )}
+
+                <form onSubmit={handleChangePassword} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-1.5">Sandi Lama</label>
+                      <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-1.5">Sandi Baru</label>
+                      <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength={6}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      <p className="text-xs text-slate-500 mt-1">Minimal 6 karakter.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-1.5">Konfirmasi Sandi Baru</label>
+                      <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required minLength={6}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border-t border-slate-100 p-4 flex justify-end">
+                    <button type="submit" disabled={passLoading}
+                      className={`px-5 py-2 rounded-xl text-sm font-bold text-white flex items-center gap-2 transition-all ${passLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 shadow-md hover:shadow-lg active:scale-95'}`}>
+                      {passLoading && <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                      {passLoading ? 'Menyimpan...' : 'Simpan Sandi Baru'}
+                    </button>
+                  </div>
+                </form>
               </div>
             )}
 
@@ -1303,7 +1150,7 @@ export default function DashboardGuru() {
                   <p className="text-slate-500 text-sm mt-1">Informasi lengkap data diri dan penugasan Anda.</p>
                 </div>
                 
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="p-6 sm:p-8 flex items-center gap-5 border-b border-slate-100">
                     <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-indigo-100 text-indigo-600 border-4 border-white shadow-md flex items-center justify-center font-bold text-3xl overflow-hidden shrink-0">
                       {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.substring(0, 2).toUpperCase()}
@@ -1392,10 +1239,10 @@ export default function DashboardGuru() {
             {/* Student Detail Modal */}
             {selectedStudent && (
               <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedStudent(null)}>
-                <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in" onClick={e => e.stopPropagation()}>
+                <div className="bg-white rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in" onClick={e => e.stopPropagation()}>
                   <div className="relative h-24 bg-gradient-to-r from-indigo-500 to-indigo-700">
-                    <button onClick={() => setSelectedStudent(null)} className="absolute top-4 right-4 p-1.5 bg-black/20 hover:bg-black/40 text-white rounded-full transition-colors">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <button onClick={() => setSelectedStudent(null)} className="absolute top-4 right-4 p-1.5 bg-black/20 hover:bg-black/40 text-indigo-600 rounded-full transition-colors">
+                      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                   </div>
                   <div className="px-6 pb-6 relative">
@@ -1408,15 +1255,15 @@ export default function DashboardGuru() {
                       
                       <div className="space-y-3 mt-4">
                         <div className="flex flex-col">
-                          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">NISN / NIPD</span>
+                          <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">NISN / NIPD</span>
                           <span className="text-slate-800 font-medium">{selectedStudent.nisn || '-'} / {selectedStudent.nipd || '-'}</span>
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Kode Akses / PIN</span>
+                          <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Kode Akses / PIN</span>
                           <span className="text-slate-800 font-medium font-mono bg-slate-100 px-2 py-1 rounded w-fit">{selectedStudent.kode}</span>
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Status</span>
+                          <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Status</span>
                           <span className="text-emerald-700 bg-emerald-50 px-2 py-1 rounded w-fit text-xs font-bold border border-emerald-200">Siswa Aktif</span>
                         </div>
                       </div>

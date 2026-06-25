@@ -100,7 +100,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
         <select
           value={selectedTaId}
           onChange={e => setSelectedTaId(e.target.value)}
-          className="px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="px-3 py-2 border border-slate-200 rounded-2xl text-sm font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
           <option value="">-- Pilih Tahun Ajaran --</option>
           {(tahunAjarans || []).map(ta => (
@@ -129,7 +129,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
               <div key={nomor} className={`border rounded-xl p-4 transition-all ${isAktif ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${isAktif ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                    <div className={`w-8 h-8 rounded-2xl flex items-center justify-center text-sm font-bold ${isAktif ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
                       {nomor}
                     </div>
                     <div>
@@ -144,7 +144,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
                   {existing && (
                     <button
                       onClick={() => handleDelete(nomor)}
-                      className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg transition-colors"
+                      className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-2xl transition-colors"
                     >
                       Hapus
                     </button>
@@ -152,7 +152,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
                 </div>
 
                 {existing && (
-                  <div className="mb-3 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                  <div className="mb-3 text-xs text-slate-500 bg-slate-50 rounded-2xl px-3 py-2 border border-slate-100">
                     <span className="font-medium text-slate-700">Tersimpan: </span>
                     {formatTanggal(existing.tanggal_mulai)} — {formatTanggal(existing.tanggal_selesai)}
                   </div>
@@ -165,7 +165,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
                       type="date"
                       value={form[nomor].tanggal_mulai}
                       onChange={e => setForm(prev => ({ ...prev, [nomor]: { ...prev[nomor], tanggal_mulai: e.target.value } }))}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                   <div>
@@ -174,13 +174,13 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
                       type="date"
                       value={form[nomor].tanggal_selesai}
                       onChange={e => setForm(prev => ({ ...prev, [nomor]: { ...prev[nomor], tanggal_selesai: e.target.value } }))}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                   <button
                     onClick={() => handleSave(nomor)}
                     disabled={saving === nomor}
-                    className={`w-full py-2 rounded-lg text-xs font-bold transition-all ${saving === nomor ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'}`}
+                    className={`w-full py-2 rounded-2xl text-xs font-bold transition-all ${saving === nomor ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'}`}
                   >
                     {saving === nomor ? 'Menyimpan...' : existing ? '✓ Perbarui Semester' : '+ Simpan Semester'}
                   </button>

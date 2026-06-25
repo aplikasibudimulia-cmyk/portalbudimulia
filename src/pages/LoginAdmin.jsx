@@ -62,22 +62,19 @@ function LoginAdmin() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10 overflow-hidden relative">
 
-      <div className="w-full max-w-md animate-slide-up">
+      <div className="text-center w-full flex justify-center z-10 pointer-events-none" style={{ marginBottom: '-25px' }}>
+        <img src="/logo.png?v=1782401880" alt="Logo SMP Budi Mulia" className="w-[500px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '50vh' }} />
+      </div>
 
-        <div className="text-center mb-8">
-          <div className="inline-flex flex-col items-center gap-2 mb-2">
-            <div className="border border-slate-200 rounded-xl shadow-sm p-2 bg-white">
-              <img src="/logo.png" alt="Logo SMP Budi Mulia" className="h-20 w-20 object-contain" />
-            </div>
-            <span className="font-semibold text-slate-700 text-sm tracking-wide">SMP BUDI MULIA</span>
+      <div className="w-full max-w-md animate-slide-up z-20 relative">
+        <div className="bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-8 shadow-xl">
+          
+          <div className="text-center mb-6">
+            <h2 className="text-xl font-bold text-slate-800">Masuk ke Portal Admin</h2>
+            <p className="text-slate-500 text-sm mt-1">Akses khusus untuk Administrator</p>
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 mt-3">Portal Admin</h1>
-          <p className="text-slate-500 mt-1.5 text-sm">Akses khusus untuk Administrator</p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-md">
 
           <div className="flex items-center gap-2 mb-5 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
             <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -87,8 +84,7 @@ function LoginAdmin() {
             <p className="text-xs text-amber-700">Halaman ini hanya dapat diakses oleh Administrator yang berwenang.</p>
           </div>
 
-          <h2 className="text-lg font-semibold text-slate-900 mb-1">Masuk ke Sistem</h2>
-          <p className="text-slate-500 text-sm mb-6">Silakan masuk menggunakan kredensial administrator.</p>
+
 
           {notification && (
             <div className={`mb-5 px-4 py-3 rounded-xl text-sm font-medium border ${
@@ -151,7 +147,7 @@ function LoginAdmin() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-6">
-          &copy; {new Date().getFullYear()} SIAKD SMP Budi Mulia Jakarta. All rights reserved.
+          &copy; {new Date().getFullYear()} eBudiMulia SMP Budi Mulia Jakarta. All rights reserved.
         </p>
       </div>
     </div>

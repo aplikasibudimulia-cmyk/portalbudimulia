@@ -14,7 +14,10 @@ import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
 import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
 import AdminVerifikasiModal from '../components/AdminVerifikasiModal'
 import AdminSemesterSection from '../components/AdminSemesterSection'
+import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
+import CollapsibleSection from '../components/CollapsibleSection'
 import { logActivity } from '../utils/logger'
+import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 const DEFAULT_AVATAR = '/default-avatar.png'
@@ -51,57 +54,57 @@ const StudentAvatar = ({ fallbackUrls = [], name, className = 'w-9 h-9 text-xs' 
 }
 
 const IconUsers = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
     <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
   </svg>
 )
 const IconFile = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
     <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
   </svg>
 )
 const IconSettings = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3"/>
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
   </svg>
 )
 const IconUpload = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
     <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
   </svg>
 )
 const IconLogout = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
   </svg>
 )
 const IconTeacher = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
     <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
   </svg>
 )
 const IconShield = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
   </svg>
 )
 const IconDashboard = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>
   </svg>
 )
 const IconActivity = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
   </svg>
 )
 const IconMessage = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
   </svg>
 )
@@ -117,15 +120,14 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   const [showVerificationModal, setShowVerificationModal] = useState(false)
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
+  const [fileNames, setFileNames] = useState({})
   const [fileAccess, setFileAccess] = useState({})
   const [fileReqs, setFileReqs] = useState({})
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('all')
   const [reqFilter, setReqFilter] = useState('all')
   const [fileFilter, setFileFilter] = useState('all')
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(null)
-  const [uploadResults, setUploadResults] = useState(null)
+  const { isUploading, progress: uploadProgress, results: uploadResults } = useUploadManager()
   const [activeTab, setActiveTab] = useState('dokumen')
   const [selectedPreview, setSelectedPreview] = useState(null)
   const [toggling, setToggling] = useState(null)
@@ -139,6 +141,12 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   useEffect(() => { 
     fetchFiles()
     fetchActivityLogs()
+
+    const interval = setInterval(() => {
+      fetchActivityLogs()
+    }, 2000)
+
+    return () => clearInterval(interval)
   }, [type.id])
 
   const fetchActivityLogs = async () => {
@@ -154,9 +162,10 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       .select('kode_siswa, file_name, file_url, is_accessible, persyaratan_terpenuhi')
       .eq('kode_jenis', type.kode_jenis)
     
-    setFiles(new Set(data?.filter(f => f.file_name).map(f => f.file_name) ?? []))
-    setFileUrls(data?.reduce((acc, f) => f.file_name ? {...acc, [f.file_name]: f.file_url} : acc, {}) ?? {})
-    setFileAccess(data?.reduce((acc, f) => f.file_name ? {...acc, [f.file_name]: f.is_accessible} : acc, {}) ?? {})
+    setFiles(new Set(data?.filter(f => f.file_url && f.file_url !== '-').map(f => f.kode_siswa) ?? []))
+    setFileUrls(data?.reduce((acc, f) => (f.file_url && f.file_url !== '-') ? {...acc, [f.kode_siswa]: f.file_url} : acc, {}) ?? {})
+    setFileNames(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.file_name}), {}) ?? {})
+    setFileAccess(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.is_accessible}), {}) ?? {})
     setFileReqs(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.persyaratan_terpenuhi || {}}), {}) ?? {})
   }
 
@@ -167,15 +176,12 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     
     setToggling(`${kode}_req_${reqId}`)
     
-    const hasFileForSingle = files.has(`${kode}${type.kode_jenis}.pdf`)
-    const fNameSingle = `${kode}${type.kode_jenis}.pdf`
-    
     const { error: upsertErr } = await supabase.from('berkas_pengumuman').upsert({
       kode_siswa: kode,
       kode_jenis: type.kode_jenis,
       persyaratan_terpenuhi: updatedReqs,
-      file_name: hasFileForSingle ? fNameSingle : '-',
-      file_url: hasFileForSingle ? (fileUrls[fNameSingle] || '-') : '-'
+      file_name: fileNames[kode] || '-',
+      file_url: fileUrls[kode] || '-'
     }, { onConflict: 'kode_siswa,kode_jenis' })
     
     if (upsertErr) alert('Gagal: ' + upsertErr.message)
@@ -192,14 +198,12 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     
     const upserts = codes.map(kode => {
       const currentReqs = fileReqs[kode] || {}
-      const fName = `${kode}${type.kode_jenis}.pdf`
-      const hasFile = files.has(fName)
       return {
         kode_siswa: kode,
         kode_jenis: type.kode_jenis,
         persyaratan_terpenuhi: { ...currentReqs, [reqId]: targetStatus },
-        file_name: hasFile ? fName : '-',
-        file_url: hasFile ? (fileUrls[fName] || '-') : '-'
+        file_name: fileNames[kode] || '-',
+        file_url: fileUrls[kode] || '-'
       }
     })
     
@@ -232,20 +236,20 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     setToggling(null)
   }
 
-  const handleToggleFileAccess = async (kode, fileName) => {
-    const currentStatus = fileAccess[fileName]
-    setToggling(fileName)
+  const handleToggleFileAccess = async (kode) => {
+    const currentStatus = fileAccess[kode]
+    setToggling(kode)
     const { error } = await supabase.from('berkas_pengumuman')
       .update({ is_accessible: !currentStatus })
       .match({ kode_siswa: kode, kode_jenis: type.kode_jenis })
     if (error) {
       alert('Gagal mengubah akses: ' + error.message)
     } else {
-      setFileAccess(prev => ({ ...prev, [fileName]: !currentStatus }))
+      setFileAccess(prev => ({ ...prev, [kode]: !currentStatus }))
       logActivity({
         userRole: 'Administrator',
         action: 'Toggle Akses File',
-        details: `${!currentStatus ? 'Membuka' : 'Menutup'} akses dokumen ${fileName} untuk kode siswa ${kode}.`
+        details: `${!currentStatus ? 'Membuka' : 'Menutup'} akses dokumen untuk kode siswa ${kode}.`
       })
     }
     setToggling(null)
@@ -268,19 +272,71 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     }
   }
 
+  const handleDownloadTemplate = () => {
+    const sortedFiltered = [...students].sort((a, b) => {
+      const classA = a.kelas || ''
+      const classB = b.kelas || ''
+      if (classA !== classB) return classA.localeCompare(classB)
+      return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+    })
+
+    const dataToExport = sortedFiltered.map((s, i) => {
+      const fileName = `${s.kode}${type.kode_jenis}.pdf`
+      return {
+        'No': i + 1,
+        'NAMA FILE PDF (WAJIB SAMA PERSIS)': fileName,
+        'NISN': s.nisn || '',
+        'Nama Lengkap': s.nama_lengkap || '',
+        'Kelas': s.kelas || '',
+      }
+    })
+
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+    ws['!cols'] = [
+      { wch: 5 },
+      { wch: 45 },
+      { wch: 15 },
+      { wch: 35 },
+      { wch: 10 }
+    ]
+    XLSX.utils.book_append_sheet(wb, ws, 'Template PDF')
+    XLSX.writeFile(wb, `Template_Penamaan_PDF_${type.nama.replace(/\s+/g, '_')}.xlsx`)
+  }
+
   const handleDownload = async (kode, nama) => {
-    const fileName = `${kode}${type.kode_jenis}.pdf`
-    const url = fileUrls[fileName]
-    if (!url) { alert('File tidak ditemukan untuk ' + nama); return }
+    const url = fileUrls[kode]
+    if (!url || url === '-') { alert('File tidak ditemukan untuk ' + nama); return }
     window.open(url, '_blank')
   }
 
   const handleDeleteFile = async (kode, nama) => {
-    const fileName = `${kode}${type.kode_jenis}.pdf`
+    const fileName = fileNames[kode] || `${kode}${type.kode_jenis}.pdf`
     if (!window.confirm(`Hapus file "${fileName}" milik ${nama}?\nTindakan ini tidak dapat dibatalkan.`)) return
     const { error } = await supabase.from('berkas_pengumuman').delete().match({ kode_siswa: kode, kode_jenis: type.kode_jenis })
     if (error) { alert('Gagal menghapus: ' + error.message); return }
     fetchFiles()
+  }
+
+  const handleResetStatusUnduh = async (nama_lengkap) => {
+    if (!window.confirm(`Yakin ingin mereset status unduh untuk ${nama_lengkap}?`)) return
+    
+    const { error } = await supabase.from('activity_log')
+      .delete()
+      .match({ aksi: 'Unduh Dokumen' })
+      .ilike('detail', `%${type.nama}%`)
+      .ilike('detail', `%${nama_lengkap}%`)
+      
+    if (error) {
+      alert('Gagal mereset status: ' + error.message)
+    } else {
+      fetchActivityLogs()
+      logActivity({
+        userRole: 'Administrator',
+        action: 'Reset Status Unduh',
+        details: `Mereset status unduh dokumen ${type.nama} untuk siswa ${nama_lengkap}.`
+      })
+    }
   }
 
   const handleUpload = async (filesList) => {
@@ -288,13 +344,20 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     if (!CLOUD_NAME || CLOUD_NAME === 'your_cloud_name') {
       alert('Konfigurasi Cloudinary belum diatur di .env'); return
     }
-    setIsUploading(true); setUploadResults(null)
+    
+    // Gunakan global manager alih-alih state lokal
+    globalUploadManager.startUpload()
+    
     const validKodes = new Set(students.map(s => String(s.kode ?? '').trim()).filter(Boolean))
     const results = { success: [], failed: [], skipped: [] }
     
     for (let i = 0; i < filesList.length; i++) {
+      if (globalUploadManager.getState().cancelFlag) {
+        break; // Hentikan upload jika dibatalkan pengguna
+      }
+      
       const file = filesList[i]
-      setUploadProgress({ current: i + 1, total: filesList.length, fileName: file.name })
+      globalUploadManager.updateProgress(i + 1, filesList.length, file.name)
       const kode = file.name.replace(/\.[^/.]+$/, '').replace(new RegExp(`${type.kode_jenis}$`, 'i'), '').trim()
       
       if (validKodes.size > 0 && !validKodes.has(kode)) { results.skipped.push(file.name); continue }
@@ -336,7 +399,9 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
         results.failed.push(file.name)
       }
     }
-    setIsUploading(false); setUploadProgress(null); setUploadResults(results)
+    
+    globalUploadManager.finishUpload(results)
+    
     fetchFiles()
     if (inputRef.current) inputRef.current.value = ''
   }
@@ -364,7 +429,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
     let matchFile = true
     if (fileFilter !== 'all') {
-      const hasFile = files.has(`${s.kode}${type.kode_jenis}.pdf`)
+      const hasFile = !!fileUrls[s.kode]
       if (fileFilter === 'has_file' && !hasFile) matchFile = false
       if (fileFilter === 'no_file' && hasFile) matchFile = false
     }
@@ -373,7 +438,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   })
 
   // Stats calculations
-  const statsStudentsWithFile = students.filter(s => files.has(`${s.kode}${type.kode_jenis}.pdf`)).length
+  const statsStudentsWithFile = students.filter(s => files.has(s.kode)).length
   const statsAllReqMet = type.persyaratan && type.persyaratan.length > 0
     ? students.filter(s => {
         const terpenuhi = fileReqs[s.kode] || {}
@@ -383,7 +448,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   const statsClassProgress = uniqueClasses.map(c => {
     const classStudents = students.filter(s => s.kelas === c)
     const total = classStudents.length
-    const withFile = classStudents.filter(s => files.has(`${s.kode}${type.kode_jenis}.pdf`)).length
+    const withFile = classStudents.filter(s => files.has(s.kode)).length
     const allMet = type.persyaratan && type.persyaratan.length > 0
       ? classStudents.filter(s => {
           const t = fileReqs[s.kode] || {}
@@ -425,21 +490,21 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
             {/* STATS DASHBOARD */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Siswa</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Siswa</p>
                 <p className="text-xl font-bold text-slate-800 mt-0.5">{uniqueStudentCount}</p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ada Berkas</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Ada Berkas</p>
                 <p className="text-xl font-bold text-emerald-600 mt-0.5">{statsStudentsWithFile}</p>
               </div>
               {statsAllReqMet !== null && (
                 <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Syarat Lengkap</p>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Syarat Lengkap</p>
                   <p className="text-xl font-bold text-blue-600 mt-0.5">{statsAllReqMet}</p>
                 </div>
               )}
               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Belum Ada Berkas</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Belum Ada Berkas</p>
                 <p className="text-xl font-bold text-red-500 mt-0.5">{uniqueStudentCount - statsStudentsWithFile}</p>
               </div>
             </div>
@@ -465,17 +530,22 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
               )}
               <button onClick={() => handleBulkAccess(true)} className="px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-medium border border-teal-200">Buka Semua</button>
               <button onClick={() => handleBulkAccess(false)} className="px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-medium border border-orange-200">Tutup Semua</button>
+              <button onClick={handleDownloadTemplate} disabled={isUploading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-medium transition-all">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Template Penamaan PDF
+              </button>
               <button onClick={() => inputRef.current?.click()} disabled={isUploading}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-xs font-medium transition-all">
                 <IconUpload /> Upload PDF
-              </button>
+            </button>
               {onDelete && (
                 <button onClick={onDelete} className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 border border-slate-200 hover:border-red-300 text-slate-500 hover:text-red-600 text-xs font-medium transition-all">Hapus</button>
               )}
             </div>
 
             {/* UPLOAD PROGRESS */}
-            {isUploading && uploadProgress && (
+            {isUploading && uploadProgress && !globalUploadManager.getState().minimized && (
               <div className="mb-3 bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs text-slate-700 font-medium">Mengunggah...</p>
@@ -520,7 +590,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
               <div className="flex flex-col md:flex-row gap-2">
                 <div className="relative flex-1">
                   <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-                    <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <svg className="h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
                     </svg>
                   </div>
@@ -583,7 +653,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                     )}
                     {search && (
                       <button onClick={() => setSearch('')} className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-medium rounded-full border border-slate-200 hover:bg-slate-200">
-                        "{search}" <span className="text-slate-400">✕</span>
+                        "{search}" <span className="text-slate-500">✕</span>
                       </button>
                     )}
                   </>
@@ -624,8 +694,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                 </thead>
                 <tbody>
                   {filtered.map((s, i) => {
-                    const fName = `${s.kode}${type.kode_jenis}.pdf`
-                    const hasFile = files.has(fName)
+                    const hasFile = files.has(s.kode)
                     const reqs = type.persyaratan || []
                     const terpenuhi = fileReqs[s.kode] || {}
                     const allReqMet = reqs.length > 0 ? reqs.every(r => terpenuhi[r.id]) : true
@@ -634,7 +703,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                     return (
                       <tr key={s.kode ?? s.nisn ?? i}
                         className={`group border-b border-slate-50 hover:bg-slate-50/80 transition-colors ${isComplete ? 'bg-emerald-50/30' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
-                        <td className="text-center px-2 py-2 text-slate-400">{i + 1}</td>
+                        <td className="text-center px-2 py-2 text-slate-500">{i + 1}</td>
                         <td className="px-2 py-2">
                           <StudentAvatar fallbackUrls={getFallbackPhotoUrls(s, allFotos)} name={s.nama_lengkap} className="w-7 h-7 text-[10px]" />
                         </td>
@@ -675,10 +744,18 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                         })}
                         <td className="text-center px-2 py-2">
                           {activityLogs.some(log => log.detail.includes(s.nama_lengkap)) ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200" title="Siswa telah mengunduh/membuka dokumen">
-                              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                              Selesai
-                            </span>
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200" title="Siswa telah mengakses dokumen">
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                Telah Diakses
+                              </span>
+                              <button onClick={() => handleResetStatusUnduh(s.nama_lengkap)} title="Reset Status"
+                                className="p-0.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-500 transition-colors">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" />
+                                </svg>
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-slate-300 text-[10px] italic">—</span>
                           )}
@@ -722,7 +799,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
                 const hasFileReqs = type.persyaratan && type.persyaratan.length > 0
                 const grantedCount = classStudents.filter(s => {
-                  const hasFile = files.has(`${s.kode}${type.kode_jenis}.pdf`)
+                  const hasFile = files.has(s.kode)
                   if (!hasFile) return false
                   if (!hasFileReqs) return true
                   const terpenuhi = fileReqs[s.kode] || {}
@@ -771,11 +848,11 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-6 px-4 animate-fade-in">
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm"
             onClick={() => setSelectedPreview(null)} />
-          <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[90vh]">
+          <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[90vh]">
             <div className="relative bg-indigo-600 h-28 shrink-0">
               <button onClick={() => setSelectedPreview(null)}
-                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-indigo-600 transition-colors">
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
               </button>
@@ -788,16 +865,16 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                 <h3 className="text-slate-900 font-bold text-xl mt-3 text-center">{selectedPreview.nama_lengkap}</h3>
                 <p className="text-indigo-600 font-medium text-sm mt-0.5 mb-3">Kelas {selectedPreview.kelas ?? '—'}</p>
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">NISN / NIPD</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">NISN / NIPD</p>
                   <p className="text-slate-800 font-semibold">{selectedPreview.nisn || '-'}{selectedPreview.nipd ? ` / ${selectedPreview.nipd}` : ''}</p>
                 </div>
               </div>
             </div>
             <div className="bg-slate-100 border-t border-slate-200 relative h-[60vh] min-h-[400px]">
-              {selectedPreview.kode && fileUrls[`${selectedPreview.kode}${type.kode_jenis}.pdf`] ? (
+              {selectedPreview.kode && fileUrls[selectedPreview.kode] ? (
                 <>
                   <div className="absolute top-4 right-4 z-10">
-                    <a href={fileUrls[`${selectedPreview.kode}${type.kode_jenis}.pdf`]}
+                    <a href={fileUrls[selectedPreview.kode]}
                       target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-indigo-700 text-sm font-bold shadow-md border border-slate-200 transition-transform active:scale-95">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -808,7 +885,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                   </div>
                   <iframe
                     key={selectedPreview.kode + type.kode_jenis}
-                    src={fileUrls[`${selectedPreview.kode}${type.kode_jenis}.pdf`]}
+                    src={fileUrls[selectedPreview.kode]}
                     width="100%" height="100%"
                     className="w-full h-full block border-0"
                     title={`${type.nama} - ${selectedPreview.nama_lengkap}`}
@@ -817,7 +894,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
               ) : (
                 <div className="flex flex-col items-center justify-center h-full p-6 text-center">
                   <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center mb-4">
-                    <svg className="w-8 h-8 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                    <svg className="w-8 h-8 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
                   </div>
                   <h3 className="text-slate-700 font-bold mb-1">Dokumen Belum Tersedia</h3>
                   <p className="text-slate-500 text-sm">Dokumen {type.nama} untuk siswa ini belum diunggah.</p>
@@ -902,6 +979,19 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     e.preventDefault()
     setIsSavingModal(true)
     
+    // Cek perubahan NISN
+    if (editFormData.nisn && editFormData.original_nisn && editFormData.nisn !== editFormData.original_nisn) {
+      const { error: rpcError } = await supabase.rpc('update_siswa_nisn', { 
+        old_nisn: editFormData.original_nisn, 
+        new_nisn: editFormData.nisn 
+      })
+      if (rpcError) {
+        alert('Gagal memigrasikan NISN: ' + rpcError.message)
+        setIsSavingModal(false)
+        return
+      }
+    }
+
     // Update permanent data
     const { error: err1 } = await supabase.from('siswa_permanent')
       .update({
@@ -1011,6 +1101,11 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     const q = search.toLowerCase()
     return (!search || s.nama_lengkap?.toLowerCase().includes(q) || String(s.nisn ?? '').includes(q))
       && (selectedClasses.length === 0 || selectedClasses.includes(s.kelas))
+  }).sort((a, b) => {
+    const classA = a.kelas || ''
+    const classB = b.kelas || ''
+    if (classA !== classB) return classA.localeCompare(classB)
+    return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
   })
 
   const handleBulkDeleteYear = async () => {
@@ -1053,6 +1148,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
       return {
         'No': i + 1,
         'No Absen': absen,
+        'KODE PDF (PENTING)': s.kode || '',
         'Kode Akses': s.kode_akses || '',
         'Nama Lengkap': s.nama_lengkap || '',
         'NISN': s.nisn || '',
@@ -1091,6 +1187,14 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
             </svg>
             <span className="hidden md:inline">Export</span> CSV
           </button>
+
+          <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa.id).length === 0}
+            className="px-4 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50 shadow-sm" title="Urutkan absen dan perbarui kode PDF otomatis">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 12h18"/><path d="M12 3v18"/><path d="m8 8-4 4 4 4"/><path d="m16 16 4-4-4-4"/>
+            </svg>
+            <span className="hidden md:inline">Rapihkan Kode (A-Z)</span>
+          </button>
           
           {activeTa && students.filter(s => s.tahun_ajaran === activeTa.nama).length > 0 && (
             <button onClick={handleBulkDeleteYear} disabled={isProcessing}
@@ -1109,7 +1213,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
         <div className="flex flex-col md:flex-row gap-3 mb-3">
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-5 w-5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="h-5 w-5 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
               </svg>
             </div>
@@ -1194,7 +1298,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 
                   return (
                   <tr key={s.kode ?? s.nisn ?? i} className={`group border-b border-slate-50 hover:bg-slate-50/80 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
-                    <td className="text-center px-2 py-2 text-slate-400">{i + 1}</td>
+                    <td className="text-center px-2 py-2 text-slate-500">{i + 1}</td>
                     <td className="px-2 py-2"><StudentAvatar fallbackUrls={getFallbackPhotoUrls(s, allFotos)} name={s.nama_lengkap} className="w-7 h-7 text-[10px]" /></td>
                     <td className="px-2 py-2 text-slate-900 font-medium truncate max-w-[180px]">{s.nama_lengkap}</td>
                     <td className="px-2 py-2 text-slate-500 font-mono text-[11px]">{s.nisn ?? '—'}</td>
@@ -1222,7 +1326,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
                           </button>
                         )}
                         <button onClick={() => { 
-                            setEditFormData({...s, foto_url: displayedPhoto?.cloudinary_url || null})
+                            setEditFormData({...s, original_nisn: s.nisn, foto_url: displayedPhoto?.cloudinary_url || null})
                             setShowEditModal(true)
                           }} disabled={isProcessing}
                           className="p-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded border border-indigo-200 transition-colors disabled:opacity-50" title="Edit Siswa">
@@ -1246,10 +1350,10 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 
       {showEditModal && editFormData && createPortal(
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl flex flex-col max-h-[90vh] animate-fade-in">
+          <div className="bg-white rounded-xl w-full max-w-sm shadow-xl flex flex-col max-h-[90vh] animate-fade-in">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0">
               <h3 className="font-bold text-lg text-slate-800">Edit Data Siswa</h3>
-              <button onClick={() => setShowEditModal(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+              <button onClick={() => setShowEditModal(false)} className="p-2 text-slate-500 hover:text-slate-600 rounded-lg hover:bg-slate-100"><svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
             </div>
             
             <form id="siswa-form" onSubmit={handleSaveSiswa} className="p-5 overflow-y-auto space-y-4">
@@ -1257,7 +1361,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
                 <input type="file" accept="image/*" ref={editPhotoInputRef} className="hidden" onChange={handleEditPhotoUpload} />
                 <div 
                   onClick={() => editPhotoInputRef.current?.click()}
-                  className="relative w-20 h-20 rounded-full bg-slate-100 border-2 border-slate-200 overflow-hidden cursor-pointer group flex items-center justify-center text-slate-400 hover:border-indigo-400 transition-colors"
+                  className="relative w-20 h-20 rounded-full bg-slate-100 border-2 border-slate-200 overflow-hidden cursor-pointer group flex items-center justify-center text-slate-500 hover:border-indigo-400 transition-colors"
                 >
                   {isUploadingModalPhoto ? (
                     <div className="w-6 h-6 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
@@ -1269,7 +1373,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
                   
                   {!isUploadingModalPhoto && (
                     <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
@@ -1280,8 +1384,8 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">NISN <span className="text-slate-400 font-normal">(Tidak dapat diubah)</span></label>
-                <input type="text" disabled value={editFormData.nisn || ''} className="w-full px-3 py-2 border border-slate-200 bg-slate-50 rounded-lg text-sm text-slate-500" />
+                <label className="block text-sm font-medium text-slate-700 mb-1">NISN <span className="text-amber-500 font-normal">(Ubah dengan hati-hati)</span></label>
+                <input type="text" required value={editFormData.nisn || ''} onChange={e => setEditFormData({...editFormData, nisn: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
               </div>
               
               <div>
@@ -1345,6 +1449,7 @@ function Admin() {
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [csvSyncing, setCsvSyncing] = useState(false)
   const [csvResult, setCsvResult] = useState(null)
   const [lastSyncDetails, setLastSyncDetails] = useState(null)
@@ -1360,6 +1465,8 @@ function Admin() {
   const [newTahunAjaran, setNewTahunAjaran] = useState('')
   const [tahunAjaranSaving, setTahunAjaranSaving] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [showUploadInterceptModal, setShowUploadInterceptModal] = useState(false)
+  const [pendingMenu, setPendingMenu] = useState(null)
 
   const activeTa = tahunAjarans.find(t => t.is_aktif)
 
@@ -1395,6 +1502,15 @@ function Admin() {
     return () => supabase.removeChannel(channel)
   }, [authLoading])
 
+  const { isUploading, progress: uploadProgress, results: uploadResults } = useUploadManager()
+
+  useEffect(() => {
+    if (uploadResults && globalUploadManager.getState().minimized) {
+      alert(`Upload Selesai.\nBerhasil: ${uploadResults.success.length}\nGagal: ${uploadResults.failed.length}\nDilewati: ${uploadResults.skipped.length}`)
+      globalUploadManager.setMinimized(false)
+    }
+  }, [uploadResults])
+
   const fetchTahunAjarans = async () => {
     const { data } = await supabase.from('tahun_ajaran').select('*').order('nama', { ascending: false })
     if (data) {
@@ -1422,13 +1538,17 @@ function Admin() {
   }
 
   const fetchAnnouncement = async () => {
-    const { data } = await supabase.from('pengaturan').select('nilai').eq('kunci', 'teks_pengumuman').maybeSingle()
-    setAnnouncement(data?.nilai ?? '')
+    // Menggunakan pengaturan_sekolah agar konsisten dengan Dashboard siswa
+    const { data } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'pengumuman_teks').maybeSingle()
+    setAnnouncement(data?.setting_value ?? '')
   }
 
   const handleSaveAnnouncement = async () => {
     setAnnouncementSaving(true); setAnnouncementMsg(null)
-    const { error } = await supabase.from('pengaturan').upsert({ kunci: 'teks_pengumuman', nilai: announcement }, { onConflict: 'kunci' })
+    const { error } = await supabase.from('pengaturan_sekolah').upsert(
+      { setting_key: 'pengumuman_teks', setting_value: announcement },
+      { onConflict: 'setting_key' }
+    )
     setAnnouncementSaving(false)
     setAnnouncementMsg(error ? { type: 'error', text: 'Gagal menyimpan.' } : { type: 'success', text: 'Berhasil disimpan!' })
   }
@@ -1453,6 +1573,55 @@ function Admin() {
     const { error: err2 } = await supabase.from('tahun_ajaran').update({ is_aktif: isAktif }).eq('id', id)
     if (err2) { alert('Gagal: ' + err2.message); return }
     fetchTahunAjarans()
+  }
+
+  const handleExportDatabase = () => {
+    if (!activeTa) {
+      alert("Silakan aktifkan tahun ajaran di menu Konfigurasi terlebih dahulu.")
+      return
+    }
+    const filteredStudents = students.filter(s => s.tahun_ajaran === activeTa.nama)
+    
+    if (filteredStudents.length === 0) {
+      alert(`Tidak ada data siswa pada tahun ajaran ${activeTa.nama}.`)
+      return
+    }
+
+    const sortedFiltered = [...filteredStudents].sort((a, b) => {
+      const classA = a.kelas || ''
+      const classB = b.kelas || ''
+      if (classA !== classB) return classA.localeCompare(classB)
+      return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+    })
+
+    let currentClass = null
+    let currentAbsen = 1
+
+    const dataToExport = sortedFiltered.map((s) => {
+      if (s.kelas !== currentClass) {
+        currentClass = s.kelas
+        currentAbsen = 1
+      }
+      const absen = currentAbsen++
+
+      return {
+        'NO ABSEN': absen,
+        'KODE PDF (PENTING)': s.kode || '',
+        'NISN': s.nisn || '',
+        'NIPD': s.nipd || '',
+        'NAMA LENGKAP': s.nama_lengkap || '',
+        'KELAS': s.kelas || '',
+        'EMAIL AKTIF': s.email_aktif || '',
+        'NO. WHATSAPP': s.no_whatsapp || '',
+        'KODE AKSES': s.kode_akses || '',
+        'TAHUN LULUS': s.tahun_lulus || '',
+      }
+    })
+
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+    XLSX.utils.book_append_sheet(wb, ws, 'Data Siswa')
+    XLSX.writeFile(wb, `Export_Data_Siswa_${activeTa.nama.replace('/', '_')}.xlsx`)
   }
 
   const handleCsvSync = async (e) => {
@@ -1588,7 +1757,13 @@ function Admin() {
       uniqueEnrollments.forEach(e => {
         const existing = existingEnrollMap.get(e.nisn)
         if (existing) {
-          enrollmentsToUpdate.push({ ...e, id: existing.id, kode: existing.kode })
+          if (existing.kelas !== e.kelas || existing.kode !== e.kode) {
+            enrollmentsToUpdate.push({
+              id: existing.id,
+              kelas: e.kelas,
+              kode: e.kode // SEKARANG KITA UPDATE KARENA SUDAH ADA TRIGGER CASCADE!
+            })
+          }
         } else {
           enrollmentsToInsert.push(e)
         }
@@ -1815,6 +1990,16 @@ function Admin() {
 
   const closeSidebar = () => setSidebarOpen(false)
 
+  const handleMenuNavigation = (menuId) => {
+    if (globalUploadManager.getState().isUploading && !globalUploadManager.getState().minimized) {
+      setPendingMenu(menuId)
+      setShowUploadInterceptModal(true)
+    } else {
+      setActiveMenu(menuId)
+      closeSidebar()
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 animate-fade-in">
 
@@ -1822,96 +2007,94 @@ function Admin() {
         <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={closeSidebar} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out md:static md:w-64 md:translate-x-0 md:z-auto ${
+      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${
         sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       }`}>
-        <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="border border-slate-200 rounded-xl shadow-sm p-1 bg-white shrink-0">
-              <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
-            </div>
-            <div>
-              <p className="font-semibold text-slate-800 text-sm">SIAKD</p>
-              <p className="text-slate-500 text-xs mt-0.5">SMP Budi Mulia Jakarta</p>
-            </div>
+        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
+            {!sidebarCollapsed && (
+              <div className="animate-fade-in whitespace-nowrap">
+                <p className="font-semibold text-slate-800 text-sm">eBudiMulia</p>
+                <p className="text-slate-500 text-xs mt-0.5">SMP Budi Mulia Jakarta</p>
+              </div>
+            )}
           </div>
-          <button onClick={closeSidebar} className="md:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
+          {!sidebarCollapsed && (
+            <button onClick={closeSidebar} className="md:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          <button onClick={() => { setActiveMenu('dashboard'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconDashboard /> Beranda Utama
-          </button>
+          <button title="Beranda Utama" onClick={() => handleMenuNavigation('dashboard')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconDashboard /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda Utama</span>}
+            </button>
           
-          <button onClick={() => { setActiveMenu('manajemen_akun'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'manajemen_akun' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconUsers /> Manajemen Akun
-          </button>
+          <button title="Manajemen Akun" onClick={() => handleMenuNavigation('manajemen_akun')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_akun' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Akun</span>}
+            </button>
+<button title="Manajemen Role" onClick={() => handleMenuNavigation('manajemen_role')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_role' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconShield /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Role</span>}
+            </button>
           
-          <button onClick={() => { setActiveMenu('konfigurasi'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'konfigurasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconSettings /> Pengaturan Sistem
-          </button>
-          
-          <button onClick={() => { setActiveMenu('manajemen_role'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'manajemen_role' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconShield /> Manajemen Role
-          </button>
-          
-          <button onClick={() => { setActiveMenu('log_aktivitas'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconActivity /> Log Aktivitas
+          <button title="Log Aktivitas" onClick={() => handleMenuNavigation('log_aktivitas')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconActivity /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
+            </button>
+
+          <div className="pt-4 pb-2">
+            {!sidebarCollapsed && <p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">FITUR SISTEM</p>}
+          </div>
+
+          <button onClick={() => handleMenuNavigation('presensi_qr')}
+            title="Presensi QR Code"
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'presensi_qr' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi QR Code</span>}
           </button>
 
           <div className="pt-4 pb-2">
-            <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">PENGUMUMAN / DOKUMEN</p>
+            {!sidebarCollapsed && <p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">PENGUMUMAN / DOKUMEN</p>}
           </div>
 
-          <button onClick={() => { setActiveMenu('kelola_pengumuman'); closeSidebar() }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              activeMenu === 'kelola_pengumuman' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}>
-            <IconSettings /> Kelola Pengumuman
-          </button>
+          <button title="Kelola Pengumuman" onClick={() => handleMenuNavigation('kelola_pengumuman')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kelola_pengumuman' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Kelola Pengumuman</span>}
+            </button>
           
           {menuTypes.map(t => (
-            <button key={t.id} onClick={() => { setActiveMenu(t.id); closeSidebar() }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}>
+            <button key={t.id} onClick={() => handleMenuNavigation(t.id)}
+              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
               <IconFile />
-              <span className="truncate">{t.nama}</span>
-            </button>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
+              </button>
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-200 bg-slate-50">
+        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-2">
+          
+          <button title="Pengaturan Sistem" onClick={() => handleMenuNavigation('konfigurasi')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konfigurasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Sistem</span>}
+            </button>
           <button onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors">
-            <IconLogout /> Keluar Sesi
-          </button>
+            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
+            <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}
+            </button>
         </div>
       </aside>
 
       <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50">
         <div className="md:hidden p-4 border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
@@ -1941,6 +2124,10 @@ function Admin() {
             <AdminRoleSection />
           )}
 
+          {activeMenu === 'presensi_qr' && (
+            <AdminPresensiConfigSection />
+          )}
+
           {activeMenu === 'konfigurasi' && (
             <div className="animate-slide-up">
               <div className="flex items-center justify-between mb-6">
@@ -1950,8 +2137,7 @@ function Admin() {
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
-                <h3 className="text-sm font-semibold text-slate-800 mb-4">Manajemen Tahun Ajaran</h3>
+              <CollapsibleSection title="Manajemen Tahun Ajaran" defaultOpen={true}>
                 
                 <div className="flex gap-2 mb-4">
                   <input type="text" value={newTahunAjaran} onChange={e => setNewTahunAjaran(e.target.value)} 
@@ -1967,7 +2153,7 @@ function Admin() {
                     <div key={ta.id} className="flex items-center justify-between p-3 border rounded-lg bg-slate-50">
                       <span className="text-sm font-medium">{ta.nama}</span>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-semibold ${ta.is_aktif ? 'text-green-600' : 'text-slate-400'}`}>
+                        <span className={`text-xs font-semibold ${ta.is_aktif ? 'text-green-600' : 'text-slate-500'}`}>
                           {ta.is_aktif ? 'Aktif' : 'Nonaktif'}
                         </span>
                         <Toggle value={ta.is_aktif} onChange={() => handleToggleTahunAjaran(ta.id, !ta.is_aktif)} colorOn="bg-green-500" />
@@ -1975,21 +2161,21 @@ function Admin() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
+              <CollapsibleSection title="Manajemen Semester">
                 <AdminSemesterSection tahunAjarans={tahunAjarans} activeTa={activeTa} />
-              </div>
+              </CollapsibleSection>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
+              <CollapsibleSection title="Mata Pelajaran">
                 <AdminMapelSection />
-              </div>
+              </CollapsibleSection>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
+              <CollapsibleSection title="Tampilan Profil Beranda Siswa">
                 <AdminBerandaConfigSection />
-              </div>
+              </CollapsibleSection>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
+              <CollapsibleSection title="Sinkronisasi Data (CSV)">
                 <div className="mb-5 bg-indigo-50 border border-indigo-200 rounded-xl p-4">
                   <h3 className="text-sm font-bold text-indigo-900 mb-1 flex items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2032,7 +2218,7 @@ function Admin() {
                   <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={handleCsvSync} />
                   <button onClick={() => csvInputRef.current?.click()} disabled={csvSyncing}
                     className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-700 transition-all active:scale-95 disabled:opacity-50">
-                    <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg className="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                     </svg>
                     {csvSyncing ? 'Memproses...' : 'Upload Data Baru (CSV)'}
@@ -2041,13 +2227,20 @@ function Admin() {
                     className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-600 transition-colors">
                     Unduh Format CSV
                   </button>
+                  <button onClick={handleExportDatabase}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl text-sm font-medium text-indigo-700 transition-colors">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Export Database Saat Ini
+                  </button>
                 </div>
-              </div>
+              </CollapsibleSection>
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-5">
+              <CollapsibleSection title="Upload Foto Siswa Massal">
                 <div className="flex items-start justify-between flex-wrap gap-4 mb-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-800">Upload Foto Siswa Massal</h3>
+                    <h3 className="hidden">Upload Foto Siswa Massal</h3>
                     <p className="text-xs text-slate-500 mt-1">Pilih banyak foto sekaligus. Nama file foto HARUS sesuai dengan NISN siswa (contoh: 0132835115.jpg).</p>
                   </div>
                 </div>
@@ -2075,12 +2268,12 @@ function Admin() {
                     {photoUploading ? 'Mengunggah Foto...' : 'Upload Foto (.jpg/.png)'}
                   </button>
                 </div>
-              </div>
+              </CollapsibleSection>
 
               {/* Modal Update Terakhir */}
               {showLastSyncModal && lastSyncDetails && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-scale-up">
+                  <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl animate-scale-up">
                     <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white rounded-t-2xl shrink-0">
                       <div>
                         <h2 className="text-xl font-bold text-slate-800">Detail Update Terakhir</h2>
@@ -2158,7 +2351,7 @@ function Admin() {
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="divide-y divide-slate-100">
                   {menuTypes.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-sm">Belum ada jenis pengumuman.</div>
+                    <div className="p-8 text-center text-slate-500 text-sm">Belum ada jenis pengumuman.</div>
                   ) : menuTypes.map(t => (
                     <div key={t.id} className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
                       <div className="flex items-center gap-4">
@@ -2185,11 +2378,11 @@ function Admin() {
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-slate-500">Akses</span>
-                          <span className={`text-xs font-bold ${t.aktif ? 'text-green-600' : 'text-slate-400'}`}>{t.aktif ? 'Aktif' : 'Off'}</span>
+                          <span className={`text-xs font-bold ${t.aktif ? 'text-green-600' : 'text-slate-500'}`}>{t.aktif ? 'Aktif' : 'Off'}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-slate-500">Tampil</span>
-                          <span className={`text-xs font-bold ${t.visible ? 'text-blue-600' : 'text-slate-400'}`}>{t.visible ? 'Ya' : 'Tidak'}</span>
+                          <span className={`text-xs font-bold ${t.visible ? 'text-blue-600' : 'text-slate-500'}`}>{t.visible ? 'Ya' : 'Tidak'}</span>
                         </div>
                         <button
                           onClick={() => {
@@ -2201,7 +2394,7 @@ function Admin() {
                           Edit
                         </button>
                         <button
-                          onClick={() => { setActiveMenu(t.id) }}
+                          onClick={() => handleMenuNavigation(t.id)}
                           className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200"
                         >
                           Kelola Dokumen →
@@ -2215,11 +2408,11 @@ function Admin() {
               {showAddModal && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
-                  <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg animate-scale-in flex flex-col max-h-[90vh]">
+                  <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg animate-scale-in flex flex-col max-h-[90vh]">
                     <div className="p-5 border-b border-slate-100 shrink-0 flex justify-between items-center bg-slate-50 rounded-t-2xl">
                       <h3 className="text-lg font-bold text-slate-800">Buat Jenis Pengumuman Baru</h3>
-                      <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      <button onClick={() => setShowAddModal(false)} className="text-slate-500 hover:text-slate-600">
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                     </div>
                     
@@ -2298,11 +2491,11 @@ function Admin() {
               {showEditTypeModal && editingType && createPortal(
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowEditTypeModal(false)} />
-                  <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg animate-scale-in flex flex-col max-h-[90vh]">
+                  <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg animate-scale-in flex flex-col max-h-[90vh]">
                     <div className="p-5 border-b border-slate-100 shrink-0 flex justify-between items-center bg-slate-50 rounded-t-2xl">
                       <h3 className="text-lg font-bold text-slate-800">Edit Pengumuman: {editingType.nama}</h3>
-                      <button onClick={() => setShowEditTypeModal(false)} className="text-slate-400 hover:text-slate-600">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      <button onClick={() => setShowEditTypeModal(false)} className="text-slate-500 hover:text-slate-600">
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                     </div>
                     
@@ -2362,7 +2555,7 @@ function Admin() {
                         <label className="block text-xs font-medium text-slate-700 mb-1">Target Kelas (Kosongkan jika semua kelas)</label>
                         <div className="p-3 border border-slate-200 rounded-xl bg-slate-50 max-h-32 overflow-y-auto">
                           <div className="flex flex-wrap gap-2">
-                            {[...new Set(students.map(s => s.kelas).filter(Boolean))].sort().map(c => (
+                            {[...new Set((activeTa ? students.filter(s => s.tahun_ajaran === activeTa.nama) : students).map(s => s.kelas).filter(Boolean))].sort().map(c => (
                               <label key={c} className="flex items-center gap-1.5 text-xs text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
                                 <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
                                   checked={(editingType.target_kelas || []).includes(c)}
@@ -2428,6 +2621,71 @@ function Admin() {
           )}
         </div>
       </main>
+
+      {showUploadInterceptModal && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowUploadInterceptModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md animate-scale-in flex flex-col p-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center shrink-0">
+                <svg className="w-6 h-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Proses Upload Berjalan</h3>
+                <p className="text-sm text-slate-500">Anda sedang mengupload file. Yakin ingin berpindah halaman?</p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 mt-4">
+              <button onClick={() => setShowUploadInterceptModal(false)} className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl transition-colors">Batal Pindah</button>
+              <button onClick={() => {
+                globalUploadManager.setMinimized(true)
+                setShowUploadInterceptModal(false)
+                setActiveMenu(pendingMenu)
+                closeSidebar()
+              }} className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-xl transition-colors border border-indigo-200">Minimalis Progress</button>
+              <button onClick={() => {
+                globalUploadManager.cancelUpload()
+                setShowUploadInterceptModal(false)
+                setActiveMenu(pendingMenu)
+                closeSidebar()
+              }} className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-xl transition-colors border border-red-200">Hentikan Upload</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {isUploading && globalUploadManager.getState().minimized && createPortal(
+        <div className="fixed bottom-6 right-6 z-[150] w-80 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden animate-slide-up">
+          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-indigo-600">
+              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              <span className="font-bold text-sm">Mengupload Dokumen</span>
+            </div>
+            <button onClick={() => {
+              if(window.confirm('Hentikan proses upload?')) {
+                globalUploadManager.cancelUpload()
+              }
+            }} className="text-slate-500 hover:text-red-500 transition-colors">
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div className="p-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-semibold text-slate-500 truncate max-w-[150px]">{uploadProgress?.filename || 'Menyiapkan...'}</span>
+              <span className="text-xs font-bold text-indigo-600">{uploadProgress?.percentage || 0}%</span>
+            </div>
+            <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${uploadProgress?.percentage || 0}%` }} />
+            </div>
+            <div className="mt-2 text-right">
+              <span className="text-xs text-slate-500 font-medium">{uploadProgress?.current || 0} / {uploadProgress?.total || 0} file</span>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
     </div>
   )
 }

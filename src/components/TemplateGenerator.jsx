@@ -209,7 +209,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
     <div className="space-y-8 animate-fade-in">
       
       {/* Upload Background Section */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+      <div className="bg-white border-none rounded-xl p-6 shadow-sm">
         <h3 className="text-lg font-bold text-slate-900 mb-2">1. Background Template (A4)</h3>
         <p className="text-slate-500 text-sm mb-4">Unggah gambar kosong (kop surat, dll) berukuran A4 (Portrait) berformat JPG/PNG.</p>
         
@@ -226,7 +226,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
 
       {/* Visual Editor Section */}
       {templateUrl && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="bg-white border-none rounded-xl p-6 shadow-sm grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1 space-y-6">
             <div>
               <h3 className="text-lg font-bold text-slate-900 mb-2">2. Variabel Teks</h3>
@@ -235,7 +235,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
               <div className="flex flex-wrap gap-2 mb-4">
                 {AVAILABLE_FIELDS.map(f => (
                   <button key={f.key} onClick={() => addField(f.key)} disabled={config.some(c => c.key === f.key) || generating}
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-medium transition">
+                    className="px-3 py-1.5 rounded-2xl bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-medium transition">
                     + {f.label}
                   </button>
                 ))}
@@ -313,7 +313,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
 
       {/* Generator Section */}
       {templateUrl && (
-        <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
+        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
           <h3 className="text-xl font-bold text-indigo-900 mb-2">3. Buat PDF Massal</h3>
           <p className="text-indigo-700 text-sm mb-6 max-w-lg">
             Sistem akan otomatis mengisi teks pada template gambar, membuat PDF, dan mengunggahnya ke server untuk setiap siswa.
