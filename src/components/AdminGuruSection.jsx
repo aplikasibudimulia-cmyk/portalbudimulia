@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
+import { useConfirm } from '../utils/useConfirm'
 
 export default function AdminGuruSection({ tahunAjarans, activeTa }) {
   const [gurus, setGurus] = useState([])
@@ -25,6 +26,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
   const singlePhotoInputRef = useRef(null)
   const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
   const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   const fetchInitialData = async () => {
     setLoading(true)
@@ -120,7 +122,14 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
   }
 
   const handleDelete = async (id, nama) => {
-    if (!window.confirm(`Yakin ingin menghapus guru ${nama}? Data terkait (role, penugasan kelas) juga akan terhapus.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Guru?',
+      message: `Yakin ingin menghapus guru ${nama}? Data terkait (role, penugasan kelas) juga akan terhapus.`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     setLoading(true)
     const { error } = await supabase.from('guru').delete().eq('id', id)
     if (error) alert('Gagal menghapus: ' + error.message)
@@ -244,7 +253,14 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
     const files = Array.from(e.target.files)
     if (!files.length) return
     
-    if (!window.confirm(`Akan mengunggah ${files.length} foto guru. Pastikan nama file adalah KODE GURU (misal: g02026.jpg). Lanjutkan?`)) {
+    const confirmed = await requestConfirm({
+      title: 'Upload Foto Guru?',
+      message: `Akan mengunggah ${files.length} foto guru. Pastikan nama file adalah KODE GURU (misal: g02026.jpg). Lanjutkan?`,
+      confirmLabel: 'Upload',
+      confirmColor: 'indigo',
+      icon: 'info',
+    })
+    if (!confirmed) {
       if (photoInputRef.current) photoInputRef.current.value = ''
       return
     }
@@ -329,6 +345,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
 
   return (
     <div className="animate-slide-up">
+      {ConfirmModalComponent}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manajemen Guru</h2>

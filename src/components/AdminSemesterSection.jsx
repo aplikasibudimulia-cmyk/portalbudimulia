@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { getSemesterAktif, formatTanggal } from '../utils/semesterUtils'
+import { useConfirm } from '../utils/useConfirm'
 
 export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
   const [selectedTaId, setSelectedTaId] = useState(activeTa?.id || '')
@@ -11,6 +12,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
     1: { tanggal_mulai: '', tanggal_selesai: '' },
     2: { tanggal_mulai: '', tanggal_selesai: '' }
   })
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   useEffect(() => {
     if (activeTa?.id) setSelectedTaId(activeTa.id)
@@ -74,7 +76,14 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
   }
 
   const handleDelete = async (nomor) => {
-    if (!window.confirm(`Hapus data Semester ${nomor}?`)) return
+    const confirmed = await requestConfirm({
+      title: `Hapus Semester ${nomor}?`,
+      message: `Data semester ${nomor} termasuk rentang tanggalnya akan dihapus.`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     const existing = semesters.find(s => s.nomor === nomor)
     if (!existing) return
     const { error } = await supabase.from('semester').delete().eq('id', existing.id)
@@ -87,6 +96,7 @@ export default function AdminSemesterSection({ tahunAjarans, activeTa }) {
 
   return (
     <div>
+      {ConfirmModalComponent}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">

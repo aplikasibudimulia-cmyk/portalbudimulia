@@ -4,6 +4,9 @@ import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import SiswaNilaiSection from '../components/SiswaNilaiSection'
 import SiswaPresensiSection from '../components/SiswaPresensiSection'
+import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
+import SiswaProfilSection from '../components/SiswaProfilSection'
+import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -22,6 +25,9 @@ function Dashboard() {
   const [error, setError] = useState(null)
   const [studentBerkas, setStudentBerkas] = useState(null)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
+
+  const [showNotifPanel, setShowNotifPanel] = useState(false)
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0)
 
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
@@ -119,6 +125,35 @@ function Dashboard() {
   }, [navigate])
 
   useEffect(() => {
+    if (!studentData) return
+    const fetchNotifCount = async () => {
+      const { data: allNotif } = await supabase.from('notifikasi')
+        .select('id, target_kelas')
+        .or(`target_nisn.is.null,target_nisn.eq.${studentData.nisn}`)
+      
+      if (!allNotif) return
+      const valid = allNotif.filter(n => !n.target_kelas || n.target_kelas === studentData.kelas)
+      
+      const { data: readNotif } = await supabase.from('notifikasi_read')
+        .select('notifikasi_id')
+        .eq('nisn', studentData.nisn)
+        
+      const readIds = new Set((readNotif || []).map(r => r.notifikasi_id))
+      const unreadCount = valid.filter(n => !readIds.has(n.id)).length
+      setUnreadNotifCount(unreadCount)
+    }
+    
+    fetchNotifCount()
+    
+    const channel = supabase.channel(`siswa-notif-${studentData.nisn}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifikasi' }, fetchNotifCount)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifikasi_read', filter: `nisn=eq.${studentData.nisn}` }, fetchNotifCount)
+      .subscribe()
+      
+    return () => supabase.removeChannel(channel)
+  }, [studentData])
+
+  useEffect(() => {
     const checkFileExists = async () => {
       if (!selectedType || !studentData) {
         setPdfUrl(null)
@@ -199,55 +234,38 @@ function Dashboard() {
     }
   }, [pdfUrl, selectedType, studentData, loggedTypes])
 
-  // Polling setiap 1.5 detik agar perubahan dari Admin langsung terasa di siswa
+  // Supabase Realtime — menggantikan polling setInterval 1.5 detik
+  // Subscribe ke 3 tabel: jenis_pengumuman, berkas_pengumuman, pengaturan_sekolah
   useEffect(() => {
-    if (loading || !studentData || showPasswordModal) return
+    if (loading || !studentData) return
 
-    // Simpan referensi ke state terkini untuk perbandingan di dalam polling
-    let lastBerkasJson = ''
-
-    const poll = async () => {
-      // 1. Cek perubahan jenis pengumuman (Global Toggle: aktif, visible, target_kelas)
+    const handleMenuUpdate = async () => {
       const { data: types } = await supabase
         .from('jenis_pengumuman').select('*').eq('visible', true).order('urutan')
       const visible = types ?? []
-
       const applicableTypes = visible.filter(t => {
         const target = t.target_kelas || []
         if (!Array.isArray(target) || target.length === 0) return true
         return target.includes(studentData?.kelas)
       })
-
       setMenuTypes(prev => {
-        const newJson = JSON.stringify(applicableTypes)
-        if (JSON.stringify(prev) === newJson) return prev
+        if (JSON.stringify(prev) === JSON.stringify(applicableTypes)) return prev
         return applicableTypes
       })
-
       setSelectedType(prev => {
-        if (!prev) return null
-        if (typeof prev === 'string') return prev // Jangan reset jika PRESENSI atau NILAI
+        if (!prev || typeof prev === 'string') return prev
         const updated = applicableTypes.find(t => t.id === prev.id)
         if (!updated) return null
         if (JSON.stringify(updated) === JSON.stringify(prev)) return prev
         return updated
       })
+    }
 
-      // 2. Cek perubahan berkas pengumuman per siswa (Individual Toggle)
-      if (studentData.kode) {
-        const { data: berkas } = await supabase
-          .from('berkas_pengumuman')
-          .select('*')
-          .eq('kode_siswa', studentData.kode)
-        
-        const berkasJson = JSON.stringify(berkas)
-        if (berkasJson !== lastBerkasJson) {
-          lastBerkasJson = berkasJson
-          setRefreshBerkas(prev => prev + 1)
-        }
-      }
+    const handleBerkasUpdate = () => {
+      setRefreshBerkas(prev => prev + 1)
+    }
 
-      // 3. Poll settings
+    const handleSettingsUpdate = async () => {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
@@ -261,15 +279,63 @@ function Dashboard() {
           if (p.setting_key === 'show_profile_tahun_ajaran') newShowProfile.tahun_ajaran = p.setting_value === 'true'
         })
         setShowProfileConfig(prev => {
-           if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile;
-           return prev;
+          if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile
+          return prev
         })
       }
     }
 
-    const intervalId = setInterval(poll, 1500)
-    return () => clearInterval(intervalId)
-  }, [loading, studentData, showPasswordModal])
+    const channel = supabase.channel(`dashboard-updates-${studentData.nisn}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'jenis_pengumuman' }, handleMenuUpdate)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'berkas_pengumuman'
+        },
+        (payload) => {
+          console.log('[REALTIME DEBUG] Berkas update received:', payload)
+          if (payload.new && payload.new.kode_siswa === studentData.kode) {
+            console.log('[REALTIME DEBUG] Matched kode_siswa, updating state!')
+            handleBerkasUpdate()
+          } else if (payload.eventType === 'DELETE' && payload.old && payload.old.kode_siswa === studentData.kode) {
+             handleBerkasUpdate()
+          } else {
+            // Also call handleBerkasUpdate just in case the filter was failing due to missing columns
+            console.log('[REALTIME DEBUG] Payload did not contain expected kode_siswa, but calling update anyway.')
+            handleBerkasUpdate()
+          }
+        }
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, handleSettingsUpdate)
+      .subscribe()
+
+    // Bulletproof Broadcast Listener
+    const broadcastChannel = supabase.channel('dashboard-updates-all')
+      .on('broadcast', { event: 'berkas_updated' }, (payload) => {
+        console.log('[REALTIME DEBUG] Broadcast received:', payload)
+        if (payload.payload && payload.payload.kode_siswa === studentData.kode) {
+          handleBerkasUpdate()
+        } else if (payload.payload && payload.payload.kode_siswa === 'ALL') {
+          handleBerkasUpdate()
+        }
+      })
+      .subscribe()
+
+    const jenisChannel = supabase.channel('jenis-updates-all')
+      .on('broadcast', { event: 'jenis_updated' }, () => {
+        console.log('[REALTIME DEBUG] Broadcast jenis_updated received')
+        handleMenuUpdate()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+      supabase.removeChannel(broadcastChannel)
+      supabase.removeChannel(jenisChannel)
+    }
+  }, [loading, studentData])
 
   const handleLogout = () => {
     localStorage.removeItem('siswa_session')
@@ -404,24 +470,23 @@ function Dashboard() {
           onClick={() => setSidebarOpen(false)}
         />
       )}
-
-      {/* Sidebar */}
+{/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${sidebarOpen ? 'translate-x-0' : '-translate-x-[150%]'} ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
         
         {/* Sidebar Header */}
-        <div className={`px-4 py-6 flex items-center shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-3'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
+        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
             {!sidebarCollapsed && (
-              <div className="animate-fade-in whitespace-nowrap">
-                <h2 className="font-bold text-base text-slate-800 leading-tight">eBudiMulia</h2>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">SMP Budi Mulia</p>
+              <div className="animate-fade-in truncate">
+                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
               </div>
             )}
           </div>
           {!sidebarCollapsed && (
-            <button className="md:hidden p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors" onClick={() => setSidebarOpen(false)}>
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           )}
         </div>
@@ -456,6 +521,7 @@ function Dashboard() {
                 <svg className={`w-6 h-6 shrink-0 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Saya</span>}
               </button>
+
             </div>
           </div>
 
@@ -483,6 +549,18 @@ function Dashboard() {
         {/* Sidebar Footer Actions */}
         <div className="p-4 space-y-3 shrink-0">
            
+           <button onClick={() => setShowNotifPanel(true)}
+             title="Notifikasi"
+             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all relative ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
+             <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+             {!sidebarCollapsed && <span className="animate-fade-in">Notifikasi</span>}
+             {unreadNotifCount > 0 && (
+               <span className={`absolute bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ${sidebarCollapsed ? 'top-1 right-1' : 'right-4'}`}>
+                 {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
+               </span>
+             )}
+           </button>
+
            <button onClick={() => { setShowPasswordModal(true); setSidebarOpen(false); }}
              title="Ubah Kode Akses"
              className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
@@ -526,6 +604,8 @@ function Dashboard() {
               <SiswaNilaiSection studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
               <SiswaPresensiSection studentData={studentData} />
+            ) : selectedType === 'PROFIL' ? (
+              <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
             ) : selectedType ? (
               <div className="space-y-6">
                 
@@ -696,24 +776,11 @@ function Dashboard() {
             ) : null}
 
             {!selectedType && (
-              <div className="space-y-6">
-                {pengumuman && (
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-6 shadow-sm animate-slide-up">
-                    <h3 className="text-base font-bold text-indigo-900 mb-3 flex items-center gap-2">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                      Pengumuman Sekolah
-                    </h3>
-                    <p className="text-sm text-indigo-800 leading-relaxed whitespace-pre-wrap">{pengumuman}</p>
-                  </div>
-                )}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-10 flex flex-col items-center justify-center text-center">
-                   <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-5">
-                     <svg className="w-10 h-10 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                   </div>
-                   <h3 className="text-xl font-bold text-slate-800 mb-2">eBudiMulia SMP Budi Mulia Jakarta</h3>
-                   <p className="text-slate-500 max-w-md mx-auto">Silakan pilih jenis pengumuman atau dokumen dari menu di sebelah kiri untuk melihat detailnya.</p>
-                </div>
-              </div>
+              <SiswaDashboardWidgets 
+                studentData={studentData} 
+                menuTypes={menuTypes} 
+                onNavigate={setSelectedType} 
+              />
             )}
 
           </div>
@@ -766,6 +833,13 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Panel Notifikasi Slide-in */}
+      <SiswaNotificationPanel 
+        isOpen={showNotifPanel} 
+        onClose={() => setShowNotifPanel(false)} 
+        studentData={studentData} 
+      />
     </div>
   )
 }

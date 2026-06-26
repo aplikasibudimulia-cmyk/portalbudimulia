@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { Html5Qrcode } from 'html5-qrcode'
+import { useConfirm } from '../utils/useConfirm'
+import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
 
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha' }
 const STATUS_COLORS = {
@@ -20,9 +22,12 @@ export default function SiswaPresensiSection({ studentData }) {
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
   const [selfieSrc, setSelfieSrc] = useState(null)
+  const [selfieBlob, setSelfieBlob] = useState(null)
   const [scannedToken, setScannedToken] = useState(null)
   const [jamBatasHadir, setJamBatasHadir] = useState('07:00')
   const [qrAktif, setQrAktif] = useState(true)
+  const [activeTab, setActiveTab] = useState('isi_presensi')
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
@@ -135,12 +140,39 @@ export default function SiswaPresensiSection({ studentData }) {
   }
 
   // === Selfie (via input file / kamera) ===
-  const handleSelfieCapture = (e) => {
+  const compressImage = (file, maxWidth = 800) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          let { width, height } = img
+          if (width > height && width > maxWidth) {
+            height *= maxWidth / width
+            width = maxWidth
+          } else if (height > maxWidth) {
+            width *= maxWidth / height
+            height = maxWidth
+          }
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0, width, height)
+          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
+        }
+        img.src = e.target.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleSelfieCapture = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onloadend = () => setSelfieSrc(reader.result)
-    reader.readAsDataURL(file)
+    const blob = await compressImage(file)
+    setSelfieBlob(blob)
+    setSelfieSrc(URL.createObjectURL(blob))
   }
 
   // === Submit Presensi ===
@@ -206,13 +238,28 @@ export default function SiswaPresensiSection({ studentData }) {
         
         const message = `🔔 *Notifikasi Presensi eBudiMulia*\n\n👤 *${studentData.nama_lengkap}*\n🏫 Kelas: ${studentData.kelas}\n📅 ${tgl}\n⏰ Pukul: *${jamSekarang} WIB*\n📝 Status: *${label}*\n\n_Pesan ini dikirim otomatis oleh sistem._`
         
-        fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
-        }).then(res => res.json()).then(data => {
-          if (!data.ok) console.error("Gagal kirim telegram:", data)
-        }).catch(err => console.error("Error fetch telegram:", err))
+        if (selfieBlob) {
+          const formData = new FormData()
+          formData.append('chat_id', chatId)
+          formData.append('caption', message)
+          formData.append('parse_mode', 'Markdown')
+          formData.append('photo', selfieBlob, 'selfie.jpg')
+          
+          fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            body: formData
+          }).then(res => res.json()).then(data => {
+            if (!data.ok) console.error("Gagal kirim telegram foto:", data)
+          }).catch(err => console.error("Error fetch telegram:", err))
+        } else {
+          fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+          }).then(res => res.json()).then(data => {
+            if (!data.ok) console.error("Gagal kirim telegram:", data)
+          }).catch(err => console.error("Error fetch telegram:", err))
+        }
       }
 
       setStep(STEP.SUCCESS)
@@ -227,12 +274,20 @@ export default function SiswaPresensiSection({ studentData }) {
     setStep(STEP.IDLE)
     setErrorMsg('')
     setSelfieSrc(null)
+    setSelfieBlob(null)
     setScannedToken(null)
   }
 
   // Khusus untuk keperluan testing/development
   const handleResetTesting = async () => {
-    if (!window.confirm("Hapus data presensi hari ini untuk keperluan testing?")) return
+    const confirmed = await requestConfirm({
+      title: 'Reset Presensi?',
+      message: 'Hapus data presensi hari ini untuk keperluan testing?',
+      confirmLabel: 'Hapus Data',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
     setStep(STEP.SUBMITTING)
     try {
       const { error } = await supabase.from('presensi_harian').delete().eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
@@ -256,13 +311,35 @@ export default function SiswaPresensiSection({ studentData }) {
   }
 
   return (
-    <div className="animate-fade-in max-w-md mx-auto">
-      <div className="mb-6">
-        <h2 className="text-2xl font-black text-slate-900">Presensi Hari Ini</h2>
-        <p className="text-sm text-slate-500 mt-1">Scan QR Code dari layar TV sekolah untuk mencatat kehadiran Anda.</p>
+    <div className="animate-fade-in w-full max-w-4xl mx-auto">
+      {ConfirmModalComponent}
+
+      {/* TABS NAVIGATION */}
+      <div className="flex gap-4 border-b border-slate-200 mb-8 overflow-x-auto no-scrollbar">
+        <button 
+          onClick={() => setActiveTab('isi_presensi')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'isi_presensi' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          Isi Presensi Harian
+        </button>
+        <button 
+          onClick={() => setActiveTab('riwayat')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'riwayat' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          Riwayat Kehadiran
+        </button>
       </div>
 
-      {/* Card status presensi sudah ada */}
+      {activeTab === 'riwayat' ? (
+        <SiswaRiwayatPresensi studentData={studentData} />
+      ) : (
+        <div className="max-w-md mx-auto">
+          <div className="mb-6">
+            <h2 className="text-2xl font-black text-slate-900">Presensi Hari Ini</h2>
+            <p className="text-sm text-slate-500 mt-1">Scan QR Code dari layar TV sekolah untuk mencatat kehadiran Anda.</p>
+          </div>
+
+          {/* Card status presensi sudah ada */}
       {presensiHariIni && step !== STEP.SUCCESS ? (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
           <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 text-4xl font-black border-4 ${STATUS_COLORS[presensiHariIni.status] || 'bg-slate-50 border-slate-200 text-slate-600'}`}>
@@ -408,6 +485,8 @@ export default function SiswaPresensiSection({ studentData }) {
           </button>
         </div>
       ) : null}
+        </div>
+      )}
     </div>
   )
 }

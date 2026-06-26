@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { useConfirm } from '../utils/useConfirm'
 
 export default function DataPresensiSiswaSection({ session, activeTa }) {
   const [tanggal, setTanggal] = useState(new Date().toLocaleDateString('en-CA'))
@@ -14,6 +15,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   const [searchDetail, setSearchDetail] = useState('')
   
   const [isSaving, setIsSaving] = useState(false)
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   useEffect(() => {
     fetchDashboardData()
@@ -173,7 +175,14 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   }
 
   const handleBulkPresensi = async (status) => {
-    if (!window.confirm(`Set semua siswa yang tampil menjadi ${status}?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Set Status Semua Siswa?',
+      message: `Set semua siswa yang tampil menjadi ${status === 'kosong' ? 'KOSONG (hapus presensi)' : status}?`,
+      confirmLabel: status === 'kosong' ? 'Kosongkan' : `Set ${status}`,
+      confirmColor: status === 'kosong' ? 'red' : 'indigo',
+      icon: status === 'kosong' ? 'danger' : 'warning',
+    })
+    if (!confirmed) return
     const newData = { ...presensiData }
     const recordsToUpsert = []
     const nisnsToDelete = []
@@ -232,6 +241,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
 
   return (
     <div className="animate-fade-in font-sans text-slate-800 flex-1 flex flex-col min-h-0 h-full">
+      {ConfirmModalComponent}
       
       {/* Top Header */}
       <div className="shrink-0 mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">

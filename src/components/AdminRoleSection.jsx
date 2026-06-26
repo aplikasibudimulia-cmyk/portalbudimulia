@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { useConfirm } from '../utils/useConfirm'
 
 const FITUR_LIST = [
   { id: 'lihat_data_siswa', label: 'Lihat Data Siswa', desc: 'Melihat daftar siswa di kelasnya' },
@@ -17,6 +18,7 @@ export default function AdminRoleSection() {
   const [showModal, setShowModal] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [newRole, setNewRole] = useState({ nama: '', deskripsi: '' })
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   const fetchRoles = async () => {
     setLoading(true)
@@ -57,7 +59,14 @@ export default function AdminRoleSection() {
   }
 
   const handleDeleteRole = async (id, nama) => {
-    if (!window.confirm(`Yakin ingin menghapus role "${nama}"?\nSemua guru yang memiliki role ini juga akan kehilangan hak aksesnya.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Role?',
+      message: `Yakin ingin menghapus role "${nama}"?\nSemua guru yang memiliki role ini juga akan kehilangan hak aksesnya.`,
+      confirmLabel: 'Hapus Role',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('roles').delete().eq('id', id)
     if (error) alert('Gagal menghapus: ' + error.message)
     else fetchRoles()
@@ -85,8 +94,9 @@ export default function AdminRoleSection() {
   }
 
   return (
-    <div className="animate-slide-up">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
+      {ConfirmModalComponent}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manajemen Role</h2>
           <p className="text-slate-500 text-sm mt-1">Kelola jenis role pengguna dan hak akses fiturnya</p>
@@ -101,10 +111,11 @@ export default function AdminRoleSection() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
+        <div className="flex justify-center py-12 flex-1 min-h-0"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {roles.map(role => (
+        <div className="overflow-auto flex-1 min-h-0 pr-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-4">
+            {roles.map(role => (
             <div key={role.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
               <div className="p-5 border-b border-slate-100 flex justify-between items-start">
                 <div>
@@ -140,6 +151,7 @@ export default function AdminRoleSection() {
               </div>
             </div>
           ))}
+          </div>
         </div>
       )}
 

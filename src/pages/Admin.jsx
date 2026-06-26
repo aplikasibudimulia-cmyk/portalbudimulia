@@ -12,12 +12,15 @@ import AdminPersonalisasiSection from '../components/AdminPersonalisasiSection'
 import AdminMapelSection from '../components/AdminMapelSection'
 import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
 import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
+import AdminBeritaSection from '../components/AdminBeritaSection'
+import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
 import AdminVerifikasiModal from '../components/AdminVerifikasiModal'
 import AdminSemesterSection from '../components/AdminSemesterSection'
 import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
 import CollapsibleSection from '../components/CollapsibleSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
+import { useConfirm } from '../utils/useConfirm'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 const DEFAULT_AVATAR = '/default-avatar.png'
@@ -137,16 +140,37 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
   const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
   const uniqueStudentCount = new Set(students.map(s => s.nisn)).size
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   useEffect(() => { 
     fetchFiles()
     fetchActivityLogs()
 
-    const interval = setInterval(() => {
-      fetchActivityLogs()
-    }, 2000)
+    // Supabase Realtime — menggantikan polling setInterval 2 detik untuk activity_log
+    const channel = supabase.channel(`admin-activity-log-${type.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'activity_log' },
+        (payload) => {
+          const detail = payload.new?.detail || payload.old?.detail || ''
+          if (detail.includes(type.nama)) {
+            fetchActivityLogs()
+          }
+        }
+      )
+      .subscribe()
+    // Listener untuk sync realtime antar perangkat admin/guru
+    const broadcastChannel = supabase.channel('dashboard-updates-all')
+      .on('broadcast', { event: 'berkas_updated' }, () => {
+        console.log('[REALTIME SYNC] Berkas updated by other user, refetching...')
+        fetchFiles()
+      })
+      .subscribe()
 
-    return () => clearInterval(interval)
+    return () => {
+      supabase.removeChannel(channel)
+      supabase.removeChannel(broadcastChannel)
+    }
   }, [type.id])
 
   const fetchActivityLogs = async () => {
@@ -184,14 +208,29 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       file_url: fileUrls[kode] || '-'
     }, { onConflict: 'kode_siswa,kode_jenis' })
     
-    if (upsertErr) alert('Gagal: ' + upsertErr.message)
-    else setFileReqs(prev => ({ ...prev, [kode]: updatedReqs }))
+    if (upsertErr) {
+      alert('Gagal: ' + upsertErr.message)
+    } else {
+      setFileReqs(prev => ({ ...prev, [kode]: updatedReqs }))
+      supabase.channel('dashboard-updates-all').send({
+        type: 'broadcast',
+        event: 'berkas_updated',
+        payload: { kode_siswa: kode }
+      })
+    }
     
     setToggling(null)
   }
 
   const handleMassToggleReq = async (reqId, targetStatus) => {
-    if (!window.confirm(`Anda yakin ingin ${targetStatus ? 'mencentang' : 'menghapus centang'} syarat ini untuk semua siswa yang tampil di bawah?`)) return
+    const confirmed = await requestConfirm({
+      title: targetStatus ? 'Centang Semua Syarat?' : 'Hapus Centang Semua?',
+      message: `Anda yakin ingin ${targetStatus ? 'mencentang' : 'menghapus centang'} syarat ini untuk semua siswa yang tampil di bawah?`,
+      confirmLabel: targetStatus ? 'Ya, Centang Semua' : 'Ya, Hapus Centang',
+      confirmColor: targetStatus ? 'green' : 'red',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     const codes = filtered.map(s => s.kode).filter(Boolean)
     if (codes.length === 0) return
     setToggling(`mass_req_${reqId}`)
@@ -216,6 +255,11 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
         newFileReqs[kode] = { ...(newFileReqs[kode] || {}), [reqId]: targetStatus }
       })
       setFileReqs(newFileReqs)
+      supabase.channel('dashboard-updates-all').send({
+        type: 'broadcast',
+        event: 'berkas_updated',
+        payload: { kode_siswa: 'ALL' }
+      })
     }
     setToggling(null)
   }
@@ -230,6 +274,16 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
         userRole: 'Administrator',
         action: 'Update Jenis Pengumuman',
         details: `Mengubah properti ${field} menjadi ${value} pada pengumuman ${type.nama}.`
+      })
+      const channel = supabase.channel('jenis-updates-all')
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          channel.send({
+            type: 'broadcast',
+            event: 'jenis_updated'
+          })
+          setTimeout(() => supabase.removeChannel(channel), 1000)
+        }
       })
       onRefresh?.()
     }
@@ -256,7 +310,14 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   }
 
   const handleBulkAccess = async (status) => {
-    if (!window.confirm(`Anda yakin ingin ${status ? 'membuka' : 'menutup'} akses untuk semua siswa pada menu ini?`)) return
+    const confirmed = await requestConfirm({
+      title: status ? 'Buka Akses Semua Siswa?' : 'Tutup Akses Semua Siswa?',
+      message: `Anda yakin ingin ${status ? 'membuka' : 'menutup'} akses untuk semua siswa pada menu ini?`,
+      confirmLabel: status ? 'Buka Semua' : 'Tutup Semua',
+      confirmColor: status ? 'green' : 'red',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('berkas_pengumuman')
       .update({ is_accessible: status })
       .eq('kode_jenis', type.kode_jenis)
@@ -312,14 +373,28 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
   const handleDeleteFile = async (kode, nama) => {
     const fileName = fileNames[kode] || `${kode}${type.kode_jenis}.pdf`
-    if (!window.confirm(`Hapus file "${fileName}" milik ${nama}?\nTindakan ini tidak dapat dibatalkan.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus File?',
+      message: `Hapus file "${fileName}" milik ${nama}?\nTindakan ini tidak dapat dibatalkan.`,
+      confirmLabel: 'Hapus File',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('berkas_pengumuman').delete().match({ kode_siswa: kode, kode_jenis: type.kode_jenis })
     if (error) { alert('Gagal menghapus: ' + error.message); return }
     fetchFiles()
   }
 
   const handleResetStatusUnduh = async (nama_lengkap) => {
-    if (!window.confirm(`Yakin ingin mereset status unduh untuk ${nama_lengkap}?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Reset Status Unduh?',
+      message: `Yakin ingin mereset status unduh untuk ${nama_lengkap}?`,
+      confirmLabel: 'Reset',
+      confirmColor: 'indigo',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     
     const { error } = await supabase.from('activity_log')
       .delete()
@@ -462,6 +537,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
   return (
     <div className="animate-slide-up flex flex-col h-auto lg:h-[calc(100vh-120px)] min-h-[calc(100vh-120px)]">
+      {ConfirmModalComponent}
       <input ref={inputRef} type="file" multiple accept="application/pdf" className="hidden"
         onChange={e => handleUpload(Array.from(e.target.files))} />
 
@@ -517,8 +593,12 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                 <Toggle value={type.aktif} onChange={v => handleToggle('aktif', v)} disabled={toggling !== null} colorOn="bg-green-500" />
               </div>
               <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
-                <span className="text-xs text-slate-600 font-medium">Tampil</span>
+                <span className="text-xs text-slate-600 font-medium">Tampil (Siswa)</span>
                 <Toggle value={type.visible} onChange={v => handleToggle('visible', v)} disabled={toggling !== null} colorOn="bg-blue-500" />
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                <span className="text-xs text-slate-600 font-medium">Tampil (Guru)</span>
+                <Toggle value={type.visible_guru ?? true} onChange={v => handleToggle('visible_guru', v)} disabled={toggling !== null} colorOn="bg-cyan-500" />
               </div>
               <div className="flex-1" />
               {type.persyaratan && type.persyaratan.length > 0 && (
@@ -1072,7 +1152,14 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
   const handleDeletePhoto = async (student, photoRecord) => {
     if (!photoRecord) return
     
-    if (!window.confirm(`Yakin ingin menghapus foto untuk siswa ${student.nama_lengkap}?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Foto?',
+      message: `Yakin ingin menghapus foto untuk siswa ${student.nama_lengkap}?`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
 
     setIsProcessing(true)
     const { error } = await supabase.from('foto').delete().match({
@@ -1110,7 +1197,14 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 
   const handleBulkDeleteYear = async () => {
     if (!activeTa) return
-    if (!window.confirm(`⚠️ PERINGATAN KERAS ⚠️\n\nAnda yakin ingin menghapus SEMUA data siswa di tahun ajaran ${activeTa.nama}?\nSeluruh riwayat kelas, foto, dan dokumen pengumuman pada tahun ajaran ini akan musnah dan tidak dapat dikembalikan.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Seluruh Data Siswa?',
+      message: `⚠️ PERINGATAN KERAS ⚠️\n\nAnda yakin ingin menghapus SEMUA data siswa di tahun ajaran ${activeTa.nama}?\nSeluruh riwayat kelas, foto, dan dokumen pengumuman pada tahun ajaran ini akan musnah dan tidak dapat dikembalikan.`,
+      confirmLabel: 'Hapus Semua Data',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
     
     setIsProcessing(true)
     const kodes = students.filter(s => s.tahun_ajaran === activeTa.nama).map(s => s.kode)
@@ -1426,6 +1520,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 
 function Admin() {
   const navigate = useNavigate()
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [activeMenu, setActiveMenu] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [menuTypes, setMenuTypes] = useState([])
@@ -1893,7 +1988,14 @@ function Admin() {
   }
 
   const handleDeleteIndividual = async (s) => {
-    if (!window.confirm(`Yakin ingin menghapus riwayat kelas ${s.nama_lengkap} (${s.nisn}) di tahun ajaran ${s.tahun_ajaran}?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Riwayat Kelas?',
+      message: `Yakin ingin menghapus riwayat kelas ${s.nama_lengkap} (${s.nisn}) di tahun ajaran ${s.tahun_ajaran}?`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
     setIsProcessing(true)
     await supabase.from('berkas_pengumuman').delete().eq('kode_siswa', s.kode)
     const { data: enrollData } = await supabase.from('enrollment').select('tahun_ajaran_id').eq('kode', s.kode).single()
@@ -1938,7 +2040,14 @@ function Admin() {
 
   const handleDeleteType = async () => {
     if (!activeType) return
-    if (!window.confirm(`Hapus jenis "${activeType.nama}"?\nTindakan ini tidak dapat dibatalkan.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Jenis Pengumuman?',
+      message: `Hapus jenis "${activeType.nama}"?\nTindakan ini tidak dapat dibatalkan.`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
     const kodeJenis = activeType.kode_jenis
     
     // Hapus records di tabel berkas_pengumuman
@@ -2002,6 +2111,7 @@ function Admin() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 animate-fade-in">
+      {ConfirmModalComponent}
 
       {sidebarOpen && (
         <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={closeSidebar} />
@@ -2010,13 +2120,13 @@ function Admin() {
       <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${
         sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       }`}>
-        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
+        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
             {!sidebarCollapsed && (
-              <div className="animate-fade-in whitespace-nowrap">
-                <p className="font-semibold text-slate-800 text-sm">eBudiMulia</p>
-                <p className="text-slate-500 text-xs mt-0.5">SMP Budi Mulia Jakarta</p>
+              <div className="animate-fade-in truncate">
+                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
               </div>
             )}
           </div>
@@ -2048,6 +2158,18 @@ function Admin() {
             className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
             <IconActivity /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
             </button>
+
+          <button title="Berita Sekolah" onClick={() => handleMenuNavigation('berita_sekolah')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'berita_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2 15h10"/><path d="M2 18h10"/><path d="M2 12h10"/></svg>
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">Berita Sekolah</span>}
+          </button>
+          
+          <button title="Notifikasi Siswa" onClick={() => handleMenuNavigation('notifikasi')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'notifikasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi Siswa</span>}
+          </button>
 
           <div className="pt-4 pb-2">
             {!sidebarCollapsed && <p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">FITUR SISTEM</p>}
@@ -2107,6 +2229,14 @@ function Admin() {
 
           {activeMenu === 'log_aktivitas' && (
             <AdminActivityLogSection />
+          )}
+
+          {activeMenu === 'berita_sekolah' && (
+            <AdminBeritaSection />
+          )}
+
+          {activeMenu === 'notifikasi' && (
+            <AdminNotifikasiSection />
           )}
 
           {activeMenu === 'manajemen_akun' && (
@@ -2662,8 +2792,15 @@ function Admin() {
               <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
               <span className="font-bold text-sm">Mengupload Dokumen</span>
             </div>
-            <button onClick={() => {
-              if(window.confirm('Hentikan proses upload?')) {
+            <button onClick={async () => {
+              const confirmed = await requestConfirm({
+                title: 'Hentikan Upload?',
+                message: 'Hentikan proses upload saat ini?',
+                confirmLabel: 'Hentikan',
+                confirmColor: 'red',
+                icon: 'danger'
+              })
+              if(confirmed) {
                 globalUploadManager.cancelUpload()
               }
             }} className="text-slate-500 hover:text-red-500 transition-colors">

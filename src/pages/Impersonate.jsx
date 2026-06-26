@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { supabase } from '../supabaseClient'
 
 /**
  * Impersonate Page
@@ -15,39 +16,53 @@ function Impersonate() {
   const [status, setStatus] = useState('Menyiapkan sesi...')
 
   useEffect(() => {
-    try {
-      const encodedData = searchParams.get('data')
-      const role = searchParams.get('role')
+    const processToken = async () => {
+      try {
+        const token = searchParams.get('token')
 
-      if (!encodedData || !role) {
-        setStatus('Parameter tidak valid.')
-        return
+        if (!token) {
+          setStatus('Token tidak valid atau tidak ditemukan.')
+          return
+        }
+
+        // Fetch token data dari supabase
+        const { data, error } = await supabase
+          .from('impersonate_tokens')
+          .select('*')
+          .eq('id', token)
+          .gt('expires_at', new Date().toISOString())
+          .single()
+
+        if (error || !data) {
+          setStatus('Token sudah kadaluarsa atau tidak valid.')
+          return
+        }
+
+        const { role, session_data: sessionData } = data
+
+        // Clear any existing sessions first
+        localStorage.removeItem('siswa_session')
+        localStorage.removeItem('guru_session')
+        localStorage.removeItem('admin_session')
+
+        // Set the appropriate session
+        if (role === 'murid') {
+          localStorage.setItem('siswa_session', JSON.stringify(sessionData))
+          setStatus(`Login sebagai siswa: ${sessionData.nama_lengkap || sessionData.nama || 'N/A'}`)
+          setTimeout(() => navigate('/dashboard'), 500)
+        } else if (role === 'guru') {
+          localStorage.setItem('guru_session', JSON.stringify(sessionData))
+          setStatus(`Login sebagai guru: ${sessionData.nama_guru || sessionData.nama || 'N/A'}`)
+          setTimeout(() => navigate('/dashboard-guru'), 500)
+        } else {
+          setStatus('Role tidak dikenali.')
+        }
+      } catch (err) {
+        setStatus('Gagal memproses sesi: ' + err.message)
       }
-
-      // Decode base64 session data (UTF-8 safe)
-      const sessionJson = decodeURIComponent(escape(atob(encodedData)))
-      const sessionData = JSON.parse(sessionJson)
-
-      // Clear any existing sessions first
-      localStorage.removeItem('siswa_session')
-      localStorage.removeItem('guru_session')
-      localStorage.removeItem('admin_session')
-
-      // Set the appropriate session
-      if (role === 'murid') {
-        localStorage.setItem('siswa_session', JSON.stringify(sessionData))
-        setStatus(`Login sebagai siswa: ${sessionData.nama_lengkap || sessionData.nama || 'N/A'}`)
-        setTimeout(() => navigate('/dashboard'), 500)
-      } else if (role === 'guru') {
-        localStorage.setItem('guru_session', JSON.stringify(sessionData))
-        setStatus(`Login sebagai guru: ${sessionData.nama_guru || sessionData.nama || 'N/A'}`)
-        setTimeout(() => navigate('/dashboard-guru'), 500)
-      } else {
-        setStatus('Role tidak dikenali.')
-      }
-    } catch (err) {
-      setStatus('Gagal memproses sesi: ' + err.message)
     }
+    
+    processToken()
   }, [searchParams, navigate])
 
   return (

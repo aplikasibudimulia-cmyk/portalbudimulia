@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { jsPDF } from 'jspdf'
+import { useConfirm } from '../utils/useConfirm'
 
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
@@ -21,6 +22,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
   const [savingConfig, setSavingConfig] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(null)
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
   
   const bgInputRef = useRef(null)
   const editorRef = useRef(null)
@@ -127,7 +129,14 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
       alert('Template gambar dan teks harus dikonfigurasi terlebih dahulu.')
       return
     }
-    if (!window.confirm(`Yakin ingin membuat dan mengunggah PDF untuk ${students.length} siswa? Ini mungkin memakan waktu beberapa menit.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Generate PDF Massal?',
+      message: `Yakin ingin membuat dan mengunggah PDF untuk ${students.length} siswa? Ini mungkin memakan waktu beberapa menit.`,
+      confirmLabel: 'Generate & Upload',
+      confirmColor: 'indigo',
+      icon: 'info',
+    })
+    if (!confirmed) return
 
     setGenerating(true)
     setProgress({ current: 0, total: students.length, status: 'Mengunduh gambar template...' })
@@ -207,6 +216,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
 
   return (
     <div className="space-y-8 animate-fade-in">
+      {ConfirmModalComponent}
       
       {/* Upload Background Section */}
       <div className="bg-white border-none rounded-xl p-6 shadow-sm">

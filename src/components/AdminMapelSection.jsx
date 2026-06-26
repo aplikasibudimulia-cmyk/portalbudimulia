@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
+import { useConfirm } from '../utils/useConfirm'
 
 export default function AdminMapelSection() {
   const [mapels, setMapels] = useState([])
@@ -8,6 +9,7 @@ export default function AdminMapelSection() {
   const [showModal, setShowModal] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [formData, setFormData] = useState({ id: null, nama: '', singkatan: '' })
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   const fetchMapel = async () => {
     setLoading(true)
@@ -32,7 +34,14 @@ export default function AdminMapelSection() {
   }
 
   const handleDelete = async (id, nama) => {
-    if (!window.confirm(`Yakin ingin menghapus mata pelajaran "${nama}"? Semua guru yang ditugaskan ke pelajaran ini juga akan kehilangan datanya.`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Mata Pelajaran?',
+      message: `Yakin ingin menghapus mata pelajaran "${nama}"? Semua guru yang ditugaskan ke pelajaran ini juga akan kehilangan datanya.`,
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('mata_pelajaran').delete().eq('id', id)
     if (error) alert('Gagal menghapus: ' + error.message)
     else fetchMapel()
@@ -58,6 +67,7 @@ export default function AdminMapelSection() {
 
   return (
     <div className="animate-slide-up">
+      {ConfirmModalComponent}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h2 className="text-xl font-bold text-slate-900">Mata Pelajaran</h2>

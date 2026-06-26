@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
+import { useConfirm } from '../utils/useConfirm'
 import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
 import NilaiGuruSection from '../components/NilaiGuruSection'
+import GuruDashboardBerita from '../components/GuruDashboardBerita'
 import bcrypt from 'bcryptjs'
 
 const IconDashboard = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
@@ -49,6 +51,7 @@ const StudentAvatar = ({ student, fotos, className }) => {
 function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
+  const [fileNames, setFileNames] = useState({})
   const [fileAccess, setFileAccess] = useState({})
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('all')
@@ -57,6 +60,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const [toggling, setToggling] = useState(null)
   const [previewPdf, setPreviewPdf] = useState(null)
   const [isGlobalAdmin, setIsGlobalAdmin] = useState(fitur.has('kelola_pengumuman'))
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
   
   useEffect(() => {
     if (previewPdf) {
@@ -81,11 +85,32 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
     fetchFiles() 
     fetchActivityLogs()
 
-    const interval = setInterval(() => {
-      fetchActivityLogs()
-    }, 2000)
+    // Supabase Realtime — menggantikan polling setInterval 2 detik untuk activity_log
+    const channel = supabase.channel(`guru-activity-log-${type.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'activity_log' },
+        (payload) => {
+          // Hanya refresh jika log baru/terhapus terkait dengan dokumen ini
+          const detail = payload.new?.detail || payload.old?.detail || ''
+          if (detail.includes(type.nama)) {
+            fetchActivityLogs()
+          }
+        }
+      )
+      .subscribe()
+    // Listener untuk sync realtime antar perangkat admin/guru
+    const broadcastChannel = supabase.channel('dashboard-updates-all')
+      .on('broadcast', { event: 'berkas_updated' }, () => {
+        console.log('[REALTIME SYNC] Berkas updated by other user, refetching...')
+        fetchFiles()
+      })
+      .subscribe()
 
-    return () => clearInterval(interval)
+    return () => {
+      supabase.removeChannel(channel)
+      supabase.removeChannel(broadcastChannel)
+    }
   }, [type.id])
 
   const fetchActivityLogs = async () => {
@@ -101,10 +126,10 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
       .select('kode_siswa, file_name, file_url, is_accessible, persyaratan_terpenuhi')
       .eq('kode_jenis', type.kode_jenis)
     
-    // Filter file_name '-' (placeholder saat belum ada file) agar tidak dihitung sebagai file valid
-    setFiles(new Set(data?.filter(f => f.file_name && f.file_name !== '-').map(f => f.file_name) ?? []))
-    setFileUrls(data?.reduce((acc, f) => f.file_name && f.file_name !== '-' ? {...acc, [f.file_name]: f.file_url} : acc, {}) ?? {})
-    setFileAccess(data?.reduce((acc, f) => f.file_name && f.file_name !== '-' ? {...acc, [f.file_name]: f.is_accessible} : acc, {}) ?? {})
+    setFiles(new Set(data?.filter(f => f.file_url && f.file_url !== '-').map(f => f.kode_siswa) ?? []))
+    setFileUrls(data?.reduce((acc, f) => (f.file_url && f.file_url !== '-') ? {...acc, [f.kode_siswa]: f.file_url} : acc, {}) ?? {})
+    setFileNames(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.file_name}), {}) ?? {})
+    setFileAccess(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.is_accessible}), {}) ?? {})
     setFileReqs(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.persyaratan_terpenuhi || {}}), {}) ?? {})
   }
 
@@ -115,39 +140,49 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
     
     setToggling(`${kode}_req_${reqId}`)
     
-    const hasFileForSingle = files.has(`${kode}${type.kode_jenis}.pdf`)
-    const fNameSingle = `${kode}${type.kode_jenis}.pdf`
-    
     const { error: upsertErr } = await supabase.from('berkas_pengumuman').upsert({
       kode_siswa: kode,
       kode_jenis: type.kode_jenis,
       persyaratan_terpenuhi: updatedReqs,
-      file_name: hasFileForSingle ? fNameSingle : '-',
-      file_url: hasFileForSingle ? (fileUrls[fNameSingle] || '-') : '-'
+      file_name: fileNames[kode] || '-',
+      file_url: fileUrls[kode] || '-'
     }, { onConflict: 'kode_siswa,kode_jenis' })
     
-    if (upsertErr) alert('Gagal: ' + upsertErr.message)
-    else setFileReqs(prev => ({ ...prev, [kode]: updatedReqs }))
+    if (upsertErr) {
+      alert('Gagal: ' + upsertErr.message)
+    } else {
+      setFileReqs(prev => ({ ...prev, [kode]: updatedReqs }))
+      supabase.channel('dashboard-updates-all').send({
+        type: 'broadcast',
+        event: 'berkas_updated',
+        payload: { kode_siswa: kode }
+      })
+    }
     
     setToggling(null)
   }
 
   const handleMassToggleReq = async (reqId, targetStatus) => {
-    if (!window.confirm(`Anda yakin ingin ${targetStatus ? 'mencentang' : 'menghapus centang'} syarat ini untuk semua siswa yang tampil di bawah?`)) return
+    const confirmed = await requestConfirm({
+      title: targetStatus ? 'Centang Semua Syarat?' : 'Hapus Centang Semua?',
+      message: `Anda yakin ingin ${targetStatus ? 'mencentang' : 'menghapus centang'} syarat ini untuk semua siswa yang tampil di bawah?`,
+      confirmLabel: targetStatus ? 'Ya, Centang Semua' : 'Ya, Hapus Centang',
+      confirmColor: targetStatus ? 'green' : 'red',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     const codes = filteredStudents.map(s => s.kode).filter(Boolean)
     if (codes.length === 0) return
     setToggling(`mass_req_${reqId}`)
     
     const upserts = codes.map(kode => {
       const currentReqs = fileReqs[kode] || {}
-      const fName = `${kode}${type.kode_jenis}.pdf`
-      const hasFile = files.has(fName)
       return {
         kode_siswa: kode,
         kode_jenis: type.kode_jenis,
         persyaratan_terpenuhi: { ...currentReqs, [reqId]: targetStatus },
-        file_name: hasFile ? fName : '-',
-        file_url: hasFile ? (fileUrls[fName] || '-') : '-'
+        file_name: fileNames[kode] || '-',
+        file_url: fileUrls[kode] || '-'
       }
     })
     
@@ -160,26 +195,13 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
         newFileReqs[kode] = { ...(newFileReqs[kode] || {}), [reqId]: targetStatus }
       })
       setFileReqs(newFileReqs)
+      supabase.channel('dashboard-updates-all').send({
+        type: 'broadcast',
+        event: 'berkas_updated',
+        payload: { kode_siswa: 'ALL' }
+      })
     }
     setToggling(null)
-  }
-
-  const handleToggleGlobal = async (status) => {
-    if (!window.confirm(`Anda yakin ingin ${status ? 'membuka' : 'menutup'} akses global untuk semua siswa pada menu ini?`)) return
-    const { error } = await supabase.from('jenis_pengumuman').update({ aktif: status }).eq('id', type.id)
-    if (error) {
-      alert('Gagal mengubah akses global: ' + error.message)
-    } else {
-      const session = JSON.parse(localStorage.getItem('guru_session') || '{}')
-      logActivity({
-        userId: session.id,
-        userRole: session.role || 'Guru',
-        action: 'Ubah Akses Global',
-        details: `${status ? 'Membuka' : 'Menutup'} akses global untuk pengumuman: ${type.nama}`
-      })
-      // Refresh parent agar state React terupdate dengan benar
-      if (onRefresh) onRefresh()
-    }
   }
 
   const handleToggleFileAccess = async (kode, fileName) => {
@@ -211,7 +233,14 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   }
 
   const handleResetStatusUnduh = async (nama_lengkap) => {
-    if (!window.confirm(`Yakin ingin mereset status unduh untuk ${nama_lengkap}?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Reset Status Unduh?',
+      message: `Yakin ingin mereset status unduh untuk ${nama_lengkap}?`,
+      confirmLabel: 'Reset',
+      confirmColor: 'indigo',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     
     const { error } = await supabase.from('activity_log')
       .delete()
@@ -241,22 +270,13 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   }
 
   return (
-    <div className="animate-slide-up">
-      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem)] md:h-[calc(100vh-4rem)]">
+      {ConfirmModalComponent}
+      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">{type.nama}</h2>
           <p className="text-slate-500 text-sm mt-1">Kelola dokumen pengumuman untuk siswa Anda</p>
         </div>
-        
-        {canKelola && (
-          <div className="bg-white p-3 border border-slate-200 rounded-xl shadow-sm flex items-center gap-4">
-            <div>
-              <p className="text-sm font-bold text-slate-800">Akses Global (Semua Siswa)</p>
-              <p className="text-xs text-slate-500">Buka/tutup akses tombol di dashboard siswa</p>
-            </div>
-            <Toggle value={type.aktif} onChange={(val) => handleToggleGlobal(val)} />
-          </div>
-        )}
       </div>
 
         <div className="flex-1 min-h-0 flex flex-col-reverse lg:flex-row gap-4">
@@ -276,8 +296,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
 
             <div className="flex-1 overflow-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider">
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider">
                 <th className="px-5 py-3 font-semibold w-12 text-center">No</th>
                 <th className="px-5 py-3 font-semibold">Nama & NISN</th>
                 <th className="px-5 py-3 font-semibold text-center">Kelas</th>
@@ -304,10 +324,9 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
               {filteredStudents.length === 0 ? (
                 <tr><td colSpan="6" className="px-5 py-8 text-center text-slate-500">Tidak ada siswa yang cocok.</td></tr>
               ) : filteredStudents.map((s, idx) => {
-                const fileName = `${s.kode}${type.kode_jenis}.pdf`
-                const hasFile = files.has(fileName)
-                const isAccessible = fileAccess[fileName]
-                const isToggling = toggling === fileName
+                const hasFile = files.has(s.kode)
+                const isAccessible = fileAccess[s.kode]
+                const isToggling = toggling === s.kode
 
                 return (
                   <tr key={s.id} className="group hover:bg-slate-50/50 bg-white">
@@ -381,7 +400,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
 
                 const hasFileReqs = type.persyaratan && type.persyaratan.length > 0
                 const grantedCount = classStudents.filter(s => {
-                  const hasFile = files.has(`${s.kode}${type.kode_jenis}.pdf`)
+                  const hasFile = files.has(s.kode)
                   if (!hasFile) return false
                   if (!hasFileReqs) return true
                   const terpenuhi = fileReqs[s.kode] || {}
@@ -474,6 +493,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
 
 export default function DashboardGuru() {
   const navigate = useNavigate()
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [session, setSession] = useState(null)
   const [activeMenu, setActiveMenu] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -503,6 +523,17 @@ export default function DashboardGuru() {
   }, [activeMenu])
 
   useEffect(() => {
+    if (loading) return
+    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password']
+    if (!staticMenus.includes(activeMenu)) {
+      const exists = menuTypes.find(t => t.id === activeMenu)
+      if (!exists) {
+        setActiveMenu('dashboard')
+      }
+    }
+  }, [menuTypes, activeMenu, loading])
+
+  useEffect(() => {
     const rawSession = localStorage.getItem('guru_session')
     if (!rawSession) {
       navigate('/')
@@ -511,6 +542,17 @@ export default function DashboardGuru() {
     const parsed = JSON.parse(rawSession)
     setSession(parsed)
     fetchData(parsed)
+
+    const broadcastChannel = supabase.channel('jenis-updates-all')
+      .on('broadcast', { event: 'jenis_updated' }, () => {
+        console.log('[REALTIME SYNC] Jenis pengumuman updated, refetching...')
+        fetchData(parsed)
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(broadcastChannel)
+    }
   }, [navigate])
 
   const fetchData = async (userData) => {
@@ -584,7 +626,7 @@ export default function DashboardGuru() {
 
     // 4. Fetch Jenis Pengumuman (if has permission)
     if (currentFitur.has('lihat_dokumen') || currentFitur.has('kelola_pengumuman')) {
-      const { data: mTypes } = await supabase.from('jenis_pengumuman').select('*').order('urutan')
+      const { data: mTypes } = await supabase.from('jenis_pengumuman').select('*').neq('visible_guru', false).order('urutan')
       if (mTypes) setMenuTypes(mTypes)
     }
 
@@ -644,6 +686,51 @@ export default function DashboardGuru() {
     navigate('/')
   }
 
+  const handleResetKodeAkses = async () => {
+    if (!selectedStudent) return
+    const confirmed = await requestConfirm({
+      title: 'Reset Kode Akses?',
+      message: `Yakin ingin mereset kode akses untuk ${selectedStudent.nama_lengkap}? Kode baru akan di-generate secara acak.`,
+      confirmLabel: 'Ya, Reset',
+      confirmColor: 'indigo',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+
+    // Generate random 6 character alphanumeric code
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    let newKode = ''
+    for (let i = 0; i < 6; i++) {
+      newKode += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+
+    try {
+      const { error } = await supabase
+        .from('siswa')
+        .update({ kode: newKode })
+        .eq('nisn', selectedStudent.nisn)
+
+      if (error) throw error
+
+      alert(`Kode berhasil direset menjadi: ${newKode}`)
+      
+      // Update local state so it shows in the modal immediately
+      setSelectedStudent(prev => ({ ...prev, kode: newKode }))
+      
+      // Update waliStudents and mapelStudents list to reflect new kode if they are stored there
+      // Currently, kode might only be refetched on page reload, but we update the selected modal.
+      
+      logActivity({
+        userId: session.id,
+        userRole: session.role || 'Guru',
+        action: 'Reset Kode Akses',
+        details: `Reset kode akses untuk siswa ${selectedStudent.nama_lengkap} (NISN: ${selectedStudent.nisn})`
+      })
+    } catch (err) {
+      alert(`Gagal mereset kode: ${err.message}`)
+    }
+  }
+
   if (loading || !session) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
   }
@@ -680,17 +767,21 @@ export default function DashboardGuru() {
       <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${
         sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       }`}>
-        <div className="p-5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className="w-20 h-20 object-contain shrink-0 drop-shadow-sm" />
-            <div>
-              <h2 className="font-bold text-base text-slate-800 leading-tight">eBudiMulia</h2>
-              <p className="text-xs font-medium text-slate-500">SMP Budi Mulia Jakarta</p>
-            </div>
+        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            {!sidebarCollapsed && (
+              <div className="animate-fade-in truncate">
+                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
+              </div>
+            )}
           </div>
-          <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
+          {!sidebarCollapsed && (
+            <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          )}
         </div>
 
 
@@ -848,6 +939,7 @@ export default function DashboardGuru() {
                       }
                       
                       return (
+                        <>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -865,6 +957,9 @@ export default function DashboardGuru() {
                           )}
                         </div>
                       </div>
+                      
+                      <GuruDashboardBerita session={session} />
+                      </>
                       );
                     })()}
                   </div>
@@ -873,13 +968,13 @@ export default function DashboardGuru() {
             )}
 
             {activeMenu === 'siswa_wali' && fitur.has('lihat_data_siswa') && (
-              <div className="animate-slide-up">
-                <div className="mb-6">
+              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-4rem)]">
+                <div className="mb-6 shrink-0">
                   <h2 className="text-2xl font-bold text-slate-900">Siswa Wali Kelas</h2>
                   <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas perwalian Anda: <strong>{waliClassesStr}</strong></p>
                 </div>
 
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 shrink-0">
                   <div className="flex flex-col md:flex-row gap-4 mb-4">
                     <div className="relative flex-1">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -924,10 +1019,10 @@ export default function DashboardGuru() {
                   )}
                 </div>
 
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="overflow-x-auto">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-0">
+                  <div className="overflow-auto flex-1">
                     <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead>
+                      <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
                           <th className="px-6 py-4 font-semibold w-12 text-center">No</th>
                           <th className="px-6 py-4 font-semibold">NISN</th>
@@ -971,13 +1066,13 @@ export default function DashboardGuru() {
             )}
 
             {activeMenu === 'siswa_mapel' && fitur.has('lihat_data_siswa') && (
-              <div className="animate-slide-up">
-                <div className="mb-6">
+              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-4rem)]">
+                <div className="mb-6 shrink-0">
                   <h2 className="text-2xl font-bold text-slate-900">Siswa Mata Pelajaran</h2>
                   <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas mata pelajaran Anda: <strong>{mapelClassesStr}</strong></p>
                 </div>
 
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 shrink-0">
                   <div className="flex flex-col md:flex-row gap-4 mb-4">
                     <div className="relative flex-1">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -1022,10 +1117,10 @@ export default function DashboardGuru() {
                   )}
                 </div>
 
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="overflow-x-auto">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-0">
+                  <div className="overflow-auto flex-1">
                     <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead>
+                      <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
                           <th className="px-5 py-4 font-semibold w-12 text-center">No</th>
                           <th className="px-5 py-4 font-semibold">Nama Siswa</th>
@@ -1269,12 +1364,21 @@ export default function DashboardGuru() {
                       </div>
                     </div>
                   </div>
+                  {/* Reset Password Button Area */}
+                  <div className="px-6 py-5 border-t border-slate-100 bg-slate-50 flex justify-end">
+                    <button onClick={handleResetKodeAkses} className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-xl text-sm transition-colors shadow-sm focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 outline-none flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                      Reset Kode Akses
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
         </div>
       </main>
+      
+      {ConfirmModalComponent}
     </div>
   )
 }

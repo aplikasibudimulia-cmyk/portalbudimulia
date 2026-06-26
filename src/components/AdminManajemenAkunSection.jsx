@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient'
 import bcrypt from 'bcryptjs'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
+import { useConfirm } from '../utils/useConfirm'
 
 // Icons (Simplified as SVGs to reduce dependencies)
 const IconUsers = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -54,6 +55,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
   const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
 
   useEffect(() => {
@@ -272,7 +274,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   }
 
   const handleDeletePermanen = async (row) => {
-    if (!window.confirm(`PERINGATAN!\nAnda akan menghapus SELURUH data ${row.nama} secara permanen (Biodata, Akun, Nilai/Kelas, Foto).\nTindakan ini TIDAK BISA dibatalkan!\nLanjutkan?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Permanen?',
+      message: `PERINGATAN!\nAnda akan menghapus SELURUH data ${row.nama} secara permanen (Biodata, Akun, Nilai/Kelas, Foto).\nTindakan ini TIDAK BISA dibatalkan!\nLanjutkan?`,
+      confirmLabel: 'Hapus Permanen',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
     setIsProcessing(true)
     
     if (activeTab === 'murid') {
@@ -546,7 +555,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   const handleRapihkanKode = async () => {
     if (!activeTa) return
-    if (!window.confirm(`Apakah Anda yakin ingin merapihkan ulang seluruh kode PDF siswa di tahun ajaran ${activeTa.nama} berdasarkan urutan abjad?\n\nJangan khawatir, semua file PDF yang sudah terupload akan otomatis menyesuaikan diri!`)) return
+    const confirmed = await requestConfirm({
+      title: 'Rapihkan Kode Siswa?',
+      message: `Apakah Anda yakin ingin merapihkan ulang seluruh kode PDF siswa di tahun ajaran ${activeTa.nama} berdasarkan urutan abjad?\n\nJangan khawatir, semua file PDF yang sudah terupload akan otomatis menyesuaikan diri!`,
+      confirmLabel: 'Rapihkan Kode',
+      confirmColor: 'indigo',
+      icon: 'warning',
+    })
+    if (!confirmed) return
     
     setIsProcessing(true)
     try {
@@ -682,7 +698,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const handleMassPhotoUpload = async (e) => {
     const files = Array.from(e.target.files)
     if (!files.length) return
-    if (!window.confirm(`Akan mengunggah ${files.length} foto. Pastikan nama file adalah ${activeTab === 'murid' ? 'NISN' : 'KODE GURU'}. Lanjutkan?`)) return
+    const confirmed = await requestConfirm({
+      title: 'Upload Foto Massal?',
+      message: `Akan mengunggah ${files.length} foto. Pastikan nama file adalah ${activeTab === 'murid' ? 'NISN' : 'KODE GURU'}. Lanjutkan?`,
+      confirmLabel: 'Upload Foto',
+      confirmColor: 'indigo',
+      icon: 'info',
+    })
+    if (!confirmed) return
 
     setIsProcessing(true)
     let success = 0, failed = 0
@@ -895,7 +918,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   })
 
   const handleDeletePhotoModal = async () => {
-    if (!window.confirm("Yakin ingin menghapus foto ini?")) return
+    const confirmed = await requestConfirm({
+      title: 'Hapus Foto?',
+      message: 'Yakin ingin menghapus foto ini?',
+      confirmLabel: 'Hapus',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
     setIsProcessing(true)
     try {
       if (activeTab === 'murid') {
@@ -943,8 +973,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           akun_id: 'siswa_' + siswa.id
         }
 
-        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(sessionData))))
-        window.open(`/impersonate?data=${encoded}&role=murid`, '_blank')
+        const { data: tokenRecord, error } = await supabase.from('impersonate_tokens').insert({
+          role: 'murid',
+          session_data: sessionData
+        }).select('id').single()
+
+        if (error) throw error
+        window.open(`/impersonate?token=${tokenRecord.id}`, '_blank')
 
       } else {
         // Build guru session (same logic as Login.jsx)
@@ -971,8 +1006,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           app_role: akun.role
         }
 
-        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(sessionData))))
-        window.open(`/impersonate?data=${encoded}&role=guru`, '_blank')
+        const { data: tokenRecord, error } = await supabase.from('impersonate_tokens').insert({
+          role: 'guru',
+          session_data: sessionData
+        }).select('id').single()
+
+        if (error) throw error
+        window.open(`/impersonate?token=${tokenRecord.id}`, '_blank')
       }
     } catch (err) {
       alert('Gagal login sebagai user: ' + err.message)
@@ -980,14 +1020,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   }
 
   return (
-    <div className="animate-slide-up flex flex-col h-full min-h-screen pb-12">
+    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
       <input type="file" accept="image/*" ref={individualPhotoInputRef} className="hidden" onChange={handleIndividualPhotoUpload} />
       <input type="file" accept="image/*" multiple ref={massPhotoInputRef} className="hidden" onChange={handleMassPhotoUpload} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvInputRef} className="hidden" onChange={handleCsvImportGuru} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvSiswaInputRef} className="hidden" onChange={handleCsvImportSiswa} />
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manajemen Akun & Data Pengguna</h2>
           <p className="text-slate-500 text-sm mt-1">Satu pintu untuk mengelola biodata, akun login, dan penugasan.</p>
@@ -1023,7 +1063,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       </div>
 
               {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0">
           {(activeTab === 'murid' ? [
             { l: 'Total Murid', v: mergedData.length },
             { l: 'Punya Akun', v: mergedData.filter(m => m.hasAkun).length },
@@ -1047,7 +1087,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         </div>
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-slate-200 mb-6">
+      <div className="flex gap-6 border-b border-slate-200 mb-6 shrink-0">
         {[
           { id: 'murid', label: 'Murid', icon: <IconUsers className="w-4 h-4" /> },
           { id: 'guru', label: 'Guru & Staff', icon: <IconKey className="w-4 h-4" /> }
@@ -1060,7 +1100,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       </div>
 
       {/* Toolbar */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3">
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3 shrink-0">
         <div className="relative flex-1">
           <input type="text" placeholder="Cari nama, username, ID, atau kode..." value={search} onChange={(e) => setSearch(e.target.value)}
             className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -1078,7 +1118,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       {/* Class Filter (Murid Only) */}
       {activeTab === 'murid' && uniqueClasses.length > 0 && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2 shrink-0">
           <button onClick={() => setSelectedClassFilter('all')} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>Semua</button>
           {uniqueClasses.map(c => (
             <button key={c} onClick={() => setSelectedClassFilter(c)} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === c ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>{c}</button>
@@ -1087,16 +1127,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       )}
 
       {/* Table */}
-      <div className="bg-white border-none rounded-xl shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '500px' }}>
+      <div className="bg-white border-none rounded-xl shadow-sm flex flex-col overflow-hidden flex-1 min-h-0">
         {loading || isProcessing ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500 py-20">
             <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
             <p>{progressText || "Memuat data..."}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto flex-1">
             <table className="w-full text-sm text-left whitespace-nowrap min-w-[800px]">
-              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600 shadow-sm">
                 <tr>
                   <th className="px-4 py-3">Foto</th>
                   <th className="px-4 py-3">Identitas</th>
