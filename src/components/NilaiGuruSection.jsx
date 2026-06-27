@@ -62,7 +62,8 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [selectedBabToManage, setSelectedBabToManage] = useState(null)
   const [editBabName, setEditBabName]                 = useState('')
   const [selectedTpToManage, setSelectedTpToManage]   = useState(null)
-  const [editTpData, setEditTpData]                   = useState({ nama: '', deskripsi: '', bobot: '1', target_kelas: [] })
+  const [editTpData, setEditTpData]                   = useState({ nama: '', deskripsi: '', bobot: '1', target_kelas: [], instruksi: '', lampiran_urls: [] })
+  const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [editingMetode, setEditingMetode]             = useState(null)
 
   const [manualBobotPending, setManualBobotPending] = useState(false)
@@ -96,7 +97,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
     fetchMaxName()
   }, [targetKelasList])
   const [showConfigAkhirModal, setShowConfigAkhirModal] = useState(false)
-  const [configAkhir, setConfigAkhir] = useState({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
+  const [configAkhir, setConfigAkhir] = useState({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false })
 
   const [showAddTp, setShowAddTp] = useState(false)
 
@@ -125,7 +126,24 @@ export default function NilaiGuruSection({ session, activeTa }) {
     k.semester_id === selectedSemesterId && (!k.target_kelas || k.target_kelas.length === 0 || k.target_kelas.includes(activeTabKelas))
   )
   const uniqueBabs = [...new Set(komponen.map(k => k.bab_nama || 'Lainnya'))]
-  const uniqueBabsClass = [...new Set(classKomponen.map(k => k.bab_nama || 'Lainnya'))]
+  const uniqueBabsClass = [...new Set(classKomponen.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+    const isPstsA = a.toUpperCase().includes('PSTS');
+    const isPstsB = b.toUpperCase().includes('PSTS');
+    const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+    const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+
+    if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+    if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+    if (isPsasA && !isPsasB) return 1;
+    if (isPsasB && !isPsasA) return -1;
+    
+    const matchA = a.match(/\d+/);
+    const matchB = b.match(/\d+/);
+    if (matchA && matchB) {
+      return parseInt(matchA[0]) - parseInt(matchB[0]);
+    }
+    return a.localeCompare(b);
+  });
 
   // Existing BABs for the selected rombel in add-bab modal
   const existingBabsForRombel = newBabRombel
@@ -165,7 +183,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
     } else {
       setStudents([])
       setNilaiData({})
-      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
+      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false })
     }
   }, [activeTabKelas, selectedMapelId, selectedSemesterId])
 
@@ -187,9 +205,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
       .maybeSingle()
     
     if (data) {
-      setConfigAkhir({ metode_hitung: data.metode_hitung || 'rata_rata', bobot_detail: data.bobot_detail || {}, is_visible: data.is_visible ?? true })
+      setConfigAkhir({ metode_hitung: data.metode_hitung || 'rata_rata', bobot_detail: data.bobot_detail || {}, is_visible: data.is_visible ?? false })
     } else {
-      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
+      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false })
     }
   }
 
@@ -317,9 +335,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
     let finalName = newBabNama.trim()
     
     // Auto format "Bab X:"
-    if (!finalName.toLowerCase().startsWith('bab')) {
+    if (!finalName.toLowerCase().startsWith('bab') && !finalName.toUpperCase().includes('PSTS') && !finalName.toUpperCase().includes('PSAS') && !finalName.toUpperCase().includes('PSAT')) {
        const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))
-       const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))]
+       const uniqueBabs = [...new Set(classBabs.filter(k => k.bab_nama?.toLowerCase().startsWith('bab')).map(k => k.bab_nama))]
        const nextNum = uniqueBabs.length + 1
        finalName = `Bab ${nextNum}: ${finalName}`
     }
@@ -327,8 +345,10 @@ export default function NilaiGuruSection({ session, activeTa }) {
     // Check duplication for specific rombel
     if (!komponen.find(k => k.bab_nama === finalName && k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))) {
       setAddingKomponen(true)
+      const classBabsForRombel = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel));
       const maxUrutan = komponen.length > 0 ? Math.max(...komponen.map(k => k.urutan)) + 1 : 0
-      const { error } = await supabase.from('nilai_komponen').insert({
+      
+      let inserts = [{
         guru_id: session.id,
         tahun_ajaran_id: activeTa.id,
         semester_id: null,
@@ -342,7 +362,42 @@ export default function NilaiGuruSection({ session, activeTa }) {
         kelas: classesForRombel[0],
         metode_hitung: 'rata_rata',
         is_nilai_visible: false
-      })
+      }];
+
+      if (classBabsForRombel.length === 0) {
+        inserts.push({
+          guru_id: session.id,
+          tahun_ajaran_id: activeTa.id,
+          semester_id: null,
+          mata_pelajaran_id: selectedMapelId,
+          bab_nama: 'PSTS',
+          nama: 'Nilai PSTS',
+          deskripsi: 'Penilaian Sumatif Tengah Semester',
+          bobot: 1,
+          urutan: maxUrutan + 1,
+          target_kelas: classesForRombel,
+          kelas: classesForRombel[0],
+          metode_hitung: 'rata_rata',
+          is_nilai_visible: false
+        });
+        inserts.push({
+          guru_id: session.id,
+          tahun_ajaran_id: activeTa.id,
+          semester_id: null,
+          mata_pelajaran_id: selectedMapelId,
+          bab_nama: 'PSAS/PSAT',
+          nama: 'Nilai Akhir Semester/Tahun',
+          deskripsi: 'Penilaian Sumatif Akhir Semester atau Tahun',
+          bobot: 1,
+          urutan: maxUrutan + 2,
+          target_kelas: classesForRombel,
+          kelas: classesForRombel[0],
+          metode_hitung: 'rata_rata',
+          is_nilai_visible: false
+        });
+      }
+
+      const { error } = await supabase.from('nilai_komponen').insert(inserts)
       
       setAddingKomponen(false)
       if (error) {
@@ -438,12 +493,47 @@ export default function NilaiGuruSection({ session, activeTa }) {
     const { error } = await supabase.from('nilai_komponen').update({
       nama: editTpData.nama,
       deskripsi: editTpData.deskripsi,
+      instruksi: editTpData.instruksi,
+      lampiran_urls: editTpData.lampiran_urls,
       bobot: parseFloat(editTpData.bobot) || 1,
       target_kelas: editTpData.target_kelas,
       kelas: editTpData.target_kelas[0] || 'LINTAS'
     }).eq('id', selectedTpToManage)
     if (error) alert('Gagal: ' + error.message)
     else { setSelectedTpToManage(null); fetchKomponen() }
+  }
+
+  const handleUploadAttachment = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Ukuran file maksimal 5MB")
+      return
+    }
+    setUploadingAttachment(true)
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`
+    const filePath = `${selectedTpToManage}/${fileName}`
+
+    const { error: uploadError } = await supabase.storage.from('tp_lampiran').upload(filePath, file)
+    if (uploadError) {
+      alert("Gagal upload file: " + uploadError.message)
+      setUploadingAttachment(false)
+      return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('tp_lampiran').getPublicUrl(filePath)
+    setEditTpData(prev => ({
+      ...prev,
+      lampiran_urls: [...(prev.lampiran_urls || []), publicUrl]
+    }))
+    setUploadingAttachment(false)
+  }
+
+  const handleRemoveAttachment = (idxToRemove) => {
+    setEditTpData(prev => ({
+      ...prev,
+      lampiran_urls: (prev.lampiran_urls || []).filter((_, idx) => idx !== idxToRemove)
+    }))
   }
 
   const handleSaveEditBab = async () => {
@@ -454,6 +544,26 @@ export default function NilaiGuruSection({ session, activeTa }) {
     }
     setSelectedBabToManage(null)
     fetchKomponen()
+  }
+
+  const handleDeleteBab = async (babNama) => {
+    const confirmed = await requestConfirm({
+       title: "Hapus BAB / Penilaian",
+       message: `Yakin ingin menghapus "${babNama}" beserta seluruh TP di dalamnya secara permanen?`,
+       confirmText: "Hapus",
+       cancelText: "Batal",
+       confirmColor: "bg-rose-600 hover:bg-rose-700 text-white"
+    });
+    if (!confirmed) return;
+    
+    const ids = komponen.filter(k => k.bab_nama === babNama).map(k => k.id);
+    const { error } = await supabase.from('nilai_komponen').delete().in('id', ids);
+    if (error) {
+      alert('Gagal menghapus: ' + error.message);
+    } else {
+      setSelectedBabToManage(null);
+      fetchKomponen();
+    }
   }
 
   const handleUpdateMetode = async (babNama, metode) => {
@@ -515,7 +625,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
       kelas: activeTabKelas,
       metode_hitung: newConfig.metode_hitung,
       bobot_detail: newConfig.bobot_detail,
-      is_visible: newConfig.is_visible ?? true,
+      is_visible: newConfig.is_visible ?? false,
       updated_at: new Date().toISOString()
     }, { onConflict: 'guru_id,tahun_ajaran_id,semester_id,mata_pelajaran_id,kelas' });
     
@@ -554,7 +664,20 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
   // ─── Hitung Rata-rata ─────────────────────────────────────────────────────
   const hitungRataRata = (nisn) => {
-    const babList = [...new Set(classKomponen.map(k => k.bab_nama || 'Lainnya'))]
+    const babList = [...new Set(classKomponen.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+      const isPstsA = a.toUpperCase().includes('PSTS');
+      const isPstsB = b.toUpperCase().includes('PSTS');
+      const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+      const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+      if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+      if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+      if (isPsasA && !isPsasB) return 1;
+      if (isPsasB && !isPsasA) return -1;
+      const matchA = a.match(/\d+/);
+      const matchB = b.match(/\d+/);
+      if (matchA && matchB) return parseInt(matchA[0]) - parseInt(matchB[0]);
+      return a.localeCompare(b);
+    })
     const hitungRataBAB = (bab) => {
       const komp = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab)
       const metode = komp[0]?.metode_hitung || 'rata_rata'
@@ -592,7 +715,14 @@ export default function NilaiGuruSection({ session, activeTa }) {
   }
 
 
-
+  const getPredikat = (nilai) => {
+    if (nilai === null || isNaN(nilai)) return '-';
+    if (nilai >= 90) return 'A';
+    if (nilai >= 80) return 'B';
+    if (nilai >= 70) return 'C';
+    if (nilai >= 60) return 'D';
+    return 'E';
+  }
 
 
 
@@ -604,7 +734,20 @@ export default function NilaiGuruSection({ session, activeTa }) {
       const sekolah = 'SMP BUDI MULIA'
       const tahunAjaran = activeTa?.nama || ''
 
-      const babList = [...new Set(classKomp.map(k => k.bab_nama || 'Lainnya'))]
+      const babList = [...new Set(classKomp.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+        const isPstsA = a.toUpperCase().includes('PSTS');
+        const isPstsB = b.toUpperCase().includes('PSTS');
+        const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+        const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+        if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+        if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+        if (isPsasA && !isPsasB) return 1;
+        if (isPsasB && !isPsasA) return -1;
+        const matchA = a.match(/\d+/);
+        const matchB = b.match(/\d+/);
+        if (matchA && matchB) return parseInt(matchA[0]) - parseInt(matchB[0]);
+        return a.localeCompare(b);
+      })
       const babKomponenMap = {}
       babList.forEach(bab => {
         babKomponenMap[bab] = classKomp.filter(k => (k.bab_nama || 'Lainnya') === bab).sort((a,b) => {
@@ -649,15 +792,6 @@ export default function NilaiGuruSection({ session, activeTa }) {
           if (vals.length === 0) return null
           return +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
         }
-      }
-
-      const getPredikat = (nilai) => {
-        if (nilai === null) return ''
-        if (nilai >= 90) return 'A'
-        if (nilai >= 80) return 'B'
-        if (nilai >= 70) return 'C'
-        if (nilai >= 60) return 'D'
-        return 'E'
       }
 
       const getKeterangan = (nisn, bab) => {
@@ -913,7 +1047,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
         
         // Predikat formula (A >= 90, B >= 80, C >= 70, D >= 60, E < 60)
         const akhirColLetter = getColLetter(nilaiAkhirCol)
-        const formulaPredikat = `IF(${akhirColLetter}${excelRow}="", "", IF(${akhirColLetter}${excelRow}>=90, "A", IF(${akhirColLetter}${excelRow}>=80, "B", IF(${akhirColLetter}${excelRow}>=70, "C", IF(${akhirColLetter}${excelRow}>=60, "D", "E")))))`
+        const formulaPredikat = `IF(OR(${akhirColLetter}${excelRow}="", ${akhirColLetter}${excelRow}=0), "", IF(${akhirColLetter}${excelRow}>=90, "A", IF(${akhirColLetter}${excelRow}>=80, "B", IF(${akhirColLetter}${excelRow}>=70, "C", IF(${akhirColLetter}${excelRow}>=60, "D", "E")))))`
         setCell(r, predikatCol, null, styleDataCenter, 's', formulaPredikat)
       })
 
@@ -1064,7 +1198,10 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         // Apply Caps and Padding
         if (c === 0) maxLen = 3.71 // No
         else if (c === 1) maxLen = 16.29 // NISN
-        else if (c === 2) maxLen = Math.min(Math.max(maxLen + 2, 15), 35) // Nama Siswa
+        else if (c === 2) {
+           const maxNamaLength = Math.max(...students.map(s => (s.nama_lengkap || '').length), 15);
+           maxLen = maxNamaLength + 2; // Nama Siswa full length across all classes
+        }
         else if (c >= lingkupStartCol) {
            // Lingkup Materi section
            const isDesc = (c - lingkupStartCol) % 2 !== 0
@@ -1268,7 +1405,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         
         
         // Fetch config akhir specific to this class
-        let classConfigAkhir = { metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true };
+        let classConfigAkhir = { metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false };
         const { data: configData } = await supabase.from('nilai_akhir_config')
           .select('*')
           .eq('guru_id', session.id)
@@ -1278,7 +1415,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
           .eq('kelas', kelas)
           .maybeSingle();
         if (configData) {
-           classConfigAkhir = { metode_hitung: configData.metode_hitung || 'rata_rata', bobot_detail: configData.bobot_detail || {}, is_visible: configData.is_visible ?? true };
+           classConfigAkhir = { metode_hitung: configData.metode_hitung || 'rata_rata', bobot_detail: configData.bobot_detail || {}, is_visible: configData.is_visible ?? false };
         }
         
         await generateClassSheet(kelas, classStudents, classKomp, classNilaiData, classConfigAkhir, wb);
@@ -1710,7 +1847,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 setShowAddBab(true)
               }}
                 className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
-                <IconPlus /> Buat BAB
+                <IconPlus /> Kelola Bab
               </button>
             </div>
           </div>
@@ -1772,7 +1909,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               <h3 className="font-bold text-slate-800 text-xl mb-1">Mulai Kelola Nilai</h3>
               <p className="text-slate-500 text-sm max-w-md text-center mb-6">Pilih kelas yang Anda ajar untuk mata pelajaran ini, lalu buat BAB pertama.</p>
               <button onClick={() => setShowAddBab(true)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2">
-                <IconPlus /> Tentukan Target Kelas & Buat BAB
+                <IconPlus /> Tentukan Target Kelas & Kelola Bab
               </button>
             </div>
           ) : !activeTabKelas ? (
@@ -1788,7 +1925,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 setNewBabTargetKelas([activeTabKelas])
                 setShowAddBab(true)
               }} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 text-sm">
-                Buat BAB Baru
+                Kelola Bab
               </button>
             </div>
           ) : students.length === 0 ? (
@@ -1831,9 +1968,20 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                       <div className="flex flex-col items-center justify-center gap-1.5 h-full">
                         <div className="flex items-center justify-center gap-1.5 w-full">
                           <div className="font-extrabold leading-snug">Nilai Akhir</div>
-                          <button onClick={(e) => { 
+                          <button onClick={async (e) => { 
                              e.stopPropagation(); 
-                             handleSaveConfigAkhir({...configAkhir, is_visible: configAkhir.is_visible === false ? true : false}) 
+                             const willShow = configAkhir.is_visible === false ? true : false;
+                             if (willShow) {
+                               const confirmed = await requestConfirm({
+                                 title: 'Tampilkan Nilai Akhir ke Siswa?',
+                                 message: 'Nilai Akhir akan ditampilkan di akun siswa. Apakah Anda yakin?',
+                                 confirmLabel: 'Ya, Tampilkan',
+                                 confirmColor: 'indigo',
+                                 icon: 'info',
+                               });
+                               if (!confirmed) return;
+                             }
+                             handleSaveConfigAkhir({...configAkhir, is_visible: willShow}) 
                           }} className={`p-0.5 rounded transition-colors ${configAkhir.is_visible !== false ? 'text-indigo-400 hover:text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title={configAkhir.is_visible !== false ? 'Sembunyikan dari siswa' : 'Tampilkan ke siswa'}>
                             <IconEye on={configAkhir.is_visible !== false} />
                           </button>
@@ -1881,7 +2029,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                           title={k.deskripsi ? "Klik untuk kelola TP" : "Deskripsi belum diisi! Klik untuk mengisi."}
                           onClick={(e) => {
                               if(e.target.closest('button')) return;
-                              setEditTpData({ nama: k.nama, deskripsi: k.deskripsi || '', bobot: k.bobot, target_kelas: k.target_kelas || [] })
+                              setEditTpData({ nama: k.nama, deskripsi: k.deskripsi || '', bobot: k.bobot, target_kelas: k.target_kelas || [], instruksi: k.instruksi || '', lampiran_urls: k.lampiran_urls || [] })
                               setSelectedTpToManage(k.id)
                           }}
                         >
@@ -1952,8 +2100,15 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                             </td>
                           )
                         })}
-                        <td className={`text-center px-4 py-2.5 font-black text-sm border-l border-indigo-100 bg-indigo-50/30 ${rataColor} ${configAkhir.is_visible === false ? 'opacity-50' : ''}`}>
-                          {rataRata !== null ? rataRata : '—'}
+                        <td className={`text-center px-4 py-2.5 border-l border-indigo-100 bg-indigo-50/30 ${configAkhir.is_visible === false ? 'opacity-50' : ''}`}>
+                          {rataRata !== null ? (
+                            <div className="flex flex-col items-center justify-center gap-1">
+                               <span className={`font-black text-sm ${rataColor}`}>{rataRata}</span>
+                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${getPredikat(rataRata) === 'A' || getPredikat(rataRata) === 'B' ? 'bg-emerald-100 text-emerald-700' : getPredikat(rataRata) === 'C' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{getPredikat(rataRata)}</span>
+                            </div>
+                          ) : (
+                            <span className="font-black text-sm text-slate-300">—</span>
+                          )}
                         </td>
                       </tr>
                     )
@@ -1974,7 +2129,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             {/* KIRI: Input Form */}
             <div className="w-full md:w-3/5 flex flex-col border-r border-slate-100">
               <div className="px-6 py-5 border-b border-slate-100 flex items-center bg-white">
-                <h3 className="font-bold text-slate-800 text-lg">Buat BAB Baru</h3>
+                <h3 className="font-bold text-slate-800 text-lg">Kelola Bab</h3>
               </div>
               
               <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6 flex-1 bg-white">
@@ -2000,7 +2155,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                       {(() => {
                         if (!newBabRombel) return 'Bab ?:'
                         const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))
-                        const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))]
+                        const uniqueBabs = [...new Set(classBabs.filter(k => k.bab_nama?.toLowerCase().startsWith('bab')).map(k => k.bab_nama))]
                         return `Bab ${uniqueBabs.length + 1}:`
                       })()}
                     </div>
@@ -2021,7 +2176,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 <button onClick={handleAddBab} disabled={!newBabNama.trim() || !newBabRombel || addingKomponen}
                   className="px-6 py-2.5 bg-indigo-400 hover:bg-indigo-500 text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors shadow-sm flex items-center gap-2">
                   {addingKomponen ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> : null}
-                  Simpan BAB
+                  Simpan Bab
                 </button>
               </div>
             </div>
@@ -2043,7 +2198,24 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   </div>
                 ) : (() => {
                   const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))
-                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))]
+                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+                    const isPstsA = a.toUpperCase().includes('PSTS');
+                    const isPstsB = b.toUpperCase().includes('PSTS');
+                    const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+                    const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+                
+                    if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+                    if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+                    if (isPsasA && !isPsasB) return 1;
+                    if (isPsasB && !isPsasA) return -1;
+                    
+                    const matchA = a.match(/\d+/);
+                    const matchB = b.match(/\d+/);
+                    if (matchA && matchB) {
+                      return parseInt(matchA[0]) - parseInt(matchB[0]);
+                    }
+                    return a.localeCompare(b);
+                  });
                   
                   if (uniqueBabs.length === 0) {
                     return (
@@ -2056,8 +2228,11 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   return (
                     <div className="flex flex-col gap-2">
                       {uniqueBabs.map((bab, idx) => (
-                        <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-sm font-bold text-slate-700 flex items-center gap-3 animate-fade-in">
-                          {bab}
+                        <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-sm font-bold text-slate-700 flex items-center justify-between gap-3 animate-fade-in hover:border-indigo-200 hover:shadow-md transition-all group">
+                          <span>{bab}</span>
+                          <button onClick={() => handleDeleteBab(bab)} className="p-1.5 opacity-0 group-hover:opacity-100 text-rose-500 hover:bg-rose-100 hover:text-rose-700 rounded-lg transition-all" title={`Hapus ${bab}`}>
+                            <IconTrash />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -2114,7 +2289,20 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   </div>
                 ) : (() => {
                   const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === kelolaSemesterRombel))
-                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))]
+                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+                    const isPstsA = a.toUpperCase().includes('PSTS');
+                    const isPstsB = b.toUpperCase().includes('PSTS');
+                    const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+                    const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+                    if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+                    if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+                    if (isPsasA && !isPsasB) return 1;
+                    if (isPsasB && !isPsasA) return -1;
+                    const matchA = a.match(/\d+/);
+                    const matchB = b.match(/\d+/);
+                    if (matchA && matchB) return parseInt(matchA[0]) - parseInt(matchB[0]);
+                    return a.localeCompare(b);
+                  })
                   
                   if (uniqueBabs.length === 0) {
                     return (
@@ -2182,6 +2370,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   <div className="flex gap-2">
                     <input value={editBabName} onChange={e => setEditBabName(e.target.value)} className="flex-1 px-4 py-2 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500" />
                     <button onClick={handleSaveEditBab} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-sm transition-colors">Simpan</button>
+                    <button onClick={() => handleDeleteBab(selectedBabToManage)} className="px-4 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 rounded-xl font-bold transition-colors" title="Hapus Bab ini"><IconTrash /></button>
                   </div>
                 </div>
                 <div className="sm:w-1/3">
@@ -2315,7 +2504,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                            <IconEye on={k.is_nilai_visible} />
                         </button>
                         <button onClick={() => {
-                          setEditTpData({ nama: k.nama, deskripsi: k.deskripsi || '', bobot: k.bobot, target_kelas: k.target_kelas || [] })
+                          setEditTpData({ nama: k.nama, deskripsi: k.deskripsi || '', bobot: k.bobot, target_kelas: k.target_kelas || [], instruksi: k.instruksi || '', lampiran_urls: k.lampiran_urls || [] })
                           setSelectedTpToManage(k.id)
                         }} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5"><IconPencil/> Edit</button>
                         <button onClick={() => handleDeleteKomponen(k.id)} className="p-1.5 text-rose-500 border border-transparent hover:border-rose-200 bg-white hover:bg-rose-50 rounded-lg transition-colors"><IconTrash/></button>
@@ -2364,6 +2553,38 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Deskripsi Rapor</label>
                 <textarea value={editTpData.deskripsi} onChange={e => setEditTpData({...editTpData, deskripsi: e.target.value})} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm min-h-[100px] resize-none outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+              </div>
+              
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Instruksi TP (Siswa)</label>
+                <textarea value={editTpData.instruksi || ''} onChange={e => setEditTpData({...editTpData, instruksi: e.target.value})} placeholder="Instruksi tambahan, materi atau penjelasan untuk siswa..." className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm min-h-[100px] resize-none outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+              </div>
+              
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Lampiran (Gambar/PDF)</label>
+                <div className="flex flex-col gap-3">
+                  {(editTpData.lampiran_urls || []).map((url, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 border border-slate-200 rounded-lg bg-slate-50">
+                      <a href={url} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline truncate max-w-[200px]">Lampiran {idx + 1}</a>
+                      <button onClick={() => handleRemoveAttachment(idx)} className="text-rose-500 hover:text-rose-700 p-1">
+                        <IconTrash />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  <div className="relative">
+                    <input 
+                      type="file" 
+                      accept="image/*,.pdf" 
+                      onChange={handleUploadAttachment} 
+                      disabled={uploadingAttachment}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" 
+                    />
+                    <div className={`w-full py-2.5 px-4 border border-dashed rounded-xl text-center text-sm font-semibold transition-colors ${uploadingAttachment ? 'bg-slate-100 border-slate-300 text-slate-400' : 'bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50'}`}>
+                      {uploadingAttachment ? 'Mengunggah...' : '+ Tambah Lampiran'}
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="pt-2">
                 <button onClick={handleSaveEditTp} disabled={editTpData.target_kelas.length === 0} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50">

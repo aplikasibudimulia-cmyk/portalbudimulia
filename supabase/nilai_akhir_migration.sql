@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS nilai_akhir_config (
   kelas VARCHAR(50),
   metode_hitung VARCHAR(50) DEFAULT 'rata_rata',
   bobot_detail JSONB DEFAULT '{}',
-  is_visible BOOLEAN DEFAULT true,
+  is_visible BOOLEAN DEFAULT false,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   CONSTRAINT nilai_akhir_config_unique UNIQUE (guru_id, tahun_ajaran_id, semester_id, mata_pelajaran_id, kelas)
 );
@@ -31,4 +31,4 @@ USING (true)
 WITH CHECK (true);
 
 -- Jalankan baris ini jika tabel sudah pernah dibuat sebelumnya:
-ALTER TABLE nilai_akhir_config ADD COLUMN IF NOT EXISTS is_visible BOOLEAN DEFAULT true;
+ALTER TABLE nilai_akhir_config ADD COLUMN IF NOT EXISTS is_visible BOOLEAN DEFAULT false;

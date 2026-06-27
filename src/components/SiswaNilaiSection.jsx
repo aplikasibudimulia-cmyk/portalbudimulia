@@ -13,7 +13,15 @@ export default function SiswaNilaiSection({ studentData }) {
   
   const [loading, setLoading] = useState(true)
   const [expandedBabs, setExpandedBabs] = useState({})
+  const [expandedTps, setExpandedTps] = useState({})
   const [selectedMapelId, setSelectedMapelId] = useState('')
+
+  const toggleTp = (tpId) => {
+    setExpandedTps(prev => ({
+      ...prev,
+      [tpId]: !prev[tpId]
+    }))
+  }
   
   const toggleBab = (babKey) => {
     setExpandedBabs(prev => ({
@@ -61,8 +69,9 @@ export default function SiswaNilaiSection({ studentData }) {
     
     // 2. Fetch all komponen for the active semester
     const { data: kompData } = await supabase.from('nilai_komponen')
-      .select('id, nama, bab_nama, mata_pelajaran_id, target_kelas, is_nilai_visible, urutan, deskripsi')
+      .select('id, nama, bab_nama, mata_pelajaran_id, target_kelas, is_nilai_visible, urutan, deskripsi, instruksi, lampiran_urls')
       .eq('semester_id', selectedSemesterId)
+      .order('urutan')
       
     // Filter komponen valid for this student's class and visible
     const studentClassNum = studentData.kelas ? studentData.kelas.replace(/\D/g, '') : ''
@@ -160,6 +169,24 @@ export default function SiswaNilaiSection({ studentData }) {
           <div className="space-y-4 w-full">
             {mapels.filter(m => !selectedMapelId || m.id === selectedMapelId).map(mapel => {
               const mKomps = komponens.filter(k => k.mata_pelajaran_id === mapel.id)
+              const uniqueBabs = [...new Set(mKomps.map(k => k.bab_nama || 'Tanpa Bab'))].sort((a,b) => {
+                const isPstsA = a.toUpperCase().includes('PSTS');
+                const isPstsB = b.toUpperCase().includes('PSTS');
+                const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
+                const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
+            
+                if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
+                if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
+                if (isPsasA && !isPsasB) return 1;
+                if (isPsasB && !isPsasA) return -1;
+                
+                const matchA = a.match(/\d+/);
+                const matchB = b.match(/\d+/);
+                if (matchA && matchB) {
+                  return parseInt(matchA[0]) - parseInt(matchB[0]);
+                }
+                return a.localeCompare(b);
+              });
               const hasKomponen = mKomps.length > 0
               // Mapel is now always expanded
               
@@ -207,11 +234,11 @@ export default function SiswaNilaiSection({ studentData }) {
                   let tNilai = 0, tBobot = 0
                   babList.forEach(bab => {
                     const bobot = Number(config.bobot_detail[bab] || 0)
-                    tNilai += babAveragesMap[bab] * (bobot / 100)
+                    tNilai += babAveragesMap[bab] * bobot
                     tBobot += bobot
                   })
                   if (tBobot > 0) {
-                    finalVal = tNilai
+                    finalVal = tNilai / tBobot
                   }
                 } else {
                   finalVal = babList.reduce((acc, bab) => acc + babAveragesMap[bab], 0) / babList.length
@@ -260,12 +287,7 @@ export default function SiswaNilaiSection({ studentData }) {
                       </div>
                     ) : (
                       <div className="space-y-5">
-                          {Object.keys(babs).sort((a,b) => {
-                             const numA = parseInt(a.replace(/\D/g, '')) || 0;
-                             const numB = parseInt(b.replace(/\D/g, '')) || 0;
-                             if (numA !== numB) return numA - numB;
-                             return a.localeCompare(b);
-                          }).map(bab => {
+                          {uniqueBabs.map(bab => {
                             const babKey = `${mapel.id}_${bab}`;
                             const isBabExpanded = expandedBabs[babKey];
                             return (
@@ -319,7 +341,11 @@ export default function SiswaNilaiSection({ studentData }) {
                               {isBabExpanded && (
                               <div className="divide-y divide-slate-100 bg-white animate-fade-in">
                                 {(() => {
-                                  const visibleTPs = babs[bab].filter(i => i.komponen.is_nilai_visible).sort((a,b) => (a.komponen.urutan || 0) - (b.komponen.urutan || 0));
+                                  const visibleTPs = babs[bab].filter(i => i.komponen.is_nilai_visible).sort((a,b) => {
+                                    if (a.komponen.nama.toUpperCase() === 'N. KARAKTER') return 1;
+                                    if (b.komponen.nama.toUpperCase() === 'N. KARAKTER') return -1;
+                                    return (a.komponen.urutan || 0) - (b.komponen.urutan || 0);
+                                  });
                                   if (visibleTPs.length === 0) {
                                     return (
                                       <div className="px-5 py-6 text-center text-slate-500 text-sm">
@@ -327,31 +353,82 @@ export default function SiswaNilaiSection({ studentData }) {
                                       </div>
                                     )
                                   }
-                                  return visibleTPs.map((item, idx) => (
-                                  <div key={item.komponen.id || idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 hover:bg-slate-50 transition-colors">
-                                    <div className="flex flex-col">
-                                      <span className="font-semibold text-slate-700">{item.komponen.nama}</span>
-                                      {item.komponen.deskripsi && (
-                                        <span className="text-sm text-slate-500 mt-1">{item.komponen.deskripsi}</span>
-                                      )}
-                                    </div>
-                                    <div className="shrink-0">
-                                      {item.nilai !== null && item.nilai !== undefined ? (
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nilai</span>
-                                          <span className={`text-lg font-black px-4 py-1.5 rounded-xl ${item.nilai >= 75 ? 'bg-emerald-100 text-emerald-700' : item.nilai > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
-                                            {item.nilai}
-                                          </span>
+                                  return visibleTPs.map((item, idx) => {
+                                    const tpId = item.komponen.id || idx;
+                                    const isTpExpanded = expandedTps[tpId];
+                                    const hasExtraInfo = item.komponen.instruksi || (item.komponen.lampiran_urls && item.komponen.lampiran_urls.length > 0);
+                                    
+                                    return (
+                                    <div key={tpId} className="flex flex-col border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
+                                      <div 
+                                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 ${hasExtraInfo ? 'cursor-pointer' : ''}`}
+                                        onClick={() => hasExtraInfo && toggleTp(tpId)}
+                                      >
+                                        <div className="flex flex-col flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-slate-700">{item.komponen.nama}</span>
+                                            {hasExtraInfo && (
+                                              <span className="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                Info
+                                              </span>
+                                            )}
+                                          </div>
+                                          {item.komponen.deskripsi && (
+                                            <span className="text-sm text-slate-500 mt-1">{item.komponen.deskripsi}</span>
+                                          )}
                                         </div>
-                                      ) : (
-                                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-sm font-medium border border-rose-100">
-                                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                          Belum diinput Guru
-                                        </span>
+                                        <div className="shrink-0 flex items-center gap-4">
+                                          {item.nilai !== null && item.nilai !== undefined ? (
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nilai</span>
+                                              <span className={`text-lg font-black px-4 py-1.5 rounded-xl ${item.nilai >= 75 ? 'bg-emerald-100 text-emerald-700' : item.nilai > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                {item.nilai}
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-sm font-medium border border-rose-100">
+                                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                              Belum diinput Guru
+                                            </span>
+                                          )}
+                                          {hasExtraInfo && (
+                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-transform duration-300 ${isTpExpanded ? 'bg-indigo-100 text-indigo-600 rotate-180' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      
+                                      {hasExtraInfo && isTpExpanded && (
+                                        <div className="px-5 pb-5 pt-1 animate-fade-in">
+                                          <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4">
+                                            {item.komponen.instruksi && (
+                                              <div className="mb-4 last:mb-0">
+                                                <h5 className="text-xs font-bold text-indigo-800 uppercase tracking-wider mb-2">Instruksi / Catatan Guru</h5>
+                                                <p className="text-sm text-slate-700 whitespace-pre-wrap">{item.komponen.instruksi}</p>
+                                              </div>
+                                            )}
+                                            
+                                            {item.komponen.lampiran_urls && item.komponen.lampiran_urls.length > 0 && (
+                                              <div>
+                                                <h5 className="text-xs font-bold text-indigo-800 uppercase tracking-wider mb-2">Lampiran</h5>
+                                                <div className="flex flex-wrap gap-3">
+                                                  {item.komponen.lampiran_urls.map((url, i) => (
+                                                    <a key={i} href={url} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white border border-indigo-200 px-3 py-2 rounded-lg text-sm text-indigo-600 hover:bg-indigo-50 transition-colors shadow-sm">
+                                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                                                      Buka Lampiran {i + 1}
+                                                    </a>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
                                       )}
                                     </div>
-                                  </div>
-                                  ))
+                                    )
+                                  })
                                 })()}
                               </div>
                               )}
