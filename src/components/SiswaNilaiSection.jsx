@@ -9,6 +9,7 @@ export default function SiswaNilaiSection({ studentData }) {
   const [mapels, setMapels] = useState([])
   const [komponens, setKomponens] = useState([])
   const [grades, setGrades] = useState([])
+  const [configs, setConfigs] = useState({})
   
   const [loading, setLoading] = useState(true)
   const [expandedBabs, setExpandedBabs] = useState({})
@@ -76,9 +77,23 @@ export default function SiswaNilaiSection({ studentData }) {
       .select('*')
       .eq('siswa_nisn', studentData.nisn)
 
+    // 4. Fetch config akhir
+    const { data: configData } = await supabase.from('nilai_akhir_config')
+      .select('*')
+      .eq('semester_id', selectedSemesterId)
+      .eq('kelas', studentData.kelas)
+      
+    const configMap = {}
+    if (configData) {
+      configData.forEach(c => {
+        configMap[c.mata_pelajaran_id] = c
+      })
+    }
+
     setMapels(mapelsData || [])
     setKomponens(validKomps)
     setGrades(gradeData || [])
+    setConfigs(configMap)
     setLoading(false)
   }
 
@@ -160,23 +175,52 @@ export default function SiswaNilaiSection({ studentData }) {
                 })
               })
               
-              // Calculate Mapel Average (Average of Bab Averages)
-              const babAverages = []
+              // Calculate Mapel Average based on config
+              const config = configs[mapel.id] || { metode_hitung: 'rata_rata', bobot_detail: {} }
+              
+              const babAveragesMap = {}
               Object.keys(babs).forEach(bab => {
-                const gradedItems = babs[bab].filter(i => i.komponen.is_nilai_visible && i.nilai !== null && i.nilai !== undefined)
-                if (gradedItems.length > 0) {
-                  const sum = gradedItems.reduce((acc, curr) => acc + curr.nilai, 0)
-                  babAverages.push(sum / gradedItems.length)
+                const items = babs[bab].filter(i => i.komponen.is_nilai_visible && i.nilai !== null && i.nilai !== undefined)
+                if (items.length > 0) {
+                  const metode = items[0].komponen.metode_hitung || 'rata_rata'
+                  let tBobot = 0, tNilai = 0
+                  items.forEach(i => {
+                    if (metode === 'bobot_manual') {
+                      tNilai += (i.nilai * (i.komponen.bobot || 1))
+                      tBobot += (i.komponen.bobot || 1)
+                    } else {
+                      tNilai += i.nilai
+                      tBobot += 1
+                    }
+                  })
+                  if (tBobot > 0) babAveragesMap[bab] = (tNilai / tBobot)
                 }
               })
               
               let mapelAvgStr = null
               let mapelPred = null
-              if (babAverages.length > 0) {
-                const totalMapelSum = babAverages.reduce((acc, curr) => acc + curr, 0)
-                const mapelAvg = totalMapelSum / babAverages.length
-                mapelAvgStr = mapelAvg.toFixed(1)
-                mapelPred = getPredikat(parseFloat(mapelAvgStr))
+              
+              const babList = Object.keys(babAveragesMap)
+              if (babList.length > 0) {
+                let finalVal = 0
+                if (config.metode_hitung === 'bobot_manual') {
+                  let tNilai = 0, tBobot = 0
+                  babList.forEach(bab => {
+                    const bobot = Number(config.bobot_detail[bab] || 0)
+                    tNilai += babAveragesMap[bab] * (bobot / 100)
+                    tBobot += bobot
+                  })
+                  if (tBobot > 0) {
+                    finalVal = tNilai
+                  }
+                } else {
+                  finalVal = babList.reduce((acc, bab) => acc + babAveragesMap[bab], 0) / babList.length
+                }
+                
+                if (finalVal > 0) {
+                  mapelAvgStr = finalVal.toFixed(1)
+                  mapelPred = getPredikat(parseFloat(mapelAvgStr))
+                }
               }
               
               return (
@@ -240,11 +284,21 @@ export default function SiswaNilaiSection({ studentData }) {
                                   </div>
                                 </div>
                                 {(() => {
-                                  const gradedItems = babs[bab].filter(i => i.komponen.is_nilai_visible && i.nilai !== null && i.nilai !== undefined);
-                                  if (gradedItems.length === 0) return null;
-                                  // Asumsi nilai bab = rata-rata dari TP yang sudah dinilai
-                                  const sum = gradedItems.reduce((acc, curr) => acc + curr.nilai, 0);
-                                  const avg = (sum / gradedItems.length).toFixed(1);
+                                  const items = babs[bab].filter(i => i.komponen.is_nilai_visible && i.nilai !== null && i.nilai !== undefined);
+                                  if (items.length === 0) return null;
+                                  
+                                  const metode = items[0].komponen.metode_hitung || 'rata_rata'
+                                  let tBobot = 0, tNilai = 0
+                                  items.forEach(i => {
+                                    if (metode === 'bobot_manual') {
+                                      tNilai += (i.nilai * (i.komponen.bobot || 1))
+                                      tBobot += (i.komponen.bobot || 1)
+                                    } else {
+                                      tNilai += i.nilai
+                                      tBobot += 1
+                                    }
+                                  })
+                                  const avg = (tNilai / tBobot).toFixed(1);
                                   const pred = getPredikat(parseFloat(avg));
                                   return (
                                     <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm shrink-0">

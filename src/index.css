@@ -2,9 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --font-primary: 'Plus Jakarta Sans', sans-serif;
+}
+.font-ubuntu {
+  --font-primary: 'Ubuntu', sans-serif;
+}
+.font-bricolage {
+  --font-primary: 'Bricolage Grotesque', sans-serif;
+}
+
 @layer base {
   *, *::before, *::after {
-    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-family: var(--font-primary);
   }
 }
 

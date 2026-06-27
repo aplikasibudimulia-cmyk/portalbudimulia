@@ -95,6 +95,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
     }
     fetchMaxName()
   }, [targetKelasList])
+  const [showConfigAkhirModal, setShowConfigAkhirModal] = useState(false)
+  const [configAkhir, setConfigAkhir] = useState({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
+
   const [showAddTp, setShowAddTp] = useState(false)
 
   const uploadRef = useRef(null)
@@ -158,17 +161,38 @@ export default function NilaiGuruSection({ session, activeTa }) {
   useEffect(() => {
     if (activeTabKelas && selectedMapelId && selectedSemesterId) {
       fetchStudents()
+      fetchConfigAkhir()
     } else {
       setStudents([])
       setNilaiData({})
+      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
     }
   }, [activeTabKelas, selectedMapelId, selectedSemesterId])
 
+  const classKompIdsStr = classKomponen.map(k => k.id).sort().join(',')
+  const studentNisnsStr = students.map(s => String(s.nisn)).sort().join(',')
   useEffect(() => {
     if (classKomponen.length > 0 && students.length > 0) fetchNilai()
-  }, [classKomponen.length, students.length])
+  }, [classKompIdsStr, studentNisnsStr])
 
   // ─── Fetch Functions ──────────────────────────────────────────────────────
+  const fetchConfigAkhir = async () => {
+    const { data } = await supabase.from('nilai_akhir_config')
+      .select('*')
+      .eq('guru_id', session.id)
+      .eq('tahun_ajaran_id', activeTa.id)
+      .eq('semester_id', selectedSemesterId)
+      .eq('mata_pelajaran_id', selectedMapelId)
+      .eq('kelas', activeTabKelas)
+      .maybeSingle()
+    
+    if (data) {
+      setConfigAkhir({ metode_hitung: data.metode_hitung || 'rata_rata', bobot_detail: data.bobot_detail || {}, is_visible: data.is_visible ?? true })
+    } else {
+      setConfigAkhir({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true })
+    }
+  }
+
   const fetchSemesters = async () => {
     const { data } = await supabase.from('semester')
       .select('*').eq('tahun_ajaran_id', activeTa.id).order('nomor')
@@ -201,6 +225,53 @@ export default function NilaiGuruSection({ session, activeTa }) {
        })
     }
     
+    // Auto-heal Penilaian Sumatif grouping to separate PSTS and PSAS
+    const sumatifKomp = d.filter(k => k.bab_nama === 'Penilaian Sumatif' && (k.nama === 'PSTS 1' || k.nama === 'PSTS 2' || k.nama === 'PSAS' || k.nama === 'PSAT'));
+    if (sumatifKomp.length > 0) {
+      d = d.map(k => {
+        if (k.bab_nama === 'Penilaian Sumatif' && (k.nama === 'PSTS 1' || k.nama === 'PSTS 2' || k.nama === 'PSAS' || k.nama === 'PSAT')) {
+          return { ...k, bab_nama: k.nama, nama: 'Nilai' };
+        }
+        return k;
+      });
+      sumatifKomp.forEach(async (sk) => {
+        await supabase.from('nilai_komponen').update({ bab_nama: sk.nama, nama: 'Nilai' }).eq('id', sk.id);
+      });
+    }
+    
+    // Auto-generate PSTS and PSAS components if they don't exist
+    const currentSem = semesters.find(s => s.id === selectedSemesterId);
+    if (currentSem && selectedMapelId) {
+      const isSem1 = currentSem.nomor === 1;
+      const t1Name = isSem1 ? 'PSTS 1' : 'PSTS 2';
+      const t2Name = isSem1 ? 'PSAS' : 'PSAT';
+      
+      const missingKomp = [];
+      uniqueRombels.forEach(rombel => {
+        const classesForRombel = uniqueClassesForMapel.filter(c => c.replace(/\D/g, '') === rombel);
+        if (classesForRombel.length === 0) return;
+
+        const hasT1 = d.find(k => k.semester_id === selectedSemesterId && (k.nama === t1Name || k.bab_nama === t1Name) && k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel));
+        if (!hasT1) {
+           missingKomp.push({ bab_nama: t1Name, nama: 'Nilai', bobot: 1, urutan: 998, target_kelas: classesForRombel, kelas: classesForRombel[0], metode_hitung: 'rata_rata', is_nilai_visible: false, guru_id: session.id, tahun_ajaran_id: activeTa.id, semester_id: selectedSemesterId, mata_pelajaran_id: selectedMapelId });
+        }
+
+        const hasT2 = d.find(k => k.semester_id === selectedSemesterId && (k.nama === t2Name || k.bab_nama === t2Name) && k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel));
+        if (!hasT2) {
+           missingKomp.push({ bab_nama: t2Name, nama: 'Nilai', bobot: 1, urutan: 999, target_kelas: classesForRombel, kelas: classesForRombel[0], metode_hitung: 'rata_rata', is_nilai_visible: false, guru_id: session.id, tahun_ajaran_id: activeTa.id, semester_id: selectedSemesterId, mata_pelajaran_id: selectedMapelId });
+        }
+      });
+
+      if (missingKomp.length > 0) {
+        const { data: inserted } = await supabase.from('nilai_komponen').insert(missingKomp).select();
+        if (inserted) {
+          d = [...d, ...inserted];
+          // re-sort based on urutan
+          d.sort((a,b) => a.urutan - b.urutan);
+        }
+      }
+    }
+
     setKomponen(d)
     // Collect all target kelas
     const allKelas = [...new Set(d.flatMap(k => k.target_kelas || []))].sort()
@@ -222,11 +293,11 @@ export default function NilaiGuruSection({ session, activeTa }) {
         setAnimKey(prev => prev + 1)
     }, 10)
   }
-
   const fetchNilai = async () => {
     const ids = classKomponen.map(k => k.id)
-    if (ids.length === 0) return
-    const { data } = await supabase.from('nilai_siswa').select('*').in('komponen_id', ids)
+    const nisnList = students.map(s => String(s.nisn))
+    if (ids.length === 0 || nisnList.length === 0) return
+    const { data } = await supabase.from('nilai_siswa').select('*').in('komponen_id', ids).in('siswa_nisn', nisnList)
     const map = {}
     ;(data || []).forEach(n => {
       if (!map[n.komponen_id]) map[n.komponen_id] = {}
@@ -426,10 +497,41 @@ export default function NilaiGuruSection({ session, activeTa }) {
     fetchKomponen();
   }
 
+  const handleSaveConfigAkhir = async (newConfig) => {
+    // Validate bobot manual sums to 100
+    if (newConfig.metode_hitung === 'bobot_manual') {
+      const sum = Object.values(newConfig.bobot_detail).reduce((a, b) => a + Number(b), 0);
+      if (Math.abs(sum - 100) > 0.01) {
+         alert(`Total bobot harus 100%. Saat ini: ${sum}%`);
+         return false;
+      }
+    }
+
+    const { error } = await supabase.from('nilai_akhir_config').upsert({
+      guru_id: session.id,
+      tahun_ajaran_id: activeTa.id,
+      semester_id: selectedSemesterId,
+      mata_pelajaran_id: selectedMapelId,
+      kelas: activeTabKelas,
+      metode_hitung: newConfig.metode_hitung,
+      bobot_detail: newConfig.bobot_detail,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'guru_id,tahun_ajaran_id,semester_id,mata_pelajaran_id,kelas' });
+    
+    if (error) {
+      alert('Gagal menyimpan pengaturan: ' + error.message);
+      return false;
+    }
+    
+    setConfigAkhir(newConfig);
+    setShowConfigAkhirModal(false);
+    return true;
+  }
+
   const handleNilaiChange = async (komponenId, nisn, nilai) => {
     const cellKey = `${komponenId}-${nisn}`
     setSavingCell(cellKey)
-    setNilaiData(prev => ({ ...prev, [komponenId]: { ...prev[komponenId], [nisn]: nilai === '' ? null : Number(nilai) } }))
+    setNilaiData(prev => ({ ...prev, [komponenId]: { ...(prev[komponenId] || {}), [nisn]: nilai === '' ? null : Number(nilai) } }))
     await supabase.from('nilai_siswa').upsert({
       komponen_id: komponenId, siswa_nisn: nisn,
       nilai: nilai === '' ? null : Number(nilai),
@@ -451,18 +553,41 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
   // ─── Hitung Rata-rata ─────────────────────────────────────────────────────
   const hitungRataRata = (nisn) => {
-    const myKomp = classKomponen
-    let totalBobot = 0, totalNilai = 0, hasVal = false
-    myKomp.forEach(k => {
-      const val = nilaiData[k.id]?.[nisn]
-      if (val !== undefined && val !== null && val !== '') {
-        totalNilai += Number(val) * (k.bobot || 1)
-        totalBobot += (k.bobot || 1)
-        hasVal = true
-      }
-    })
-    if (!hasVal || totalBobot === 0) return null
-    return (totalNilai / totalBobot).toFixed(1)
+    const babList = [...new Set(classKomponen.map(k => k.bab_nama || 'Lainnya'))]
+    const hitungRataBAB = (bab) => {
+      const komp = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab)
+      const metode = komp[0]?.metode_hitung || 'rata_rata'
+      let totalBobot = 0, totalNilai = 0, hasVal = false
+      komp.forEach(k => {
+        const val = nilaiData[k.id]?.[nisn]
+        if (val !== undefined && val !== null && val !== '') {
+          if (metode === 'bobot_manual') { totalNilai += Number(val) * (k.bobot || 1); totalBobot += (k.bobot || 1) }
+          else { totalNilai += Number(val); totalBobot += 1 }
+          hasVal = true
+        }
+      })
+      if (!hasVal || totalBobot === 0) return null
+      return +(totalNilai / totalBobot).toFixed(1)
+    }
+
+    if (configAkhir.metode_hitung === 'bobot_manual') {
+      let totalNilai = 0;
+      let totalBobot = 0;
+      babList.forEach(bab => {
+        const rataBab = hitungRataBAB(bab);
+        if (rataBab !== null) {
+           const bobot = Number(configAkhir.bobot_detail[bab] || 0);
+           totalNilai += rataBab * bobot;
+           totalBobot += bobot;
+        }
+      });
+      if (totalBobot === 0) return null;
+      return (totalNilai / totalBobot).toFixed(1);
+    } else {
+      const vals = babList.map(bab => hitungRataBAB(bab)).filter(v => v !== null)
+      if (vals.length === 0) return null
+      return +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
+    }
   }
 
 
@@ -471,7 +596,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
 
   // ─── Export Excel (Rich Format) ───────────────────────────────────────────
-  const generateClassSheet = async (kelas, classStudents, classKomp, classNilaiData, wb) => {
+  const generateClassSheet = async (kelas, classStudents, classKomp, classNilaiData, classConfigAkhir, wb) => {
       setIsExporting(true)
       const sem = semesters.find(s => s.id === selectedSemesterId)
       const mapelNama = uniqueMapels.find(m => m.id === selectedMapelId)?.nama || 'Mapel'
@@ -505,9 +630,24 @@ export default function NilaiGuruSection({ session, activeTa }) {
           return +(totalNilai / totalBobot).toFixed(1)
         }
 
-        const vals = babList.map(bab => hitungRataBAB(nisn, bab)).filter(v => v !== null)
-        if (vals.length === 0) return null
-        return +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
+        if (classConfigAkhir.metode_hitung === 'bobot_manual') {
+          let totalNilai = 0;
+          let totalBobot = 0;
+          babList.forEach(bab => {
+            const rataBab = hitungRataBAB(nisn, bab);
+            if (rataBab !== null) {
+               const bobot = Number(classConfigAkhir.bobot_detail[bab] || 0);
+               totalNilai += rataBab * (bobot / 100);
+               totalBobot += bobot;
+            }
+          });
+          if (totalBobot === 0) return null;
+          return +(totalNilai).toFixed(1);
+        } else {
+          const vals = babList.map(bab => hitungRataBAB(nisn, bab)).filter(v => v !== null)
+          if (vals.length === 0) return null
+          return +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
+        }
       }
 
       const getPredikat = (nilai) => {
@@ -533,17 +673,18 @@ export default function NilaiGuruSection({ session, activeTa }) {
         return parts.join(' | ')
       }
 
+      const isSumatif = (bab) => ['PSTS 1', 'PSTS 2', 'PSAS', 'PSAT'].includes(bab);
+
       const FIXED = 3
       const babColStart = {}
       let col = FIXED
       babList.forEach(bab => {
         babColStart[bab] = col
-        col += (babKomponenMap[bab]?.length || 0) + 2
+        col += (babKomponenMap[bab]?.length || 0) + (isSumatif(bab) ? 1 : 2)
       })
-      const rataAkhirCol = col
-      const nilaiAkhirCol = col + 1
-      const predikatCol  = col + 2
-      const lingkupStartCol = col + 3
+      const nilaiAkhirCol = col
+      const predikatCol  = col + 1
+      const lingkupStartCol = col + 2
 
       let maxKomp = 0
       babList.forEach(bab => {
@@ -621,7 +762,6 @@ export default function NilaiGuruSection({ session, activeTa }) {
       babList.forEach(bab => { 
         setCell(10, babColStart[bab], bab, styleHeader) 
       })
-      setCell(10, rataAkhirCol, 'Rata-rata Sumatif', styleHeader)
       setCell(10, nilaiAkhirCol, 'Nilai Akhir', styleHeader)
       setCell(10, predikatCol, 'Predikat', styleHeader)
 
@@ -631,12 +771,17 @@ export default function NilaiGuruSection({ session, activeTa }) {
         const start = babColStart[bab]
         const metode = komp[0]?.metode_hitung || 'rata_rata'
         komp.forEach((k, ki) => { setCell(11, start + ki, k.nama, styleHeader) })
-        const rataHeaderName = (metode === 'bobot_manual') ? 'Nilai Akhir BAB' : 'Rata-rata BAB'
-        setCell(11, start + komp.length, rataHeaderName, styleHeader)
-        setCell(11, start + komp.length + 1, 'Keterangan (Belum Tuntas)', styleHeader)
-        // White cells below them
-        setCell(12, start + komp.length, '', styleDataCenter)
-        setCell(12, start + komp.length + 1, '', styleDataCenter)
+        if (isSumatif(bab)) {
+          setCell(11, start + komp.length, 'Keterangan (Belum Tuntas)', styleHeader)
+          setCell(12, start + komp.length, '', styleDataCenter)
+        } else {
+          const rataHeaderName = (metode === 'bobot_manual') ? 'Nilai Akhir BAB' : 'Rata-rata BAB'
+          setCell(11, start + komp.length, rataHeaderName, styleHeader)
+          setCell(11, start + komp.length + 1, 'Keterangan (Belum Tuntas)', styleHeader)
+          // White cells below them
+          setCell(12, start + komp.length, '', styleDataCenter)
+          setCell(12, start + komp.length + 1, '', styleDataCenter)
+        }
       })
 
       // Row 13 (idx 12): Bobot
@@ -660,11 +805,11 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
       // Fill header borders for main table (idx 10 to 12)
       fillEmptyBorders(10, 12, 0, 2, styleHeader)
-      fillEmptyBorders(10, 12, rataAkhirCol, predikatCol, styleHeader)
+      fillEmptyBorders(10, 12, nilaiAkhirCol, predikatCol, styleHeader)
       babList.forEach(bab => {
         const komp = babKomponenMap[bab] || []
         const start = babColStart[bab]
-        const end = start + komp.length + 1
+        const end = start + komp.length + (isSumatif(bab) ? 0 : 1)
         fillEmptyBorders(10, 12, start, end, styleHeader)
       })
 
@@ -701,41 +846,68 @@ export default function NilaiGuruSection({ session, activeTa }) {
           const metode = komp[0]?.metode_hitung || 'rata_rata'
           let formulaRata = ""
           
-          if (tpColLetters.length > 0) {
-             const rangeNilai = `${tpColLetters[0]}${excelRow}:${tpColLetters[tpColLetters.length-1]}${excelRow}`
-             const rangeBobot = `${tpColLetters[0]}13:${tpColLetters[tpColLetters.length-1]}13`
-             
-             if (metode === 'rata_rata') {
-                formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(AVERAGE(${rangeNilai}), 2), ""))`
-             } else {
-                formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(SUMPRODUCT(${rangeNilai}, ${rangeBobot}) / SUMIF(${rangeNilai}, ">=0", ${rangeBobot}), 2), ""))`
-             }
+          if (!isSumatif(bab)) {
+            if (tpColLetters.length > 0) {
+               const rangeNilai = `${tpColLetters[0]}${excelRow}:${tpColLetters[tpColLetters.length-1]}${excelRow}`
+               const rangeBobot = `${tpColLetters[0]}13:${tpColLetters[tpColLetters.length-1]}13`
+               
+               if (metode === 'rata_rata') {
+                  formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(AVERAGE(${rangeNilai}), 2), ""))`
+               } else {
+                  formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(SUMPRODUCT(${rangeNilai}, ${rangeBobot}) / SUMIF(${rangeNilai}, ">=0", ${rangeBobot}), 2), ""))`
+               }
+            }
+            
+            const rataCol = start + komp.length
+            const rataColLetter = getColLetter(rataCol)
+            if (formulaRata) {
+               rataBabFormulaRefs.push(`${rataColLetter}${excelRow}`)
+            }
+            
+            setCell(r, rataCol, null, styleDataCenter, 'n', formulaRata)
+            
+            // Keterangan formula
+            let formulaKeterangan = `""`
+            if (tpColLetters.length > 0) {
+               const parts = tpKomp.map((k, ki) => `IF(AND(NOT(ISBLANK(${tpColLetters[ki]}${excelRow})), ${tpColLetters[ki]}${excelRow}=0), "${k.nama}, ", "")`)
+               const concatExpr = parts.join(' & ')
+               formulaKeterangan = `IF(${concatExpr}="", "", LEFT(${concatExpr}, LEN(${concatExpr})-2) & " belum dikerjakan")`
+            }
+            setCell(r, start + komp.length + 1, null, styleDataLeft, 's', formulaKeterangan)
+          } else {
+            if (tpColLetters.length > 0) {
+               rataBabFormulaRefs.push(`${tpColLetters[0]}${excelRow}`)
+            }
+            let formulaKeterangan = `""`
+            if (tpColLetters.length > 0) {
+               const parts = tpKomp.map((k, ki) => `IF(AND(NOT(ISBLANK(${tpColLetters[ki]}${excelRow})), ${tpColLetters[ki]}${excelRow}=0), "${k.nama}, ", "")`)
+               const concatExpr = parts.join(' & ')
+               formulaKeterangan = `IF(${concatExpr}="", "", LEFT(${concatExpr}, LEN(${concatExpr})-2) & " belum dikerjakan")`
+            }
+            setCell(r, start + komp.length, null, styleDataLeft, 's', formulaKeterangan)
           }
-          
-          const rataCol = start + komp.length
-          const rataColLetter = getColLetter(rataCol)
-          if (formulaRata) {
-             rataBabFormulaRefs.push(`${rataColLetter}${excelRow}`)
-          }
-          
-          setCell(r, rataCol, null, styleDataCenter, 'n', formulaRata)
-          
-          // Keterangan formula
-          let formulaKeterangan = `""`
-          if (tpColLetters.length > 0) {
-             const parts = tpKomp.map((k, ki) => `IF(AND(NOT(ISBLANK(${tpColLetters[ki]}${excelRow})), ${tpColLetters[ki]}${excelRow}=0), "${k.nama}, ", "")`)
-             const concatExpr = parts.join(' & ')
-             formulaKeterangan = `IF(${concatExpr}="", "", LEFT(${concatExpr}, LEN(${concatExpr})-2) & " belum dikerjakan")`
-          }
-          setCell(r, start + komp.length + 1, null, styleDataLeft, 's', formulaKeterangan)
         })
         
         // Rata Rata Sumatif Formula
         let formulaRataSumatif = `""`
         if (rataBabFormulaRefs.length > 0) {
-           formulaRataSumatif = `IFERROR(AVERAGE(${rataBabFormulaRefs.join(',')}), "")`
+           if (classConfigAkhir.metode_hitung === 'bobot_manual') {
+              let numParts = []
+              let denParts = []
+              babList.forEach((bab, idx) => {
+                 const bobot = Number(classConfigAkhir.bobot_detail[bab] || 0)
+                 if (bobot > 0) {
+                    numParts.push(`IF(ISNUMBER(${rataBabFormulaRefs[idx]}), ${rataBabFormulaRefs[idx]} * ${bobot}, 0)`)
+                    denParts.push(`IF(ISNUMBER(${rataBabFormulaRefs[idx]}), ${bobot}, 0)`)
+                 }
+              })
+              if (numParts.length > 0) {
+                 formulaRataSumatif = `IF((${denParts.join(' + ')})=0, "", IFERROR(ROUND((${numParts.join(' + ')}) / (${denParts.join(' + ')}), 1), ""))`
+              }
+           } else {
+              formulaRataSumatif = `IFERROR(ROUND(AVERAGE(${rataBabFormulaRefs.join(',')}), 1), "")`
+           }
         }
-        setCell(r, rataAkhirCol, null, styleDataCenter, 'n', formulaRataSumatif)
         setCell(r, nilaiAkhirCol, null, styleDataCenter, 'n', formulaRataSumatif)
         
         // Predikat formula (A >= 90, B >= 80, C >= 70, D >= 60, E < 60)
@@ -825,23 +997,28 @@ const merges = [];
       });
       
       // Merge Bab titles across their components horizontally
-            babList.forEach(bab => {
+      babList.forEach(bab => {
         const komp = babKomponenMap[bab] || []
         const start = babColStart[bab]
-        const end = start + komp.length + 1
+        const end = start + komp.length + (isSumatif(bab) ? 0 : 1)
         if (end > start) merges.push({ s: { r: 10, c: start }, e: { r: 10, c: end } })
         
         // Merge Nilai Akhir BAB & Keterangan vertically from row 11 to 12
-        const rataCol = start + komp.length;
-        const ketCol = start + komp.length + 1;
-        merges.push({ s: { r: 11, c: rataCol }, e: { r: 12, c: rataCol } });
-        merges.push({ s: { r: 11, c: ketCol }, e: { r: 12, c: ketCol } });
+        if (!isSumatif(bab)) {
+          const rataCol = start + komp.length;
+          const ketCol = start + komp.length + 1;
+          merges.push({ s: { r: 11, c: rataCol }, e: { r: 12, c: rataCol } });
+          merges.push({ s: { r: 11, c: ketCol }, e: { r: 12, c: ketCol } });
+        } else {
+          const ketCol = start + komp.length;
+          merges.push({ s: { r: 11, c: ketCol }, e: { r: 12, c: ketCol } });
+        }
       });
 
       // Merge No, NISN, Nama vertically
       [0, 1, 2].forEach(c => merges.push({ s: { r: 10, c }, e: { r: 12, c } }));
       // Merge End Columns vertically
-      [rataAkhirCol, nilaiAkhirCol, predikatCol].forEach(c => {
+      [nilaiAkhirCol, predikatCol].forEach(c => {
         merges.push({ s: { r: 10, c }, e: { r: 12, c } })
       });
 
@@ -870,7 +1047,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
              // Ignore title rows for column width calculation (since they are merged and long)
              if (c === 0 && r < 4) continue; 
              // Ignore Bab group headers in row 10
-             if (r === 10 && c > 2 && c < rataAkhirCol) continue;
+             if (r === 10 && c > 2 && c < nilaiAkhirCol) continue;
              // Ignore Lingkup Materi Headers that span columns
              if (c >= lingkupStartCol && r >= 10 && r <= 12) continue;
              
@@ -937,7 +1114,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       babList.forEach((bab, bi) => {
          const start = babColStart[bab];
          const komp = babKomponenMap[bab] || [];
-         const end = start + komp.length + 1; // +1 to include Keterangan
+         const end = start + komp.length + (isSumatif(bab) ? 0 : 1); 
          const color = babHexColors[bi % babHexColors.length];
          
          // Apply to headers (Row 11 and Row 12)
@@ -1028,10 +1205,9 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             });
          });
          
-         // Conditional formatting for Rata-rata Sumatif and Nilai Akhir
-         const rataSumatifCell = ws.getRow(excelRow).getCell(rataAkhirCol + 1);
+         // Conditional formatting for Nilai Akhir
          const nilaiAkhirColCell = ws.getRow(excelRow).getCell(nilaiAkhirCol + 1);
-         [rataSumatifCell, nilaiAkhirColCell].forEach(cell => {
+         [nilaiAkhirColCell].forEach(cell => {
             ws.addConditionalFormatting({
                ref: cell.address,
                rules: [
@@ -1071,7 +1247,10 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         const { data: studentsData } = await supabase.from('siswa_lengkap').select('nisn, nama_lengkap, kelas').eq('kelas', kelas).eq('tahun_ajaran_id', activeTa.id).order('nama_lengkap', { ascending: true })
         const classStudents = studentsData || []
         
-        const classKomp = komponen.filter(k => !k.target_kelas || k.target_kelas.length === 0 || k.target_kelas.some(c => c.replace(/\D/g, '') === kelas.replace(/\D/g, '')))
+        const classKomp = komponen.filter(k => 
+          k.semester_id === selectedSemesterId && 
+          (!k.target_kelas || k.target_kelas.length === 0 || k.target_kelas.includes(kelas))
+        )
         
         let classNilaiData = {}
         const kompIds = classKomp.map(k => k.id)
@@ -1086,7 +1265,22 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
            }
         }
         
-        await generateClassSheet(kelas, classStudents, classKomp, classNilaiData, wb);
+        
+        // Fetch config akhir specific to this class
+        let classConfigAkhir = { metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: true };
+        const { data: configData } = await supabase.from('nilai_akhir_config')
+          .select('*')
+          .eq('guru_id', session.id)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester_id', selectedSemesterId)
+          .eq('mata_pelajaran_id', selectedMapelId)
+          .eq('kelas', kelas)
+          .maybeSingle();
+        if (configData) {
+           classConfigAkhir = { metode_hitung: configData.metode_hitung || 'rata_rata', bobot_detail: configData.bobot_detail || {}, is_visible: configData.is_visible ?? true };
+        }
+        
+        await generateClassSheet(kelas, classStudents, classKomp, classNilaiData, classConfigAkhir, wb);
       }
 
       const buffer = await wb.xlsx.writeBuffer()
@@ -1198,6 +1392,19 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
           const { data: sheetStudentsData } = await supabase.from('siswa_lengkap').select('nisn').eq('kelas', kelas).eq('tahun_ajaran_id', activeTa.id);
           const sheetStudents = sheetStudentsData || [];
           const sMap = Object.fromEntries(sheetStudents.map(s => [String(s.nisn).trim(), true]));
+          
+          const nisnKeys = Object.keys(sMap);
+          const kompIds = sheetKomp.map(k => k.id);
+          
+          let existingDataMap = {};
+          if (nisnKeys.length > 0 && kompIds.length > 0) {
+             const { data: existingData } = await supabase.from('nilai_siswa').select('komponen_id, siswa_nisn, nilai').in('komponen_id', kompIds).in('siswa_nisn', nisnKeys);
+             if (existingData) {
+                existingData.forEach(ed => {
+                   existingDataMap[`${ed.komponen_id}_${ed.siswa_nisn}`] = ed.nilai;
+                });
+             }
+          }
 
           for (let i = actualDataStart; i < raw.length; i++) {
             const row = raw[i]; const nisn = String(row[nisnIdx]||'').trim()
@@ -1206,7 +1413,14 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             komponenCols.forEach(({ komponen: k, colIdx }) => {
               const rawVal = row[colIdx]; const val = rawVal === '' ? null : Number(rawVal)
               if (rawVal !== '' && isNaN(val)) { failed++; return }
-              upserts.push({ komponen_id: k.id, siswa_nisn: nisn, nilai: val, diinput_oleh: session.id, updated_at: new Date().toISOString() })
+              
+              const key = `${k.id}_${nisn}`;
+              const existingVal = existingDataMap[key] !== undefined ? existingDataMap[key] : null;
+              
+              // Only push if the value has actually changed
+              if (val !== existingVal) {
+                 upserts.push({ komponen_id: k.id, siswa_nisn: nisn, nilai: val, diinput_oleh: session.id, updated_at: new Date().toISOString() })
+              }
             })
           }
       }
@@ -1219,12 +1433,12 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       }
       const finalUpserts = Object.values(uniqueUpsertsMap);
 
-      if (finalUpserts.length === 0 && failed === 0 && skipped > 0) {
-          setUploadResult({ error: `File tidak valid untuk kelas ini. ${skipped} baris dilewati karena NISN tidak cocok.` });
-          setUploadProgress(null);
-          return;
-      } else if (finalUpserts.length === 0) {
-          setUploadResult({ error: 'Tidak ada data valid yang bisa diupload.' });
+      if (finalUpserts.length === 0 && failed === 0 && skipped > 0 && false) { 
+          // Kept false just in case skipped logic causes weirdness, but we handle it generally below
+      } 
+      
+      if (finalUpserts.length === 0) {
+          setUploadResult({ error: 'Data sama persis dengan sistem. Tidak ada perubahan baru yang perlu disimpan.' });
           setUploadProgress(null);
           return;
       }
@@ -1237,7 +1451,8 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         setUploadProgress(p => ({ ...p, current: Math.min(i + 100, finalUpserts.length) }))
       }
 
-      setUploadResult({ success: finalUpserts.length, failed, skipped }); fetchNilai()
+      const filledCount = finalUpserts.filter(u => u.nilai !== null).length;
+      setUploadResult({ success: finalUpserts.length, filled: filledCount, failed, skipped }); fetchNilai()
     } catch (err) { setUploadResult({ error: err.message }) }
     setUploadProgress(null)
     if (uploadRef.current) uploadRef.current.value = ''
@@ -1298,9 +1513,81 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
 
   return (
     <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-8rem)]">
+      {/* Modal Config Akhir */}
+      {showConfigAkhirModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-xl p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <h3 className="font-bold text-slate-800">Pengaturan Nilai Akhir</h3>
+              <button onClick={() => setShowConfigAkhirModal(false)} className="text-slate-400 hover:text-slate-600 p-1"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+            </div>
+            <div className="p-4 bg-slate-50/50 overflow-y-auto">
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Metode Perhitungan</label>
+                <div className="flex bg-slate-200/50 p-1 rounded-xl">
+                  <button
+                    onClick={() => setConfigAkhir({...configAkhir, metode_hitung: 'rata_rata'})}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${configAkhir.metode_hitung === 'rata_rata' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    Rata-rata
+                  </button>
+                  <button
+                    onClick={() => setConfigAkhir({...configAkhir, metode_hitung: 'bobot_manual'})}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${configAkhir.metode_hitung === 'bobot_manual' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    Bobot Manual
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  {configAkhir.metode_hitung === 'rata_rata' ? 'Nilai akhir adalah rata-rata dari semua BAB, PSTS, dan PSAS.' : 'Tentukan persentase bobot masing-masing BAB, PSTS, dan PSAS (Total harus 100%).'}
+                </p>
+              </div>
+
+              {configAkhir.metode_hitung === 'bobot_manual' && (
+                <div className="space-y-3 bg-white p-3 rounded-xl border border-slate-100">
+                  {uniqueBabsClass.map((bab) => (
+                    <div key={bab} className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-slate-700 flex-1 truncate">{bab}</span>
+                      <div className="relative w-24">
+                        <input 
+                          type="number" min="0" max="100" 
+                          className="w-full pl-3 pr-8 py-1.5 text-sm font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 text-right"
+                          value={configAkhir.bobot_detail[bab] || ''}
+                          onChange={(e) => setConfigAkhir({
+                            ...configAkhir,
+                            bobot_detail: { ...configAkhir.bobot_detail, [bab]: e.target.value }
+                          })}
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">%</span>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {(() => {
+                    const sum = Object.values(configAkhir.bobot_detail).reduce((a, b) => a + Number(b || 0), 0)
+                    return (
+                      <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100 mt-3">
+                        <span className="text-sm font-bold text-slate-700">Total Bobot</span>
+                        <span className={`text-sm font-bold ${sum === 100 ? 'text-emerald-600' : 'text-rose-600'}`}>{sum}%</span>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2 shrink-0">
+              <button onClick={() => setShowConfigAkhirModal(false)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200/50 rounded-xl transition-colors">Batal</button>
+              <button onClick={() => handleSaveConfigAkhir(configAkhir)} className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-sm shadow-indigo-600/20 flex items-center gap-2">
+                Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Export */}
       {showExportModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-xl p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <h3 className="font-bold text-slate-800">Export Nilai Excel</h3>
@@ -1406,6 +1693,12 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             
             <div className="w-px h-6 bg-slate-200 mx-2 hidden sm:block"></div>
             
+            <button onClick={() => setShowConfigAkhirModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm"
+              title="Pengaturan Bobot Nilai Akhir">
+              <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              Bobot Akhir
+            </button>
             <button onClick={() => setShowKelolaSemester(true)}
               className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
               <IconPencil /> Kelola Semester
@@ -1452,7 +1745,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
           <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-sm font-bold shadow-sm shrink-0 ${uploadResult.error ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
             <div className="flex items-center gap-2">
               {uploadResult.error ? '⚠️' : '✅'}
-              {uploadResult.error ? uploadResult.error : `Berhasil: ${uploadResult.success} | Gagal: ${uploadResult.failed} | Dilewati: ${uploadResult.skipped}`}
+              {uploadResult.error ? uploadResult.error : `Sinkronisasi selesai! ${uploadResult.success} sel data berhasil diperbarui (termasuk sel kosong). | Gagal: ${uploadResult.failed} | Dilewati: ${uploadResult.skipped}`}
             </div>
             <button onClick={() => setUploadResult(null)} className="p-1 rounded-md hover:bg-black/5"><IconClose /></button>
           </div>
@@ -1501,10 +1794,10 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             <div className="overflow-auto flex-1 custom-scrollbar">
               <table className="w-full text-xs whitespace-nowrap">
                 <thead className="sticky top-0 z-30 bg-slate-50 shadow-sm">
-                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase tracking-wider font-bold">
-                    <th className="px-2 py-3 border-r border-slate-200 text-center bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>No</th>
-                    <th className="px-4 py-3 border-r border-slate-200 text-left bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>Nama Siswa</th>
-                    <th className="px-3 py-3 border-r border-slate-200 text-left bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90 }}>NISN</th>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
+                    <th className="px-2 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>No</th>
+                    <th className="px-4 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>Nama Siswa</th>
+                    <th className="px-3 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90 }}>NISN</th>
                     {uniqueBabsClass.map((bab, bIdx) => {
                       const babCount = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab).length
                       return (
@@ -1513,7 +1806,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                               setEditBabName(bab)
                               setSelectedBabToManage(bab)
                           }}
-                          className={`text-center px-3 py-2 border-r border-slate-200 cursor-pointer transition-colors ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`}
+                          className={`text-center px-3 py-2 border-r border-slate-200 cursor-pointer transition-colors whitespace-normal break-words ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`}
                           title="Klik untuk kelola BAB (Ubah nama, Metode Hitung, Tambah TP)">
                           <div className="flex items-center justify-center gap-1.5">
                             {bab}
@@ -1525,9 +1818,49 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                         </th>
                       )
                     })}
-                    <th className="px-4 py-3 min-w-[80px] bg-indigo-50/50 border-l border-indigo-100 text-center text-indigo-800" rowSpan={2}>Rata-rata</th>
+                    <th className={`px-3 py-2 min-w-[120px] bg-indigo-50 border-l border-indigo-200 text-center text-indigo-800 align-middle ${configAkhir.is_visible === false ? 'opacity-50' : ''}`} rowSpan={2}>
+                      <div className="flex flex-col items-center justify-center gap-1.5 h-full">
+                        <div className="flex items-center justify-center gap-1.5 w-full">
+                          <div className="font-extrabold leading-snug">Nilai Akhir</div>
+                          <button onClick={(e) => { 
+                             e.stopPropagation(); 
+                             handleSaveConfigAkhir({...configAkhir, is_visible: configAkhir.is_visible === false ? true : false}) 
+                          }} className={`p-0.5 rounded transition-colors ${configAkhir.is_visible !== false ? 'text-indigo-400 hover:text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title={configAkhir.is_visible !== false ? 'Sembunyikan dari siswa' : 'Tampilkan ke siswa'}>
+                            <IconEye on={configAkhir.is_visible !== false} />
+                          </button>
+                        </div>
+                        <div className="relative w-full">
+                          <select 
+                            className="w-full bg-white/70 border border-indigo-200 text-indigo-800 font-black uppercase text-[10px] tracking-wider rounded-lg px-2 py-1.5 outline-none cursor-pointer appearance-none text-center hover:bg-white transition-colors"
+                            value={configAkhir.metode_hitung}
+                            onChange={async (e) => {
+                              const newVal = e.target.value;
+                              if (newVal === 'bobot_manual') {
+                                 const sum = Object.values(configAkhir.bobot_detail || {}).reduce((a, b) => a + Number(b), 0);
+                                 if (Math.abs(sum - 100) < 0.01) {
+                                    const newConfig = { ...configAkhir, metode_hitung: 'bobot_manual' };
+                                    await handleSaveConfigAkhir(newConfig);
+                                 } else {
+                                    setConfigAkhir({ ...configAkhir, metode_hitung: 'bobot_manual' });
+                                    setShowConfigAkhirModal(true);
+                                 }
+                              } else {
+                                 const newConfig = { ...configAkhir, metode_hitung: newVal };
+                                 await handleSaveConfigAkhir(newConfig);
+                              }
+                            }}
+                          >
+                            <option value="rata_rata">RATA-RATA</option>
+                            <option value="bobot_manual">BOBOT MANUAL</option>
+                          </select>
+                          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-400">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
                   </tr>
-                  <tr className="bg-slate-50 border-b border-slate-300 text-slate-500 text-[10px]">
+                  <tr className="bg-slate-50 border-b border-slate-300 text-slate-600 text-xs">
                     {uniqueBabsClass.flatMap((bab, bIdx) => {
                       return classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab).sort((a,b) => {
                       if (a.nama.toUpperCase() === 'N. KARAKTER') return 1;
@@ -1535,7 +1868,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                       return a.urutan - b.urutan;
                     }).map(k => (
                         <th key={k.id} 
-                          className={`text-center px-3 py-2 min-w-[75px] border-r border-slate-200 font-medium align-top ${!k.is_nilai_visible ? 'opacity-50' : ''} cursor-pointer transition-colors ${BAB_BG_SUB[bIdx % BAB_BG_SUB.length]} ${BAB_HOV_SUB[bIdx % BAB_HOV_SUB.length]}`} 
+                          className={`text-center px-2 py-2 w-28 min-w-[110px] max-w-[130px] whitespace-normal break-words border-r border-slate-200 font-bold align-top ${!k.is_nilai_visible ? 'opacity-50' : ''} cursor-pointer transition-colors ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`} 
                           title={k.deskripsi ? "Klik untuk kelola TP" : "Deskripsi belum diisi! Klik untuk mengisi."}
                           onClick={(e) => {
                               if(e.target.closest('button')) return;
@@ -1543,17 +1876,16 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                               setSelectedTpToManage(k.id)
                           }}
                         >
-                          <div className="flex items-center justify-center gap-1.5 mb-1">
+                          <div className="flex items-center justify-center gap-1.5 h-full">
                             {!k.deskripsi && <span className="text-rose-500 font-bold bg-rose-100 w-4 h-4 rounded-full flex items-center justify-center text-[10px]" title="Deskripsi kosong!">!</span>}
-                            <div className="font-bold text-slate-800 leading-tight">{k.nama}</div>
-                            <button onClick={(e) => { e.stopPropagation(); handleToggleVisible(k) }} className={`p-0.5 rounded transition-colors ${k.is_nilai_visible ? 'text-indigo-400 hover:text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title={k.is_nilai_visible ? 'Sembunyikan dari siswa' : 'Tampilkan ke siswa'}>
+                            <div className="font-extrabold leading-snug">{k.nama}</div>
+                            <button onClick={(e) => { e.stopPropagation(); handleToggleVisible(k) }} className={`p-0.5 rounded transition-colors ${k.is_nilai_visible ? 'opacity-70 hover:opacity-100' : 'opacity-40 hover:opacity-100'}`} title={k.is_nilai_visible ? 'Sembunyikan dari siswa' : 'Tampilkan ke siswa'}>
                               <IconEye on={k.is_nilai_visible} />
                             </button>
-                            <button onClick={(e) => handleClearTP(e, k)} className="p-0.5 rounded transition-colors text-slate-400 hover:text-rose-500 hover:bg-rose-100" title="Kosongkan semua nilai di TP ini">
+                            <button onClick={(e) => handleClearTP(e, k)} className="p-0.5 rounded transition-colors opacity-40 hover:opacity-100 hover:text-rose-500 hover:bg-rose-100" title="Kosongkan semua nilai di TP ini">
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
-                          <div className="text-[9px] text-slate-400 font-bold bg-white border border-slate-100 rounded-md py-0.5 px-1.5 inline-block w-fit mx-auto">bot:{k.bobot}</div>
                         </th>
                       ))
                     })}
@@ -1572,12 +1904,18 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     return (
                       <tr key={s.nisn} className={`hover:bg-slate-200 transition-colors group ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"}`}>
                         <td className={`text-center px-2 py-2.5 text-slate-400 border-r border-slate-100 font-medium ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 0, zIndex: 10, minWidth: 40, maxWidth: 40 }}>{idx + 1}</td>
-                        <td className={`px-4 py-2.5 font-bold text-slate-800 border-r border-slate-100 truncate ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>{s.nama_lengkap}</td>
-                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[11px] border-r border-slate-100 ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90 }}>{s.nisn}</td>
+                        <td className={`px-4 py-2.5 font-bold text-slate-800 text-[14px] leading-none border-r border-slate-100 truncate ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>{s.nama_lengkap}</td>
+                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90 }}>{s.nisn}</td>
                         {orderedKomponen.map(k => {
                           const cellKey = `${k.id}-${s.nisn}`
                           const val = nilaiData[k.id]?.[s.nisn]
                           const isSaving = savingCell === cellKey
+                          
+                          const valColor = val === undefined || val === null || val === '' 
+                            ? 'text-slate-800' 
+                            : Number(val) >= kkm 
+                              ? 'text-emerald-600' 
+                              : 'text-rose-600';
                           
                           return (
                             <td key={k.id} className="text-center px-2 py-1.5 border-r border-slate-100">
@@ -1593,7 +1931,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                                     if (newVal !== oldVal) handleNilaiChange(k.id, s.nisn, newVal)
                                   }}
                                   onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-                                  className="w-16 sm:w-20 text-center text-sm font-black px-2 py-2 border border-slate-200 rounded-xl bg-slate-50 hover:border-indigo-300 hover:bg-white focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none transition-all"
+                                  className={`w-16 sm:w-20 mx-auto text-center text-sm font-black px-2 py-2 border border-slate-200 rounded-xl bg-slate-50 hover:border-indigo-300 hover:bg-white focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none transition-all ${valColor}`}
                                   placeholder="—"
                                 />
                                 {isSaving && (
@@ -1603,7 +1941,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                             </td>
                           )
                         })}
-                        <td className={`text-center px-4 py-2.5 font-black text-sm border-l border-indigo-100 bg-indigo-50/30 ${rataColor}`}>
+                        <td className={`text-center px-4 py-2.5 font-black text-sm border-l border-indigo-100 bg-indigo-50/30 ${rataColor} ${configAkhir.is_visible === false ? 'opacity-50' : ''}`}>
                           {rataRata !== null ? rataRata : '—'}
                         </td>
                       </tr>
@@ -1619,7 +1957,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       {/* MODALS */}
       
       {showAddBab && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-slide-up border border-slate-100 flex flex-col md:flex-row max-h-[90vh]">
             
             {/* KIRI: Input Form */}
@@ -1722,7 +2060,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       , document.body)}
       
       {showKelolaSemester && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-slide-up border border-slate-100 flex flex-col md:flex-row max-h-[90vh]">
             
             {/* KIRI: Pilih Rombel */}
@@ -1819,7 +2157,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       , document.body)}
       
             {selectedBabToManage && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden animate-slide-up border border-slate-100 flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
               <h3 className="font-bold text-slate-800 text-lg">Kelola BAB: {selectedBabToManage}</h3>
@@ -1984,7 +2322,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       , document.body)}
 
       {selectedTpToManage && createPortal(
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xl animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-slide-up border border-slate-100">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <h3 className="font-bold text-slate-800">Edit Tujuan Pembelajaran</h3>

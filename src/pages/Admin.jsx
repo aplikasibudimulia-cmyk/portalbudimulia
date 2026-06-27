@@ -1548,6 +1548,25 @@ function Admin() {
   })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState(null)
+
+  const [currentFont, setCurrentFont] = useState(() => {
+    return localStorage.getItem('app_font') || 'jakarta'
+  })
+
+  useEffect(() => {
+    document.documentElement.classList.remove('font-ubuntu', 'font-bricolage')
+    if (currentFont === 'ubuntu') document.documentElement.classList.add('font-ubuntu')
+    if (currentFont === 'bricolage') document.documentElement.classList.add('font-bricolage')
+    localStorage.setItem('app_font', currentFont)
+  }, [currentFont])
+
+  const cycleFont = () => {
+    setCurrentFont(prev => {
+      if (prev === 'jakarta') return 'ubuntu'
+      if (prev === 'ubuntu') return 'bricolage'
+      return 'jakarta'
+    })
+  }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [csvSyncing, setCsvSyncing] = useState(false)
@@ -2245,7 +2264,13 @@ function Admin() {
           <button title="Pengaturan Sistem" onClick={() => handleMenuNavigation('konfigurasi')}
             className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konfigurasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
             <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Sistem</span>}
-            </button>
+          </button>
+          
+          <button onClick={cycleFont}
+            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">Font: {currentFont === 'jakarta' ? 'Plus Jakarta' : currentFont === 'ubuntu' ? 'Ubuntu' : 'Bricolage'}</span>}
+          </button>
           <button onClick={handleLogout}
             className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
             <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}

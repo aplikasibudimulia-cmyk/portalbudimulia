@@ -39,6 +39,25 @@ function Dashboard() {
   const [pengumuman, setPengumuman] = useState('')
   const [loggedTypes, setLoggedTypes] = useState([])
 
+  const [currentFont, setCurrentFont] = useState(() => {
+    return localStorage.getItem('app_font') || 'jakarta'
+  })
+
+  useEffect(() => {
+    document.documentElement.classList.remove('font-ubuntu', 'font-bricolage')
+    if (currentFont === 'ubuntu') document.documentElement.classList.add('font-ubuntu')
+    if (currentFont === 'bricolage') document.documentElement.classList.add('font-bricolage')
+    localStorage.setItem('app_font', currentFont)
+  }, [currentFont])
+
+  const cycleFont = () => {
+    setCurrentFont(prev => {
+      if (prev === 'jakarta') return 'ubuntu'
+      if (prev === 'ubuntu') return 'bricolage'
+      return 'jakarta'
+    })
+  }
+
   // Photo fallback logic
   const DEFAULT_AVATAR = "https://ui-avatars.com/api/?name=Siswa&background=eff6ff&color=2563eb&size=150"
   const [photoUrls, setPhotoUrls] = useState([])
@@ -568,6 +587,13 @@ function Dashboard() {
                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
                </span>
              )}
+           </button>
+
+           <button onClick={cycleFont}
+             title="Ganti Font"
+             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
+             <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+             {!sidebarCollapsed && <span className="animate-fade-in truncate">Font: {currentFont === 'jakarta' ? 'Plus Jakarta' : currentFont === 'ubuntu' ? 'Ubuntu' : 'Bricolage'}</span>}
            </button>
 
            <button onClick={() => { setShowPasswordModal(true); setSidebarOpen(false); }}
