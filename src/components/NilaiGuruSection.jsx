@@ -1795,7 +1795,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             <div className="absolute inset-0 flex items-center justify-center bg-white z-20 text-slate-400">Memuat siswa...</div>
           ) : (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              <table className="w-full min-w-max text-xs whitespace-nowrap">
+              <table className="w-max text-xs whitespace-nowrap">
                 <thead className="sticky top-0 z-30 bg-slate-50 shadow-sm">
                   <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
                     <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>
