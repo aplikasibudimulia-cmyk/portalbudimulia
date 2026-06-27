@@ -221,7 +221,7 @@ export default function AdminTataTertibSection({ readOnly = false }) {
   return (
     <>
       {ConfirmModalComponent}
-      <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
+      <div className="animate-slide-up flex flex-col min-h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 shrink-0">
@@ -262,7 +262,7 @@ export default function AdminTataTertibSection({ readOnly = false }) {
       </div>
 
       {/* Content — grouped */}
-      <div className="space-y-4 flex-1 overflow-auto pr-1 min-h-0 pb-4 scrollbar-hide">
+      <div className="space-y-4 flex-1 overflow-auto pr-1 min-h-[500px] lg:min-h-0 pb-4 scrollbar-hide">
         {Object.entries(grouped).length === 0 ? (
           <div className="text-center py-12 text-slate-400 border border-dashed border-slate-200 rounded-xl">Tidak ada data ditemukan.</div>
         ) : Object.entries(grouped).map(([bab, babData]) => (

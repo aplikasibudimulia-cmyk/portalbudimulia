@@ -100,7 +100,7 @@ export default function AdminRoleSection() {
   }
 
   return (
-    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
+    <div className="animate-slide-up flex flex-col min-h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
       {ConfirmModalComponent}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
         <div>
@@ -119,7 +119,7 @@ export default function AdminRoleSection() {
       {loading ? (
         <div className="flex justify-center py-12 flex-1 min-h-0"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
       ) : (
-        <div className="overflow-auto flex-1 min-h-0 pr-2">
+        <div className="overflow-auto flex-1 min-h-[500px] lg:min-h-0 pr-2">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-4">
             {roles.map(role => (
             <div key={role.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">

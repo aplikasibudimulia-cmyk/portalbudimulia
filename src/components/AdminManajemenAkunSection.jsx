@@ -1020,7 +1020,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   }
 
   return (
-    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
+    <div className="animate-slide-up flex flex-col min-h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
       <input type="file" accept="image/*" ref={individualPhotoInputRef} className="hidden" onChange={handleIndividualPhotoUpload} />
       <input type="file" accept="image/*" multiple ref={massPhotoInputRef} className="hidden" onChange={handleMassPhotoUpload} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvInputRef} className="hidden" onChange={handleCsvImportGuru} />
@@ -1127,7 +1127,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       )}
 
       {/* Table */}
-      <div className="bg-white border-none rounded-xl shadow-sm flex flex-col overflow-hidden flex-1 min-h-0">
+      <div className="bg-white border-none rounded-xl shadow-sm flex flex-col overflow-hidden flex-1 min-h-[500px] lg:min-h-0">
         {loading || isProcessing ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500 py-20">
             <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>

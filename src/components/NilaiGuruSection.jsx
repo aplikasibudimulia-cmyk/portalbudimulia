@@ -515,6 +515,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
       kelas: activeTabKelas,
       metode_hitung: newConfig.metode_hitung,
       bobot_detail: newConfig.bobot_detail,
+      is_visible: newConfig.is_visible ?? true,
       updated_at: new Date().toISOString()
     }, { onConflict: 'guru_id,tahun_ajaran_id,semester_id,mata_pelajaran_id,kelas' });
     
@@ -1669,19 +1670,19 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       </div>
       
       {/* MAIN VIEW */}
-      <div className="flex flex-col gap-4 flex-1 min-h-0 animate-fade-in">
+      <div className="flex flex-col gap-4 flex-1 min-h-[500px] xl:min-h-0 animate-fade-in">
         {/* Action Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0 bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 shrink-0 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-center gap-3 w-full xl:w-auto overflow-hidden">
             {targetKelasList.length === 0 ? (
               <div className="text-sm font-bold text-slate-400 italic">Belum ada kelas target</div>
             ) : (
-              <div className="flex items-center gap-1.5 flex-wrap overflow-x-auto custom-scrollbar pb-1 sm:pb-0">
+              <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-2 md:pb-0 w-full md:w-auto">
                 {targetKelasList.map(c => {
                   const isActive = activeTabKelas === c
                   return (
                     <button key={c} onClick={() => setActiveTabKelas(c)} 
-                      className={`px-4 py-2 rounded-lg font-bold text-[12px] transition-all whitespace-nowrap border ${
+                      className={`px-4 py-2 rounded-lg font-bold text-[12px] transition-all whitespace-nowrap border shrink-0 ${
                         isActive ? 'bg-indigo-600 text-white border-indigo-600 shadow-md transform scale-105' : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-indigo-300 hover:bg-white hover:text-indigo-600'
                       }`}>
                       Kelas {c}
@@ -1691,28 +1692,30 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               </div>
             )}
             
-            <div className="w-px h-6 bg-slate-200 mx-2 hidden sm:block"></div>
+            <div className="w-px h-6 bg-slate-200 mx-1 hidden md:block shrink-0"></div>
             
-            <button onClick={() => setShowConfigAkhirModal(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm"
-              title="Pengaturan Bobot Nilai Akhir">
-              <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-              Bobot Akhir
-            </button>
-            <button onClick={() => setShowKelolaSemester(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
-              <IconPencil /> Kelola Semester
-            </button>
-            <button onClick={() => {
-              setNewBabTargetKelas(activeTabKelas ? [activeTabKelas] : [])
-              setShowAddBab(true)
-            }}
-              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
-              <IconPlus /> Buat BAB
-            </button>
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <button onClick={() => setShowConfigAkhirModal(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm"
+                title="Pengaturan Bobot Nilai Akhir">
+                <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                Bobot Akhir
+              </button>
+              <button onClick={() => setShowKelolaSemester(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
+                <IconPencil /> Kelola Semester
+              </button>
+              <button onClick={() => {
+                setNewBabTargetKelas(activeTabKelas ? [activeTabKelas] : [])
+                setShowAddBab(true)
+              }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
+                <IconPlus /> Buat BAB
+              </button>
+            </div>
           </div>
           
-          <div className="flex items-center gap-3 shrink-0 border-t sm:border-t-0 border-slate-100 pt-3 sm:pt-0">
+          <div className="flex items-center gap-3 shrink-0 flex-wrap border-t xl:border-t-0 border-slate-100 pt-3 xl:pt-0 w-full xl:w-auto justify-start xl:justify-end">
             <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
               <span className="text-xs font-bold text-slate-500 uppercase">KKM:</span>
               <input 
@@ -1752,7 +1755,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         )}
         
         {/* Tabel Nilai */}
-        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden flex-1 flex flex-col min-h-0 relative">
+        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden flex-1 flex flex-col min-h-[500px] xl:min-h-0 relative">
           {!selectedMapelId || !selectedSemesterId ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-20">
               <div className="w-16 h-16 bg-slate-50 border-2 border-dashed border-slate-200 rounded-full flex items-center justify-center mb-4 text-slate-400">
@@ -1792,12 +1795,18 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             <div className="absolute inset-0 flex items-center justify-center bg-white z-20 text-slate-400">Memuat siswa...</div>
           ) : (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              <table className="w-full text-xs whitespace-nowrap">
+              <table className="w-full min-w-max text-xs whitespace-nowrap">
                 <thead className="sticky top-0 z-30 bg-slate-50 shadow-sm">
                   <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
-                    <th className="px-2 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>No</th>
-                    <th className="px-4 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>Nama Siswa</th>
-                    <th className="px-3 py-3 border-r border-slate-200 text-center text-sm bg-indigo-50 text-indigo-700" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90 }}>NISN</th>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>
+                      <div className="pt-4 flex items-start justify-center h-full">No</div>
+                    </th>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-nama-col" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>
+                      <div className="pt-4 flex items-start justify-center h-full">Nama Siswa</div>
+                    </th>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-unsticky" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90 }}>
+                      <div className="pt-4 flex items-start justify-center h-full">NISN</div>
+                    </th>
                     {uniqueBabsClass.map((bab, bIdx) => {
                       const babCount = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab).length
                       return (
@@ -1904,8 +1913,10 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     return (
                       <tr key={s.nisn} className={`hover:bg-slate-200 transition-colors group ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"}`}>
                         <td className={`text-center px-2 py-2.5 text-slate-400 border-r border-slate-100 font-medium ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 0, zIndex: 10, minWidth: 40, maxWidth: 40 }}>{idx + 1}</td>
-                        <td className={`px-4 py-2.5 font-bold text-slate-800 text-[14px] leading-none border-r border-slate-100 truncate ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>{s.nama_lengkap}</td>
-                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90 }}>{s.nisn}</td>
+                        <td className={`px-4 py-2.5 font-bold text-slate-800 text-[14px] leading-none border-r border-slate-100 mobile-nama-col ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>
+                          <div className="truncate w-full h-full" title={s.nama_lengkap}>{s.nama_lengkap}</div>
+                        </td>
+                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 mobile-unsticky ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90 }}>{s.nisn}</td>
                         {orderedKomponen.map(k => {
                           const cellKey = `${k.id}-${s.nisn}`
                           const val = nilaiData[k.id]?.[s.nisn]

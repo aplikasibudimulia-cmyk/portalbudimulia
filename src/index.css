@@ -5,6 +5,24 @@
 :root {
   --font-primary: 'Plus Jakarta Sans', sans-serif;
 }
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+@media (max-width: 767px) {
+  .mobile-nama-col {
+    min-width: 140px !important;
+    max-width: 140px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mobile-unsticky {
+    position: static !important;
+  }
+}
+
 .font-ubuntu {
   --font-primary: 'Ubuntu', sans-serif;
 }
@@ -96,3 +114,7 @@
   --theme-900: #0f172a;
 }
 
+body {
+  border-bottom: 6px solid var(--theme-500);
+  min-height: 100vh;
+}
