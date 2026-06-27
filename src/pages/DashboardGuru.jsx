@@ -1133,7 +1133,7 @@ export default function DashboardGuru() {
                         {filteredMapelStudents.length === 0 ? (
                           <tr><td colSpan="5" className="px-5 py-8 text-center text-slate-500">Tidak ada siswa yang cocok dengan filter.</td></tr>
                         ) : filteredMapelStudents.map((s, idx) => (
-                          <tr key={s.id} className="hover:bg-slate-50 bg-white">
+                          <tr key={s.nisn || idx} className="hover:bg-slate-50 bg-white">
                             <td className="px-5 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
                             <td className="px-5 py-4">
                               <div className="flex items-center gap-3">

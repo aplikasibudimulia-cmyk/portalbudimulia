@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
-import * as XLSX from 'xlsx'
+import { logActivity } from '../utils/logger'
+import * as XLSX from 'xlsx-js-style'
+import ExcelJS from 'exceljs'
 import { getSemesterAktif } from '../utils/semesterUtils'
 import { useConfirm } from '../utils/useConfirm'
 
@@ -63,6 +65,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [editTpData, setEditTpData]                   = useState({ nama: '', deskripsi: '', bobot: '1', target_kelas: [] })
   const [editingMetode, setEditingMetode]             = useState(null)
 
+  const [manualBobotPending, setManualBobotPending] = useState(false)
+  const [manualBobotValues, setManualBobotValues] = useState({})
+
   // Upload Excel
   const [uploadProgress, setUploadProgress] = useState(null)
   const [uploadResult, setUploadResult]     = useState(null)
@@ -71,6 +76,8 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [babOpen, setBabOpen] = useState({})
   const [kkm, setKkm] = useState(75)
   const [isExporting, setIsExporting] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [selectedExportClasses, setSelectedExportClasses] = useState([])
   const [showKelolaSemester, setShowKelolaSemester] = useState(false)
   const [kelolaSemesterRombel, setKelolaSemesterRombel] = useState('')
   const [maxNamaWidth, setMaxNamaWidth] = useState(260)
@@ -205,7 +212,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
     const { data } = await supabase.from('siswa_lengkap')
       .select('nisn, nama_lengkap, kelas')
       .eq('kelas', activeTabKelas)
-      .eq('is_aktif', true)
+      .eq('tahun_ajaran_id', activeTa.id)
       .order('nama_lengkap')
     setStudents(data || [])
     
@@ -379,12 +386,44 @@ export default function NilaiGuruSection({ session, activeTa }) {
   }
 
   const handleUpdateMetode = async (babNama, metode) => {
+    if (metode === 'bobot_manual') {
+      const komp = classKomponen.filter(k => k.bab_nama === babNama);
+      const vals = {};
+      komp.forEach(k => {
+         // Default if previously not set properly
+         vals[k.id] = (k.bobot !== undefined && k.bobot !== null) ? k.bobot : (100/komp.length);
+      });
+      setManualBobotValues(vals);
+      setManualBobotPending(true);
+      return;
+    }
+    
+    setManualBobotPending(false);
     const ids = komponen.filter(k => k.bab_nama === babNama).map(k => k.id)
     for (const id of ids) {
       await supabase.from('nilai_komponen').update({ metode_hitung: metode }).eq('id', id)
     }
     setEditingMetode(null)
     fetchKomponen()
+  }
+  
+  const handleSaveManualBobot = async (babNama) => {
+    let sum = 0;
+    Object.values(manualBobotValues).forEach(v => sum += Number(v));
+    if (Math.abs(sum - 100) > 0.01) {
+       alert(`Total bobot harus 100%. Saat ini: ${sum}%`);
+       return;
+    }
+    
+    const ids = classKomponen.filter(k => k.bab_nama === babNama).map(k => k.id);
+    for (const id of ids) {
+       await supabase.from('nilai_komponen').update({ 
+         metode_hitung: 'bobot_manual',
+         bobot: Number(manualBobotValues[id])
+       }).eq('id', id);
+    }
+    setManualBobotPending(false);
+    fetchKomponen();
   }
 
   const handleNilaiChange = async (komponenId, nisn, nilai) => {
@@ -397,6 +436,10 @@ export default function NilaiGuruSection({ session, activeTa }) {
       diinput_oleh: session.id, updated_at: new Date().toISOString()
     }, { onConflict: 'komponen_id,siswa_nisn' })
     setSavingCell(null)
+  }
+
+  const toggleNewTpTargetKelas = (c) => {
+    setNewTpTargetKelas(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
   }
 
   const toggleEditTpTargetKelas = (c) => {
@@ -422,39 +465,46 @@ export default function NilaiGuruSection({ session, activeTa }) {
     return (totalNilai / totalBobot).toFixed(1)
   }
 
+
+
+
+
+
   // ─── Export Excel (Rich Format) ───────────────────────────────────────────
-  const handleDownloadExcel = () => {
-    try {
+  const generateClassSheet = async (kelas, classStudents, classKomp, classNilaiData, wb) => {
+      setIsExporting(true)
       const sem = semesters.find(s => s.id === selectedSemesterId)
       const mapelNama = uniqueMapels.find(m => m.id === selectedMapelId)?.nama || 'Mapel'
       const sekolah = 'SMP BUDI MULIA'
       const tahunAjaran = activeTa?.nama || ''
 
-      // Komponen per BAB untuk kelas aktif
-      const babList = uniqueBabsClass
+      const babList = [...new Set(classKomp.map(k => k.bab_nama || 'Lainnya'))]
       const babKomponenMap = {}
       babList.forEach(bab => {
-        babKomponenMap[bab] = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab)
+        babKomponenMap[bab] = classKomp.filter(k => (k.bab_nama || 'Lainnya') === bab).sort((a,b) => {
+          if (a.nama.toUpperCase() === 'N. KARAKTER') return 1;
+          if (b.nama.toUpperCase() === 'N. KARAKTER') return -1;
+          return a.urutan - b.urutan;
+        })
       })
 
-      // Hitung rata-rata per BAB per siswa
-      const hitungRataBAB = (nisn, bab) => {
-        const komp = babKomponenMap[bab] || []
-        const metode = komp[0]?.metode_hitung || 'rata_rata'
-        let totalBobot = 0, totalNilai = 0, hasVal = false
-        komp.forEach(k => {
-          const val = nilaiData[k.id]?.[nisn]
-          if (val !== undefined && val !== null && val !== '') {
-            if (metode === 'bobot') { totalNilai += Number(val) * (k.bobot || 1); totalBobot += (k.bobot || 1) }
-            else { totalNilai += Number(val); totalBobot += 1 }
-            hasVal = true
-          }
-        })
-        if (!hasVal || totalBobot === 0) return null
-        return +(totalNilai / totalBobot).toFixed(1)
-      }
-
       const hitungRataAkhir = (nisn) => {
+        const hitungRataBAB = (nisn, bab) => {
+          const komp = babKomponenMap[bab] || []
+          const metode = komp[0]?.metode_hitung || 'rata_rata'
+          let totalBobot = 0, totalNilai = 0, hasVal = false
+          komp.forEach(k => {
+            const val = classNilaiData[k.id]?.[nisn]
+            if (val !== undefined && val !== null && val !== '') {
+              if (metode === 'bobot_manual') { totalNilai += Number(val) * (k.bobot || 1); totalBobot += (k.bobot || 1) }
+              else { totalNilai += Number(val); totalBobot += 1 }
+              hasVal = true
+            }
+          })
+          if (!hasVal || totalBobot === 0) return null
+          return +(totalNilai / totalBobot).toFixed(1)
+        }
+
         const vals = babList.map(bab => hitungRataBAB(nisn, bab)).filter(v => v !== null)
         if (vals.length === 0) return null
         return +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
@@ -471,35 +521,39 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
       const getKeterangan = (nisn, bab) => {
         const komp = babKomponenMap[bab] || []
-        const belumSelesai = []
-        const bawahKKM = []
+        const belumDikerjakan = []
         komp.forEach(k => {
-          if (k.nama === 'N. Karakter') return
-          const val = nilaiData[k.id]?.[nisn]
-          if (val === undefined || val === null || val === '') belumSelesai.push(k.nama)
-          else if (Number(val) < 75) bawahKKM.push(k.nama)
+          const val = classNilaiData[k.id]?.[nisn]
+          if (val !== undefined && val !== null && val !== '' && Number(val) === 0) {
+            belumDikerjakan.push(k.nama)
+          }
         })
         const parts = []
-        if (belumSelesai.length > 0) parts.push(`${belumSelesai.join(', ')} belum selesai`)
-        if (bawahKKM.length > 0) parts.push(`${bawahKKM.join(', ')} di bawah KKM`)
+        if (belumDikerjakan.length > 0) parts.push(`${belumDikerjakan.join(', ')} belum dikerjakan`)
         return parts.join(' | ')
       }
 
-      // ── Build column structure ──────────────────────────────────────────────
-      const FIXED = 3 // No, NISN, Nama
+      const FIXED = 3
       const babColStart = {}
       let col = FIXED
       babList.forEach(bab => {
         babColStart[bab] = col
-        col += (babKomponenMap[bab]?.length || 0) + 1 // +1 for Rata-rata BAB
+        col += (babKomponenMap[bab]?.length || 0) + 2
       })
       const rataAkhirCol = col
       const nilaiAkhirCol = col + 1
       const predikatCol  = col + 2
       const lingkupStartCol = col + 3
 
-      const totalCols = lingkupStartCol + babList.length
-      const dataStartRow = 9 // 0-based row index where data begins (after 9 header rows)
+      let maxKomp = 0
+      babList.forEach(bab => {
+        if (babKomponenMap[bab]?.length > maxKomp) maxKomp = babKomponenMap[bab].length
+      })
+      
+      const totalCols = lingkupStartCol + (babList.length * 2)
+      const requiredLingkupRows = 15 + (maxKomp * 4)
+      const dataRows = 13 + classStudents.length // Data starts at idx 13 (Row 14)
+      const totalRows = Math.max(dataRows, requiredLingkupRows)
 
       const colLetter = (n) => {
         let s = ''
@@ -508,143 +562,549 @@ export default function NilaiGuruSection({ session, activeTa }) {
         return s
       }
 
-      // I'll re-do: use 11 header rows
-      const aoa2 = Array.from({ length: 11 + students.length }, () => Array(totalCols).fill(''))
+      const BORDER = { top: {style:'thin'}, bottom: {style:'thin'}, left: {style:'thin'}, right: {style:'thin'} }
+      
+      const styleTitle = { font: { bold: true, sz: 22 }, alignment: { horizontal: 'center', vertical: 'center' } }
+      const styleInfo = { font: { sz: 12, bold: true } }
+      const styleHeader = { font: { bold: true, sz: 12 }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: BORDER, fill: { fgColor: { rgb: "F2F2F2" } } }
+      const styleDataCenter = { font: { sz: 12 }, alignment: { horizontal: 'center', vertical: 'center' }, border: BORDER }
+      const styleDataLeft = { font: { sz: 12 }, alignment: { horizontal: 'left', vertical: 'center', wrapText: true }, border: BORDER }
+      const styleLingkupTitle = { font: { bold: true, sz: 12 } }
+      const styleLingkupItalic = { font: { italic: true, sz: 12 } }
+      const styleLingkupDesc = { font: { sz: 12 }, alignment: { horizontal: 'left', vertical: 'top', wrapText: true }, border: BORDER }
 
-      // Rows 0-2: Title
-      aoa2[0][0] = 'DAFTAR NILAI PESERTA DIDIK'
-      aoa2[1][0] = sekolah
-      aoa2[2][0] = `TAHUN AJARAN ${tahunAjaran}`
-      // Row 3: blank
-      // Rows 4-7: Info
-      aoa2[4][0] = 'Mata Pelajaran'; aoa2[4][1] = `:  ${mapelNama}`
-      aoa2[5][0] = 'Kelas';          aoa2[5][1] = `:  ${activeTabKelas}`
-      aoa2[6][0] = 'Semester';       aoa2[6][1] = `:  ${sem?.nomor || '-'}`
-      aoa2[7][0] = 'TP';             aoa2[7][1] = `:  ${classKomponen.filter(k => k.nama !== 'N. Karakter').length}`
-      // Row 8: blank
-      // Row 9: BAB group headers
-      aoa2[9][0] = 'No'
-      aoa2[9][1] = 'NISN'
-      aoa2[9][2] = 'Nama Siswa'
-      babList.forEach(bab => { aoa2[9][babColStart[bab]] = bab })
-      aoa2[9][rataAkhirCol]  = 'Rata-rata Akhir'
-      aoa2[9][nilaiAkhirCol] = 'Nilai Akhir'
-      aoa2[9][predikatCol]   = 'Predikat'
-      babList.forEach((bab, bi) => {
-        aoa2[9][lingkupStartCol + bi] = `Lingkup Materi ${bi + 1}: ${bab}`
+      // Initialize with NULL
+      const aoa2 = Array.from({ length: totalRows }, () => Array.from({ length: totalCols }, () => null))
+
+      const getColLetter = (colIndex) => {
+         let letter = '';
+         let temp = colIndex;
+         while (temp >= 0) {
+            letter = String.fromCharCode((temp % 26) + 65) + letter;
+            temp = Math.floor(temp / 26) - 1;
+         }
+         return letter;
+      }
+
+      const setCell = (r, c, val, style, t = null, f = null) => {
+        if (aoa2[r]) {
+          const cellType = t ? t : (typeof val === 'number' ? 'n' : 's')
+          aoa2[r][c] = { v: val, t: cellType, s: JSON.parse(JSON.stringify(style || {})), f: f }
+        }
+      }
+
+      // Title
+      setCell(0, 0, 'DAFTAR NILAI PESERTA DIDIK', styleTitle)
+      setCell(1, 0, sekolah, styleTitle)
+      setCell(2, 0, `TAHUN AJARAN ${tahunAjaran}`, styleTitle)
+      
+      // Info
+      setCell(3, 0, 'Mata Pelajaran', styleInfo); setCell(3, 2, `: ${mapelNama}`, styleInfo)
+      setCell(4, 0, 'Kelas', styleInfo);          setCell(4, 2, `: ${kelas}`, styleInfo)
+      setCell(5, 0, 'Semester', styleInfo);       setCell(5, 2, `: ${sem?.nomor || '-'}`, styleInfo)
+      setCell(6, 0, 'Tahun Ajaran', styleInfo);   setCell(6, 2, `: ${tahunAjaran}`, styleInfo)
+      setCell(7, 0, 'KKM', styleInfo);            setCell(7, 2, `: ${kkm}`, styleInfo)
+      setCell(8, 0, 'Guru Pengampu', styleInfo);  setCell(8, 2, `: ${session?.nama || 'Guru'}`, styleInfo)
+
+      const fillEmptyBorders = (rStart, rEnd, cStart, cEnd, style) => {
+        for(let r=rStart; r<=rEnd; r++) {
+          for(let c=cStart; c<=cEnd; c++) {
+             if (!aoa2[r][c]) setCell(r, c, '', style, 's');
+          }
+        }
+      }
+
+      // Row 11 (idx 10): Main Headers & Bab
+      setCell(10, 0, 'No', styleHeader)
+      setCell(10, 1, 'NISN', styleHeader)
+      setCell(10, 2, 'Nama Siswa', styleHeader)
+      babList.forEach(bab => { 
+        setCell(10, babColStart[bab], bab, styleHeader) 
       })
-      // Row 10: TP sub-headers
-      aoa2[10][0] = ''; aoa2[10][1] = ''; aoa2[10][2] = ''
+      setCell(10, rataAkhirCol, 'Rata-rata Sumatif', styleHeader)
+      setCell(10, nilaiAkhirCol, 'Nilai Akhir', styleHeader)
+      setCell(10, predikatCol, 'Predikat', styleHeader)
+
+      // Row 12 (idx 11): TP sub-headers
       babList.forEach(bab => {
         const komp = babKomponenMap[bab] || []
         const start = babColStart[bab]
-        komp.forEach((k, ki) => { aoa2[10][start + ki] = k.nama })
-        aoa2[10][start + komp.length] = 'Rata-rata BAB'
-      })
-      aoa2[10][rataAkhirCol]  = ''
-      aoa2[10][nilaiAkhirCol] = ''
-      aoa2[10][predikatCol]   = ''
-      babList.forEach((bab, bi) => {
-        // Show TP descriptions in sub-header
-        const komp = babKomponenMap[bab] || []
-        const descs = komp.filter(k => k.nama !== 'N. Karakter').map((k, ki) => `${k.nama}: ${k.deskripsi || '(deskripsi belum diisi)'}`).join('\n')
-        aoa2[10][lingkupStartCol + bi] = 'Histori yang Dicapai:'
+        const metode = komp[0]?.metode_hitung || 'rata_rata'
+        komp.forEach((k, ki) => { setCell(11, start + ki, k.nama, styleHeader) })
+        const rataHeaderName = (metode === 'bobot_manual') ? 'Nilai Akhir BAB' : 'Rata-rata BAB'
+        setCell(11, start + komp.length, rataHeaderName, styleHeader)
+        setCell(11, start + komp.length + 1, 'Keterangan (Belum Tuntas)', styleHeader)
+        // White cells below them
+        setCell(12, start + komp.length, '', styleDataCenter)
+        setCell(12, start + komp.length + 1, '', styleDataCenter)
       })
 
-      // Rows 11+: Data
-      students.forEach((s, idx) => {
-        const r = 11 + idx
-        aoa2[r][0] = idx + 1
-        aoa2[r][1] = s.nisn
-        aoa2[r][2] = s.nama_lengkap
+      // Row 13 (idx 12): Bobot
+      babList.forEach(bab => {
+        const komp = babKomponenMap[bab] || []
+        const start = babColStart[bab]
+        const metode = komp[0]?.metode_hitung || 'rata_rata'
+        
+        komp.forEach((k, ki) => { 
+          let bobot = ''
+          if (metode === 'bobot_sama') {
+             bobot = 100
+          } else if (metode === 'bobot_manual') {
+             bobot = (k.bobot !== undefined && k.bobot !== null) ? k.bobot : 100
+          } else {
+             bobot = '' // rata_rata dibiarkan kosong baris bobotnya
+          }
+          setCell(12, start + ki, bobot, styleDataCenter, 'n') 
+        })
+      })
+
+      // Fill header borders for main table (idx 10 to 12)
+      fillEmptyBorders(10, 12, 0, 2, styleHeader)
+      fillEmptyBorders(10, 12, rataAkhirCol, predikatCol, styleHeader)
+      babList.forEach(bab => {
+        const komp = babKomponenMap[bab] || []
+        const start = babColStart[bab]
+        const end = start + komp.length + 1
+        fillEmptyBorders(10, 12, start, end, styleHeader)
+      })
+
+      // Lingkup Materi Headers
+      babList.forEach((bab, bi) => {
+        const startLCol = lingkupStartCol + bi * 2
+        setCell(10, startLCol, `Lingkup Materi ${bi + 1} :`, styleLingkupTitle)
+        setCell(11, startLCol, 'Materi yang diajarkan :', styleLingkupTitle)
+        setCell(12, startLCol, bab, styleLingkupItalic)
+      })
+
+      // Data Rows
+      classStudents.forEach((s, idx) => {
+        const r = 13 + idx
+        const excelRow = r + 1
+        setCell(r, 0, idx + 1, styleDataCenter)
+        setCell(r, 1, s.nisn, styleDataCenter, 's')
+        setCell(r, 2, s.nama_lengkap, styleDataLeft)
+        
+        const rataBabFormulaRefs = [];
+
         babList.forEach(bab => {
           const komp = babKomponenMap[bab] || []
           const start = babColStart[bab]
+          
+          const tpKomp = komp;
+          const tpColLetters = tpKomp.map((k, ki) => getColLetter(start + ki))
+          
           komp.forEach((k, ki) => {
-            const val = nilaiData[k.id]?.[s.nisn]
-            aoa2[r][start + ki] = val !== undefined && val !== null ? val : ''
+            const val = classNilaiData[k.id]?.[s.nisn]
+            setCell(r, start + ki, val !== undefined && val !== null && val !== '' ? Number(val) : '', styleDataCenter, 'n')
           })
-          const rataBAB = hitungRataBAB(s.nisn, bab)
-          aoa2[r][start + komp.length] = rataBAB !== null ? rataBAB : ''
+          
+          const metode = komp[0]?.metode_hitung || 'rata_rata'
+          let formulaRata = ""
+          
+          if (tpColLetters.length > 0) {
+             const rangeNilai = `${tpColLetters[0]}${excelRow}:${tpColLetters[tpColLetters.length-1]}${excelRow}`
+             const rangeBobot = `${tpColLetters[0]}13:${tpColLetters[tpColLetters.length-1]}13`
+             
+             if (metode === 'rata_rata') {
+                formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(AVERAGE(${rangeNilai}), 2), ""))`
+             } else {
+                formulaRata = `IF(COUNT(${rangeNilai})=0, "", IFERROR(ROUND(SUMPRODUCT(${rangeNilai}, ${rangeBobot}) / SUMIF(${rangeNilai}, ">=0", ${rangeBobot}), 2), ""))`
+             }
+          }
+          
+          const rataCol = start + komp.length
+          const rataColLetter = getColLetter(rataCol)
+          if (formulaRata) {
+             rataBabFormulaRefs.push(`${rataColLetter}${excelRow}`)
+          }
+          
+          setCell(r, rataCol, null, styleDataCenter, 'n', formulaRata)
+          
+          // Keterangan formula
+          let formulaKeterangan = `""`
+          if (tpColLetters.length > 0) {
+             const parts = tpKomp.map((k, ki) => `IF(AND(NOT(ISBLANK(${tpColLetters[ki]}${excelRow})), ${tpColLetters[ki]}${excelRow}=0), "${k.nama}, ", "")`)
+             const concatExpr = parts.join(' & ')
+             formulaKeterangan = `IF(${concatExpr}="", "", LEFT(${concatExpr}, LEN(${concatExpr})-2) & " belum dikerjakan")`
+          }
+          setCell(r, start + komp.length + 1, null, styleDataLeft, 's', formulaKeterangan)
         })
-        const rataAkhir = hitungRataAkhir(s.nisn)
-        aoa2[r][rataAkhirCol]  = rataAkhir !== null ? rataAkhir : ''
-        aoa2[r][nilaiAkhirCol] = rataAkhir !== null ? rataAkhir : ''
-        aoa2[r][predikatCol]   = getPredikat(rataAkhir)
-        babList.forEach((bab, bi) => {
-          const komp = babKomponenMap[bab] || []
-          // Build deskripsi text for siswa
-          const achieved = komp.filter(k => k.nama !== 'N. Karakter' && k.deskripsi).map(k => k.deskripsi).join('; ')
-          const ket = getKeterangan(s.nisn, bab)
-          aoa2[r][lingkupStartCol + bi] = achieved + (ket ? `\n\nCatatan: ${ket}` : '')
+        
+        // Rata Rata Sumatif Formula
+        let formulaRataSumatif = `""`
+        if (rataBabFormulaRefs.length > 0) {
+           formulaRataSumatif = `IFERROR(AVERAGE(${rataBabFormulaRefs.join(',')}), "")`
+        }
+        setCell(r, rataAkhirCol, null, styleDataCenter, 'n', formulaRataSumatif)
+        setCell(r, nilaiAkhirCol, null, styleDataCenter, 'n', formulaRataSumatif)
+        
+        // Predikat formula (A >= 90, B >= 80, C >= 70, D >= 60, E < 60)
+        const akhirColLetter = getColLetter(nilaiAkhirCol)
+        const formulaPredikat = `IF(${akhirColLetter}${excelRow}="", "", IF(${akhirColLetter}${excelRow}>=90, "A", IF(${akhirColLetter}${excelRow}>=80, "B", IF(${akhirColLetter}${excelRow}>=70, "C", IF(${akhirColLetter}${excelRow}>=60, "D", "E")))))`
+        setCell(r, predikatCol, null, styleDataCenter, 's', formulaPredikat)
+      })
+
+      // Lingkup Materi Descriptions
+      babList.forEach((bab, bi) => {
+        const komp = babKomponenMap[bab] || []
+        const startLCol = lingkupStartCol + bi * 2
+        
+        komp.forEach((k, ki) => {
+           const rowStart = 13 + (ki * 4)
+           setCell(rowStart, startLCol, k.nama, styleDataCenter)
+           setCell(rowStart, startLCol + 1, k.deskripsi || '', styleLingkupDesc)
+           fillEmptyBorders(rowStart, rowStart+3, startLCol, startLCol, styleDataCenter)
+           fillEmptyBorders(rowStart, rowStart+3, startLCol+1, startLCol+1, styleLingkupDesc)
         })
       })
 
-      // ── Create worksheet ────────────────────────────────────────────────────
-      const wb = XLSX.utils.book_new()
-      const ws = XLSX.utils.aoa_to_sheet(aoa2)
+      const sheetName = `Nilai ${kelas} Sem${sem?.nomor || '-'}`.substring(0, 31);
+            const ws = wb.addWorksheet(sheetName, {
+        views: [{ state: 'frozen', xSplit: 3, ySplit: 13, showGridLines: false }]
+      });
 
-      // ── Merges ──────────────────────────────────────────────────────────────
-      const merges = []
-      // Title rows: merge across all columns
-      ;[0, 1, 2].forEach(r => {
-        if (totalCols > 1) merges.push({ s: { r, c: 0 }, e: { r, c: totalCols - 1 } })
-      })
-      // Info rows: merge col 2 onward
-      ;[4, 5, 6, 7].forEach(r => {
-        if (totalCols > 2) merges.push({ s: { r, c: 2 }, e: { r, c: totalCols - 1 } })
-      })
-      // BAB group merges (row 9): merge columns for each BAB
-      babList.forEach(bab => {
+      // Write values and styles
+      for(let r = 0; r < totalRows; r++) {
+         const row = ws.getRow(r + 1);
+         for(let c = 0; c < totalCols; c++) {
+            const cell = row.getCell(c + 1);
+            if (aoa2[r] && aoa2[r][c] !== null && aoa2[r][c] !== undefined) {
+               const val = aoa2[r][c].v;
+               const f = aoa2[r][c].f;
+               if (f) {
+                 cell.value = { formula: f };
+               } else {
+                 if (val !== undefined && val !== null) cell.value = val;
+               }
+               
+               // Translate style
+               const s = aoa2[r][c].s;
+               if (s) {
+                 if (s.font) {
+                    cell.font = {
+                       bold: s.font.bold,
+                       italic: s.font.italic,
+                       size: s.font.sz,
+                       name: 'Times New Roman'
+                    };
+                 }
+                 if (s.alignment) {
+                    cell.alignment = {
+                       horizontal: s.alignment.horizontal,
+                       vertical: s.alignment.vertical === 'center' ? 'middle' : s.alignment.vertical,
+                       wrapText: s.alignment.wrapText
+                    };
+                 }
+                 if (s.border) {
+                    const borderStyle = { style: 'thin', color: { argb: 'FF000000' } };
+                    const cellBorder = {};
+                    if (s.border.top) cellBorder.top = borderStyle;
+                    if (s.border.bottom) cellBorder.bottom = borderStyle;
+                    if (s.border.left) cellBorder.left = borderStyle;
+                    if (s.border.right) cellBorder.right = borderStyle;
+                    if (Object.keys(cellBorder).length > 0) cell.border = cellBorder;
+                 }
+                 if (s.fill && s.fill.fgColor && s.fill.fgColor.rgb) {
+                    cell.fill = {
+                       type: 'pattern',
+                       pattern: 'solid',
+                       fgColor: { argb: 'FF' + s.fill.fgColor.rgb }
+                    };
+                 }
+               }
+            }
+         }
+      }
+
+const merges = [];
+      [0, 1, 2].forEach(r => {
+        if (predikatCol > 1) merges.push({ s: { r, c: 0 }, e: { r, c: predikatCol } })
+      });
+      [4, 5, 6, 7, 8].forEach(r => {
+        if (predikatCol > 2) merges.push({ s: { r, c: 2 }, e: { r, c: predikatCol } })
+      });
+      
+      // Merge Bab titles across their components horizontally
+            babList.forEach(bab => {
         const komp = babKomponenMap[bab] || []
         const start = babColStart[bab]
-        const end = start + komp.length // +1 for rata-rata BAB col, but index is komp.length
-        if (end > start) merges.push({ s: { r: 9, c: start }, e: { r: 9, c: end } })
-      })
-      // Fixed cols merge rows 9-10
-      ;[0, 1, 2].forEach(c => merges.push({ s: { r: 9, c }, e: { r: 10, c } }))
-      // Rata-rata Akhir, Nilai Akhir, Predikat: merge rows 9-10
-      ;[rataAkhirCol, nilaiAkhirCol, predikatCol].forEach(c => {
-        merges.push({ s: { r: 9, c }, e: { r: 10, c } })
-      })
-      // Lingkup Materi: merge rows 9-10
-      babList.forEach((_, bi) => {
-        merges.push({ s: { r: 9, c: lingkupStartCol + bi }, e: { r: 10, c: lingkupStartCol + bi } })
-      })
-      ws['!merges'] = merges
+        const end = start + komp.length + 1
+        if (end > start) merges.push({ s: { r: 10, c: start }, e: { r: 10, c: end } })
+        
+        // Merge Nilai Akhir BAB & Keterangan vertically from row 11 to 12
+        const rataCol = start + komp.length;
+        const ketCol = start + komp.length + 1;
+        merges.push({ s: { r: 11, c: rataCol }, e: { r: 12, c: rataCol } });
+        merges.push({ s: { r: 11, c: ketCol }, e: { r: 12, c: ketCol } });
+      });
 
-      // ── Column widths ────────────────────────────────────────────────────────
-      const colWidths = [
-        { wch: 5 },  // No
-        { wch: 15 }, // NISN
-        { wch: 30 }, // Nama
-      ]
-      babList.forEach(bab => {
-        const komp = babKomponenMap[bab] || []
-        komp.forEach(k => colWidths.push({ wch: k.nama === 'N. Karakter' ? 12 : 8 }))
-        colWidths.push({ wch: 12 }) // Rata-rata BAB
-      })
-      colWidths.push({ wch: 14 }) // Rata-rata Akhir
-      colWidths.push({ wch: 11 }) // Nilai Akhir
-      colWidths.push({ wch: 10 }) // Predikat
-      babList.forEach(() => colWidths.push({ wch: 50 })) // Lingkup Materi
-      ws['!cols'] = colWidths
+      // Merge No, NISN, Nama vertically
+      [0, 1, 2].forEach(c => merges.push({ s: { r: 10, c }, e: { r: 12, c } }));
+      // Merge End Columns vertically
+      [rataAkhirCol, nilaiAkhirCol, predikatCol].forEach(c => {
+        merges.push({ s: { r: 10, c }, e: { r: 12, c } })
+      });
 
-      // Row heights
-      ws['!rows'] = Array.from({ length: 11 + students.length }, (_, i) => {
-        if (i === 0) return { hpt: 20 }
-        if (i === 9 || i === 10) return { hpt: 40 }
-        return { hpt: 18 }
-      })
+      // Lingkup Materi vertical merges
+      babList.forEach((bab, bi) => {
+         const startLCol = lingkupStartCol + bi * 2
+         const komp = babKomponenMap[bab] || []
+         komp.forEach((k, ki) => {
+            const rowStart = 13 + (ki * 4)
+            merges.push({ s: { r: rowStart, c: startLCol }, e: { r: rowStart + 3, c: startLCol } })
+            merges.push({ s: { r: rowStart, c: startLCol + 1 }, e: { r: rowStart + 3, c: startLCol + 1 } })
+         })
+      });
 
-      const sheetName = `Nilai ${activeTabKelas} Sem${sem?.nomor || '-'}`.substring(0, 31)
-      XLSX.utils.book_append_sheet(wb, ws, sheetName)
+      // Translate merges
+
+      for (const m of merges) {
+         ws.mergeCells(m.s.r + 1, m.s.c + 1, m.e.r + 1, m.e.c + 1);
+      }
+
+const colWidths = Array(totalCols).fill({ wch: 10 })
+      for (let c = 0; c < totalCols; c++) {
+        let maxLen = 5
+        for (let r = 0; r < totalRows; r++) {
+          if (aoa2[r] && aoa2[r][c] && aoa2[r][c].v !== undefined && aoa2[r][c].v !== null) {
+             // Ignore title rows for column width calculation (since they are merged and long)
+             if (c === 0 && r < 4) continue; 
+             // Ignore Bab group headers in row 10
+             if (r === 10 && c > 2 && c < rataAkhirCol) continue;
+             // Ignore Lingkup Materi Headers that span columns
+             if (c >= lingkupStartCol && r >= 10 && r <= 12) continue;
+             
+             let valStr = String(aoa2[r][c].v)
+             // Handle newline characters if any
+             let lines = valStr.split('\n')
+             for (let line of lines) {
+               if (line.length > maxLen) maxLen = line.length
+             }
+          }
+        }
+        
+        // Apply Caps and Padding
+        if (c === 0) maxLen = 3.71 // No
+        else if (c === 1) maxLen = 16.29 // NISN
+        else if (c === 2) maxLen = Math.min(Math.max(maxLen + 2, 15), 35) // Nama Siswa
+        else if (c >= lingkupStartCol) {
+           // Lingkup Materi section
+           const isDesc = (c - lingkupStartCol) % 2 !== 0
+           if (isDesc) maxLen = 60 // Deskripsi always 60 to wrap nicely
+           else maxLen = 15 // TP Name always 15
+        }
+        else {
+           // TP columns, Rata-rata, Keterangan
+           maxLen = Math.min(Math.max(maxLen + 2, 8), 35) // Cap at 35 to force wrap
+        }
+
+        colWidths[c] = { wch: maxLen }
+      }
+
+      // Translate col widths
+
+      for (let c = 0; c < colWidths.length; c++) {
+         if (colWidths[c]) {
+            ws.getColumn(c + 1).width = colWidths[c].wch;
+         }
+      }
+
+      // Apply row heights (Title rows)
+      ws.getRow(1).height = 34.5;
+      ws.getRow(2).height = 34.5;
+      ws.getRow(3).height = 34.5;
       
-      const fileName = `Nilai_${activeTabKelas}_${mapelNama}_Sem${sem?.nomor || '-'}_${tahunAjaran.replace('/', '-')}.xlsx`
-      XLSX.writeFile(wb, fileName)
+      // Apply row heights (Lingkup Materi)
+      babList.forEach((bab, bi) => {
+        const komp = babKomponenMap[bab] || []
+        komp.forEach((k, ki) => {
+           const rowStart = 13 + (ki * 4)
+           const descLen = (k.deskripsi || '').length
+           const lines = Math.ceil(descLen / 60)
+           if (lines > 4) {
+              const extraLines = lines - 4
+              const hpt = 15 + Math.ceil((extraLines * 15) / 4)
+              ws.getRow(rowStart).height = hpt
+              ws.getRow(rowStart+1).height = hpt
+              ws.getRow(rowStart+2).height = hpt
+              ws.getRow(rowStart+3).height = hpt
+           }
+        })
+      })
+
+      // Custom BAB Colors
+      const babHexColors = ['FFEEF2FF', 'FFECFDF5', 'FFFFFBEB', 'FFFAF5FF', 'FFFFF1F2', 'FFECFEFF'];
+      babList.forEach((bab, bi) => {
+         const start = babColStart[bab];
+         const komp = babKomponenMap[bab] || [];
+         const end = start + komp.length + 1; // +1 to include Keterangan
+         const color = babHexColors[bi % babHexColors.length];
+         
+         // Apply to headers (Row 11 and Row 12)
+         for (let r = 10; r <= 11; r++) {
+            for (let c = start; c <= end; c++) {
+               const cell = ws.getRow(r + 1).getCell(c + 1);
+               // Ensure there is a border on these headers
+               cell.border = { top: {style:'thin'}, bottom: {style:'thin'}, left: {style:'thin'}, right: {style:'thin'} };
+               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+            }
+         }
+
+         // Apply color to Bobot row (Row 13 / idx 12) only for cells that have values
+         for (let c = start; c <= end; c++) {
+            const cell = ws.getRow(13).getCell(c + 1);
+            if (aoa2[12] && aoa2[12][c] && aoa2[12][c].v !== undefined && aoa2[12][c].v !== null && aoa2[12][c].v !== '') {
+               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+            }
+         }
+      });
+      
+      // Apply Student Row Colors (Odd/Even)
+      classStudents.forEach((s, idx) => {
+         const r = 13 + idx;
+         // Visual Ganjil (idx 0, 2, 4) = Putih, Visual Genap (idx 1, 3, 5) = Biru muda FFF0F9FF
+         const isGanjilVisual = (idx % 2 === 0);
+         const rowColor = isGanjilVisual ? 'FFFFFFFF' : 'FFF0F9FF';
+         for(let c = 0; c < totalCols; c++) {
+            // Only color up to Predikat col, ignore Lingkup on the right for now
+            if (c > predikatCol) break; 
+            
+            const cell = ws.getRow(r + 1).getCell(c + 1);
+            if (aoa2[r] && aoa2[r][c] && aoa2[r][c].s && aoa2[r][c].s.border) {
+               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowColor } };
+            }
+         }
+      });
+
+            // Worksheet Protection
+      await ws.protect(session?.id?.substring(0, 8) || 'sklbm123', {
+         selectLockedCells: true,
+         selectUnlockedCells: true,
+         formatCells: false,
+         formatColumns: false,
+         formatRows: false,
+      });
+
+      // Unlock TP and N. Karakter input cells, and apply Conditional Formatting
+      for(let r = 13; r < totalRows; r++) {
+         const excelRow = r + 1;
+         babList.forEach(bab => {
+            const start = babColStart[bab];
+            const komp = babKomponenMap[bab] || [];
+            komp.forEach((k, ki) => {
+               const cell = ws.getRow(excelRow).getCell(start + ki + 1);
+               cell.protection = { locked: false };
+               
+               // Conditional Formatting for TP cells
+               ws.addConditionalFormatting({
+                  ref: cell.address,
+                  rules: [
+                     {
+                        type: 'expression', formulae: [`AND(ISNUMBER(${cell.address}), ${cell.address}<${kkm})`],
+                        style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFC7CE' } }, font: { color: { argb: 'FF9C0006' } } }
+                     },
+                     {
+                        type: 'expression', formulae: [`AND(ISNUMBER(${cell.address}), ${cell.address}>=${kkm})`],
+                        style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFC6EFCE' } }, font: { color: { argb: 'FF006100' } } }
+                     }
+                  ]
+               });
+            });
+            
+            // Conditional formatting for Rata-rata BAB
+            const rataCell = ws.getRow(excelRow).getCell(start + komp.length + 1);
+            ws.addConditionalFormatting({
+               ref: rataCell.address,
+               rules: [
+                  {
+                     type: 'expression', formulae: [`AND(ISNUMBER(${rataCell.address}), ${rataCell.address}<${kkm})`],
+                     style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFC7CE' } }, font: { color: { argb: 'FF9C0006' } } }
+                  },
+                  {
+                     type: 'expression', formulae: [`AND(ISNUMBER(${rataCell.address}), ${rataCell.address}>=${kkm})`],
+                     style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFC6EFCE' } }, font: { color: { argb: 'FF006100' } } }
+                  }
+               ]
+            });
+         });
+         
+         // Conditional formatting for Rata-rata Sumatif and Nilai Akhir
+         const rataSumatifCell = ws.getRow(excelRow).getCell(rataAkhirCol + 1);
+         const nilaiAkhirColCell = ws.getRow(excelRow).getCell(nilaiAkhirCol + 1);
+         [rataSumatifCell, nilaiAkhirColCell].forEach(cell => {
+            ws.addConditionalFormatting({
+               ref: cell.address,
+               rules: [
+                  {
+                     type: 'expression', formulae: [`AND(ISNUMBER(${cell.address}), ${cell.address}<${kkm})`],
+                     style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFC7CE' } }, font: { color: { argb: 'FF9C0006' } } }
+                  },
+                  {
+                     type: 'expression', formulae: [`AND(ISNUMBER(${cell.address}), ${cell.address}>=${kkm})`],
+                     style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFC6EFCE' } }, font: { color: { argb: 'FF006100' } } }
+                  }
+               ]
+            });
+         });
+      }
+
+      
+  }
+
+  const handleDownloadExcel = async () => {
+    try {
+      if (selectedExportClasses.length === 0) return;
+      setIsExporting(true)
+      setShowExportModal(false)
+      
+      const sem = semesters.find(s => s.id === selectedSemesterId)
+      const mapelNama = uniqueMapels.find(m => m.id === selectedMapelId)?.nama || 'Mapel'
+      const sekolah = 'SMP BUDI MULIA'
+      const tahunAjaran = activeTa?.nama || ''
+      
+      const wb = new ExcelJS.Workbook();
+      wb.creator = session?.user?.user_metadata?.full_name || 'Guru';
+      wb.created = new Date();
+
+      for (const kelas of selectedExportClasses) {
+        // Fetch specific class data
+        const { data: studentsData } = await supabase.from('siswa_lengkap').select('nisn, nama_lengkap, kelas').eq('kelas', kelas).eq('tahun_ajaran_id', activeTa.id).order('nama_lengkap', { ascending: true })
+        const classStudents = studentsData || []
+        
+        const classKomp = komponen.filter(k => !k.target_kelas || k.target_kelas.length === 0 || k.target_kelas.some(c => c.replace(/\D/g, '') === kelas.replace(/\D/g, '')))
+        
+        let classNilaiData = {}
+        const kompIds = classKomp.map(k => k.id)
+        const nisnList = classStudents.map(s => String(s.nisn))
+        if (kompIds.length > 0 && nisnList.length > 0) {
+           const { data: nData } = await supabase.from('nilai_siswa').select('*').in('komponen_id', kompIds).in('siswa_nisn', nisnList)
+           if (nData) {
+              nData.forEach(n => {
+                 if (!classNilaiData[n.komponen_id]) classNilaiData[n.komponen_id] = {}
+                 classNilaiData[n.komponen_id][n.siswa_nisn] = n.nilai
+              })
+           }
+        }
+        
+        await generateClassSheet(kelas, classStudents, classKomp, classNilaiData, wb);
+      }
+
+      const buffer = await wb.xlsx.writeBuffer()
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const clsName = selectedExportClasses.length > 1 ? 'MultiKelas' : selectedExportClasses[0];
+      a.download = `Nilai_${mapelNama}_${clsName}_Sem${sem?.nomor || '-'}.xlsx`
+      a.click()
+      window.URL.revokeObjectURL(url)
+
+      
+
+      setIsExporting(false)
     } catch (err) {
-      console.error(err)
-      alert('Gagal mendownload excel: ' + err.message)
+      console.error(err);
+      setIsExporting(false)
     }
   }
 
@@ -655,42 +1115,181 @@ export default function NilaiGuruSection({ session, activeTa }) {
     try {
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-      if (!raw || raw.length < 2) { setUploadResult({ error: 'File kosong.' }); setUploadProgress(null); return }
-      let headerIdx = (raw[1] && String(raw[0][0]||'').trim().toUpperCase()==='NISN' && String(raw[1][0]||'').trim()==='') ? 1 : 0
-      const tpRow = raw[headerIdx].map(h => String(h).trim())
-      const nisnIdx = raw[0].findIndex(h => String(h).trim().toUpperCase() === 'NISN')
-      if (nisnIdx === -1) { setUploadResult({ error: 'Kolom NISN tidak ditemukan.' }); setUploadProgress(null); return }
-      const komponenCols = classKomponen.map(k => ({ komponen: k, colIdx: tpRow.findIndex(h => h === k.nama) })).filter(c => c.colIdx !== -1)
-      if (komponenCols.length === 0) { setUploadResult({ error: 'Tidak ada TP yang cocok.' }); setUploadProgress(null); return }
-      const sMap = Object.fromEntries(students.map(s => [String(s.nisn).trim(), s]))
+      
       let success = 0, failed = 0, skipped = 0
       const upserts = []
-      for (let i = headerIdx + 1; i < raw.length; i++) {
-        const row = raw[i]; const nisn = String(row[nisnIdx]||'').trim()
-        if (!nisn) continue
-        if (!sMap[nisn]) { skipped++; continue }
-        komponenCols.forEach(({ komponen: k, colIdx }) => {
-          const rawVal = row[colIdx]; const val = rawVal === '' ? null : Number(rawVal)
-          if (rawVal !== '' && isNaN(val)) { failed++; return }
-          upserts.push({ komponen_id: k.id, siswa_nisn: nisn, nilai: val, diinput_oleh: session.id, updated_at: new Date().toISOString() })
-        })
+
+      // If it's a single sheet (old format) or the sheet name doesn't match our classes, we process it against activeTabKelas.
+      // We will loop through all sheets.
+      for (const sheetName of wb.SheetNames) {
+          let kelas = activeTabKelas;
+          // Try to guess class from sheetName (e.g. "Nilai 8A Sem1")
+          const matchedClass = targetKelasList.find(c => sheetName.includes(c));
+          if (matchedClass) {
+              kelas = matchedClass;
+          }
+          
+          const ws = wb.Sheets[sheetName];
+          const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          if (!raw || raw.length < 2) continue;
+
+          let headerIdx = -1;
+          for (let i = 0; i < raw.length; i++) {
+            const row = raw[i];
+            if (row && row.some(cell => String(cell).trim().toUpperCase() === 'NISN')) {
+              headerIdx = i;
+              break;
+            }
+          }
+          if (headerIdx === -1) continue;
+
+          let tpRowIdx = headerIdx;
+          let maxMatchCount = 0;
+          
+          // Use sheet specific components
+          const sheetKomp = komponen.filter(k => k.semester_id === selectedSemesterId && (!k.target_kelas || k.target_kelas.length === 0 || k.target_kelas.some(c => kelas && c.replace(/\D/g, '') === kelas.replace(/\D/g, ''))));
+
+          for (let i = headerIdx; i <= Math.min(headerIdx + 5, raw.length - 1); i++) {
+            const row = raw[i];
+            if (!row) continue;
+            let matchCount = 0;
+            sheetKomp.forEach(k => {
+              if (row.some(cell => String(cell).trim() === k.nama)) matchCount++;
+            });
+            if (matchCount > maxMatchCount) {
+              maxMatchCount = matchCount;
+              tpRowIdx = i;
+            }
+          }
+          
+          const tpRow = raw[tpRowIdx].map(h => String(h).trim())
+          const nisnIdx = raw[headerIdx].findIndex(h => String(h).trim().toUpperCase() === 'NISN')
+          
+          let actualDataStart = tpRowIdx + 1;
+          for(let i = tpRowIdx + 1; i < raw.length; i++) {
+              if (raw[i] && String(raw[i][nisnIdx]).trim() !== '' && !isNaN(Number(raw[i][0]))) {
+                  actualDataStart = i;
+                  break;
+              }
+          }
+
+          const babRowIdx = tpRowIdx - 1;
+          const babRow = babRowIdx >= 0 ? raw[babRowIdx].map(h => String(h).trim()) : [];
+          const komponenCols = [];
+          let currentBab = null;
+          for (let c = 0; c < tpRow.length; c++) {
+             const babVal = babRow[c];
+             if (babVal && babVal !== '') {
+                const matchedBab = sheetKomp.find(k => babVal.includes(k.bab_nama));
+                if (matchedBab) currentBab = matchedBab.bab_nama;
+             }
+             const tpName = tpRow[c];
+             if (tpName && currentBab) {
+                const k = sheetKomp.find(x => x.bab_nama === currentBab && x.nama === tpName);
+                if (k) {
+                   komponenCols.push({ colIdx: c, komponen: k });
+                }
+             }
+          }
+
+          if (komponenCols.length === 0) continue;
+
+          // Fetch students for this sheet's class
+          const { data: sheetStudentsData } = await supabase.from('siswa_lengkap').select('nisn').eq('kelas', kelas).eq('tahun_ajaran_id', activeTa.id);
+          const sheetStudents = sheetStudentsData || [];
+          const sMap = Object.fromEntries(sheetStudents.map(s => [String(s.nisn).trim(), true]));
+
+          for (let i = actualDataStart; i < raw.length; i++) {
+            const row = raw[i]; const nisn = String(row[nisnIdx]||'').trim()
+            if (!nisn) continue
+            if (!sMap[nisn]) { skipped++; continue }
+            komponenCols.forEach(({ komponen: k, colIdx }) => {
+              const rawVal = row[colIdx]; const val = rawVal === '' ? null : Number(rawVal)
+              if (rawVal !== '' && isNaN(val)) { failed++; return }
+              upserts.push({ komponen_id: k.id, siswa_nisn: nisn, nilai: val, diinput_oleh: session.id, updated_at: new Date().toISOString() })
+            })
+          }
       }
-      setUploadProgress({ status: 'saving', total: upserts.length })
-      for (let i = 0; i < upserts.length; i += 100) {
-        const chunk = upserts.slice(i, i + 100)
+
+
+      // Deduplicate upserts to prevent PostgreSQL 500 error on ON CONFLICT DO UPDATE
+      const uniqueUpsertsMap = {};
+      for (const u of upserts) {
+          uniqueUpsertsMap[`${u.komponen_id}_${u.siswa_nisn}`] = u;
+      }
+      const finalUpserts = Object.values(uniqueUpsertsMap);
+
+      if (finalUpserts.length === 0 && failed === 0 && skipped > 0) {
+          setUploadResult({ error: `File tidak valid untuk kelas ini. ${skipped} baris dilewati karena NISN tidak cocok.` });
+          setUploadProgress(null);
+          return;
+      } else if (finalUpserts.length === 0) {
+          setUploadResult({ error: 'Tidak ada data valid yang bisa diupload.' });
+          setUploadProgress(null);
+          return;
+      }
+
+      setUploadProgress({ status: 'saving', total: finalUpserts.length })
+      for (let i = 0; i < finalUpserts.length; i += 100) {
+        const chunk = finalUpserts.slice(i, i + 100)
         const { error } = await supabase.from('nilai_siswa').upsert(chunk, { onConflict: 'komponen_id,siswa_nisn' })
-        if (error) failed += chunk.length; else success += chunk.length
-        setUploadProgress({ status: 'saving', done: i + chunk.length, total: upserts.length })
+        if (error) throw error
+        setUploadProgress(p => ({ ...p, current: Math.min(i + 100, finalUpserts.length) }))
       }
-      setUploadResult({ success, failed, skipped }); fetchNilai()
+
+      setUploadResult({ success: finalUpserts.length, failed, skipped }); fetchNilai()
     } catch (err) { setUploadResult({ error: err.message }) }
     setUploadProgress(null)
     if (uploadRef.current) uploadRef.current.value = ''
   }
 
   // ─── Computed ─────────────────────────────────────────────────────────────
+  const handleClearTP = async (e, k) => {
+    e.stopPropagation();
+    const confirmed = await requestConfirm({
+      title: `Kosongkan nilai ${k.nama}?`,
+      message: `Apakah Anda yakin ingin menghapus SEMUA nilai siswa untuk ${k.nama} pada kelas ${activeTabKelas}? Aksi ini tidak dapat dibatalkan.`,
+      confirmLabel: 'Ya, Kosongkan',
+      confirmColor: 'red',
+      icon: 'danger'
+    });
+    if (!confirmed) return;
+    
+    try {
+      const nisnList = students.map(s => String(s.nisn).trim());
+      if (nisnList.length === 0) return;
+      const { error } = await supabase.from('nilai_siswa').delete().eq('komponen_id', k.id).in('siswa_nisn', nisnList);
+      if (error) throw error;
+      fetchNilai();
+    } catch (err) {
+      alert("Gagal mengosongkan nilai: " + err.message);
+    }
+  }
+
+  const handleClearBab = async (e, babName) => {
+    e.stopPropagation();
+    const confirmed = await requestConfirm({
+      title: `Kosongkan nilai Bab ${babName}?`,
+      message: `Apakah Anda yakin ingin menghapus SEMUA nilai siswa untuk Bab ini pada kelas ${activeTabKelas}? Aksi ini tidak dapat dibatalkan.`,
+      confirmLabel: 'Ya, Kosongkan',
+      confirmColor: 'red',
+      icon: 'danger'
+    });
+    if (!confirmed) return;
+
+    try {
+      const kompIds = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === babName).map(k => k.id);
+      if (kompIds.length === 0) return;
+      const nisnList = students.map(s => String(s.nisn).trim());
+      if (nisnList.length === 0) return;
+      const { error } = await supabase.from('nilai_siswa').delete().in('komponen_id', kompIds).in('siswa_nisn', nisnList);
+      if (error) throw error;
+      fetchNilai();
+    } catch (err) {
+      alert("Gagal mengosongkan nilai BAB: " + err.message);
+    }
+  }
+
   const selectedMapelNama = uniqueMapels.find(m => m.id === selectedMapelId)?.nama || ''
   const selectedSemesterObj = semesters.find(s => s.id === selectedSemesterId)
   const contextReady = selectedMapelId && selectedSemesterId
@@ -699,6 +1298,59 @@ export default function NilaiGuruSection({ session, activeTa }) {
 
   return (
     <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-8rem)]">
+      {/* Modal Export */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-800">Export Nilai Excel</h3>
+              <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-slate-600 p-1"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+            </div>
+            <div className="p-4 bg-slate-50/50">
+              <p className="text-sm text-slate-600 mb-3">Pilih kelas yang ingin diexport:</p>
+              
+              <div className="flex items-center justify-between mb-2">
+                <button 
+                  onClick={() => setSelectedExportClasses(targetKelasList)}
+                  className="text-xs text-indigo-600 font-medium hover:text-indigo-700"
+                >Pilih Semua</button>
+                <button 
+                  onClick={() => setSelectedExportClasses([])}
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                >Kosongkan</button>
+              </div>
+
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {targetKelasList.map(kelas => (
+                  <label key={kelas} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-100 cursor-pointer border border-transparent hover:border-slate-200 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      checked={selectedExportClasses.includes(kelas)}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedExportClasses(prev => [...prev, kelas])
+                        else setSelectedExportClasses(prev => prev.filter(c => c !== kelas))
+                      }}
+                    />
+                    <span className="text-sm font-medium text-slate-700">{kelas}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 bg-white border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setShowExportModal(false)} className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Batal</button>
+              <button 
+                onClick={handleDownloadExcel} 
+                disabled={selectedExportClasses.length === 0 || isExporting}
+                className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl transition-colors flex items-center gap-2"
+              >
+                {isExporting ? 'Mengekspor...' : 'Download Excel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {ConfirmModalComponent}
       <input ref={uploadRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUploadExcel} />
       
@@ -777,7 +1429,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                 className="w-14 px-2 py-1 text-sm font-bold text-slate-800 bg-white border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
               />
             </div>
-            <button onClick={handleDownloadExcel} disabled={isExporting || targetKelasList.length === 0}
+            <button onClick={() => { setSelectedExportClasses([activeTabKelas]); setShowExportModal(true); }} disabled={isExporting || targetKelasList.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-xl transition-colors shadow-sm disabled:opacity-50">
               {isExporting ? <><div className="w-4 h-4 border-2 border-emerald-300 border-t-emerald-600 rounded-full animate-spin"/> Mengekspor...</> : <><IconDownload /> Export</>}
             </button>
@@ -796,11 +1448,11 @@ export default function NilaiGuruSection({ session, activeTa }) {
           </div>
         )}
         
-        {uploadResult && (
-          <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-sm font-bold shadow-sm shrink-0 ${false ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                {uploadResult && (
+          <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-sm font-bold shadow-sm shrink-0 ${uploadResult.error ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
             <div className="flex items-center gap-2">
-              {false ? '❌' : '✅'}
-              {false ? false : `Berhasil: ${0} | Gagal: ${0} | Dilewati: ${0}`}
+              {uploadResult.error ? '⚠️' : '✅'}
+              {uploadResult.error ? uploadResult.error : `Berhasil: ${uploadResult.success} | Gagal: ${uploadResult.failed} | Dilewati: ${uploadResult.skipped}`}
             </div>
             <button onClick={() => setUploadResult(null)} className="p-1 rounded-md hover:bg-black/5"><IconClose /></button>
           </div>
@@ -866,6 +1518,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
                           <div className="flex items-center justify-center gap-1.5">
                             {bab}
                             <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                            <button onClick={(e) => handleClearBab(e, bab)} className="p-0.5 ml-1 text-slate-400 hover:text-rose-500 hover:bg-rose-100 rounded transition-colors" title="Kosongkan semua nilai di Bab ini">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
                           </div>
                         </th>
                       )
@@ -893,6 +1548,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
                             <div className="font-bold text-slate-800 leading-tight">{k.nama}</div>
                             <button onClick={(e) => { e.stopPropagation(); handleToggleVisible(k) }} className={`p-0.5 rounded transition-colors ${k.is_nilai_visible ? 'text-indigo-400 hover:text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title={k.is_nilai_visible ? 'Sembunyikan dari siswa' : 'Tampilkan ke siswa'}>
                               <IconEye on={k.is_nilai_visible} />
+                            </button>
+                            <button onClick={(e) => handleClearTP(e, k)} className="p-0.5 rounded transition-colors text-slate-400 hover:text-rose-500 hover:bg-rose-100" title="Kosongkan semua nilai di TP ini">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
                           <div className="text-[9px] text-slate-400 font-bold bg-white border border-slate-100 rounded-md py-0.5 px-1.5 inline-block w-fit mx-auto">bot:{k.bobot}</div>
@@ -1180,15 +1838,60 @@ export default function NilaiGuruSection({ session, activeTa }) {
                 <div className="sm:w-1/3">
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Metode Hitung</label>
                   <select 
-                    value={komponen.find(k => k.bab_nama === selectedBabToManage)?.metode_hitung || 'rata_rata'} 
-                    onChange={e => handleUpdateMetodeHitung(selectedBabToManage, e.target.value)}
+                    value={manualBobotPending ? 'bobot_manual' : (komponen.find(k => k.bab_nama === selectedBabToManage)?.metode_hitung || 'rata_rata')} 
+                    onChange={e => handleUpdateMetode(selectedBabToManage, e.target.value)}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="rata_rata">Rata-rata</option>
-                    <option value="bobot">Bobot (%)</option>
+                    <option value="bobot_sama">Bobot Sama</option>
+                    <option value="bobot_manual">Atur Bobot Manual</option>
                   </select>
                 </div>
               </div>
+              
+              {(manualBobotPending || komponen.find(k => k.bab_nama === selectedBabToManage)?.metode_hitung === 'bobot_manual') && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mt-4 mb-4">
+                  <h4 className="font-bold text-amber-800 text-sm mb-3">Atur Bobot Manual (Total harus 100%)</h4>
+                  <div className="flex flex-col gap-2">
+                    {classKomponen.filter(k => k.bab_nama === selectedBabToManage).sort((a,b) => {
+                      if (a.nama.toUpperCase() === 'N. KARAKTER') return 1;
+                      if (b.nama.toUpperCase() === 'N. KARAKTER') return -1;
+                      return a.urutan - b.urutan;
+                    }).map(k => (
+                      <div key={k.id} className="flex items-center justify-between gap-4">
+                        <div className="text-xs font-semibold text-slate-700">{k.nama}</div>
+                        <div className="flex items-center gap-2">
+                          <input 
+                             type="number" min="0" max="100" step="0.1"
+                             value={manualBobotValues[k.id] ?? (k.bobot || 0)} 
+                             onChange={e => {
+                               if(!manualBobotPending) {
+                                  // Switch to pending mode if they start typing but hadn't clicked dropdown
+                                  const komp = classKomponen.filter(k => k.bab_nama === selectedBabToManage);
+                                  const vals = {};
+                                  komp.forEach(x => vals[x.id] = (x.bobot || 0));
+                                  vals[k.id] = e.target.value;
+                                  setManualBobotValues(vals);
+                                  setManualBobotPending(true);
+                               } else {
+                                  setManualBobotValues({...manualBobotValues, [k.id]: e.target.value})
+                               }
+                             }} 
+                             className="w-20 px-2 py-1 text-center border border-slate-300 rounded-lg text-sm font-mono outline-none focus:border-amber-500" 
+                          />
+                          <span className="text-xs text-slate-500">%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex justify-between items-center border-t border-amber-200 pt-3">
+                     <div className="text-xs font-bold text-amber-900">Total: {Object.values(manualBobotPending ? manualBobotValues : classKomponen.filter(k => k.bab_nama === selectedBabToManage).reduce((acc, curr) => ({...acc, [curr.id]: curr.bobot||0}), {})).reduce((sum, v) => sum + Number(v), 0)}%</div>
+                     {manualBobotPending && (
+                       <button onClick={() => handleSaveManualBobot(selectedBabToManage)} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors">Simpan Bobot</button>
+                     )}
+                  </div>
+                </div>
+              )}
               
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -1224,10 +1927,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Nama TP</label>
                         <input value={newTpNama} onChange={e => setNewTpNama(e.target.value)} className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm outline-none focus:border-indigo-500" />
                       </div>
-                      <div className="w-full sm:w-24 shrink-0">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Bobot</label>
-                        <input type="number" min="0.1" step="0.1" value={newTpBobot} onChange={e => setNewTpBobot(e.target.value)} className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm outline-none focus:border-indigo-500 font-mono" />
-                      </div>
+                      
                     </div>
                     <div className="mb-4">
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Deskripsi Rapor</label>
@@ -1311,10 +2011,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Nama TP</label>
                 <input value={editTpData.nama} onChange={e => setEditTpData({...editTpData, nama: e.target.value})} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Bobot</label>
-                <input type="number" min="0.1" step="0.1" value={editTpData.bobot} onChange={e => setEditTpData({...editTpData, bobot: e.target.value})} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-mono outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
-              </div>
+              
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Deskripsi Rapor</label>
                 <textarea value={editTpData.deskripsi} onChange={e => setEditTpData({...editTpData, deskripsi: e.target.value})} className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm min-h-[100px] resize-none outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
@@ -1354,3 +2051,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
     </div>
   )
 }
+
+// FORCE HMR 2
+
+// FORCE HMR 1782522827.4436662
