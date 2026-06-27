@@ -7,6 +7,11 @@ import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
 import NilaiGuruSection from '../components/NilaiGuruSection'
 import GuruDashboardBerita from '../components/GuruDashboardBerita'
+import AdminTataTertibSection from '../components/AdminTataTertibSection'
+import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
+import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection'
+import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
+import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
 import bcrypt from 'bcryptjs'
 
 const IconDashboard = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
@@ -524,7 +529,7 @@ export default function DashboardGuru() {
 
   useEffect(() => {
     if (loading) return
-    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password']
+    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 'pengaturan_poin']
     if (!staticMenus.includes(activeMenu)) {
       const exists = menuTypes.find(t => t.id === activeMenu)
       if (!exists) {
@@ -849,23 +854,83 @@ export default function DashboardGuru() {
                 </>
               )}
 
-              {(fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman')) && menuTypes.map(t => (
-                <button key={t.id} onClick={() => { setActiveMenu(t.id); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                  }`}>
-                  <IconFile />
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
-              </button>
-              ))}
-            </>
-          )}
+          {(fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman')) && menuTypes.map(t => (
+            <button key={t.id} onClick={() => { setActiveMenu(t.id); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <IconFile />
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
+          </button>
+          ))}
+        </>
+      )}
 
+      {(fitur.has('lihat_tata_tertib') || fitur.has('lihat_katalog_poin') || fitur.has('lihat_tahap_pembinaan') || fitur.has('catat_poin') || fitur.has('kelola_poin_siswa')) && (
+        <>
           {!sidebarCollapsed && (
             <div className="pt-4 pb-2 px-3 animate-fade-in">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PENGATURAN</p>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">SISTEM POIN</p>
             </div>
           )}
+
+          {fitur.has('lihat_tata_tertib') && (
+            <button onClick={() => { setActiveMenu('tata_tertib'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === 'tata_tertib' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Tata Tertib</span>}
+            </button>
+          )}
+
+          {fitur.has('lihat_katalog_poin') && (
+            <button onClick={() => { setActiveMenu('katalog_poin'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === 'katalog_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Katalog Poin</span>}
+            </button>
+          )}
+
+          {fitur.has('lihat_tahap_pembinaan') && (
+            <button onClick={() => { setActiveMenu('tahap_pembinaan'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === 'tahap_pembinaan' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Tahap Pembinaan</span>}
+            </button>
+          )}
+
+          {fitur.has('catat_poin') && (
+            <button onClick={() => { setActiveMenu('catat_poin'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === 'catat_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Catat Poin</span>}
+            </button>
+          )}
+
+          {fitur.has('kelola_poin_siswa') && (
+            <button onClick={() => { setActiveMenu('pengaturan_poin'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeMenu === 'pengaturan_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+              }`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Poin</span>}
+            </button>
+          )}
+        </>
+      )}
+
+      {!sidebarCollapsed && (
+        <div className="pt-4 pb-2 px-3 animate-fade-in">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PENGATURAN</p>
+        </div>
+      )}
           <button onClick={() => { setActiveMenu('profil'); setSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               activeMenu === 'profil' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
@@ -1162,6 +1227,26 @@ export default function DashboardGuru() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {activeMenu === 'tata_tertib' && fitur.has('lihat_tata_tertib') && (
+              <AdminTataTertibSection readOnly={true} />
+            )}
+
+            {activeMenu === 'katalog_poin' && fitur.has('lihat_katalog_poin') && (
+              <AdminKatalogPoinSection readOnly={true} />
+            )}
+
+            {activeMenu === 'tahap_pembinaan' && fitur.has('lihat_tahap_pembinaan') && (
+              <AdminTahapPembinaanSection readOnly={true} />
+            )}
+
+            {activeMenu === 'catat_poin' && fitur.has('catat_poin') && (
+              <AdminCatatPoinSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'pengaturan_poin' && fitur.has('kelola_poin_siswa') && (
+              <AdminPengaturanPoinSection activeTa={activeTa} />
             )}
 
 

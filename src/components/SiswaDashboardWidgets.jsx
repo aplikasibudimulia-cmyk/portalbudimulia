@@ -4,6 +4,14 @@ import { supabase } from '../supabaseClient'
 // Constants
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha' }
 
+const getPoinMeta = (p, max = 100) => {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (p / max) * 100)) : 0
+  if (p > 75) return { bar: 'from-emerald-400 to-emerald-600', badge: 'bg-emerald-100 text-emerald-700 border-emerald-300', label: 'Baik', emoji: '🟢' }
+  if (p > 50) return { bar: 'from-yellow-400 to-yellow-600', badge: 'bg-yellow-100 text-yellow-700 border-yellow-300', label: 'Perlu Perhatian', emoji: '🟡' }
+  if (p > 25) return { bar: 'from-orange-400 to-orange-600', badge: 'bg-orange-100 text-orange-700 border-orange-300', label: 'Waspada', emoji: '🟠' }
+  return { bar: 'from-red-400 to-red-600', badge: 'bg-red-100 text-red-700 border-red-300', label: 'Kritis', emoji: '🔴' }
+}
+
 export default function SiswaDashboardWidgets({ studentData, menuTypes, onNavigate }) {
   const [presensiHariIni, setPresensiHariIni] = useState(null)
   const [rekapBulan, setRekapBulan] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
@@ -12,6 +20,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   const [berita, setBerita] = useState([])
   const [motivasi, setMotivasi] = useState('')
   const [countdown, setCountdown] = useState(null)
+  const [poinData, setPoinData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const MOTIVASI_LIST = [
@@ -91,10 +100,13 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         .limit(3)
         
       // 5. Fetch Settings (Countdown)
-      const reqSettings = supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date'])
+      const reqSettings = supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa'])
 
-      const [resHariIni, resRekap, resNilai, resBerita, resSettings] = await Promise.all([
-        reqPresensiHariIni, reqRekapBulan, reqNilai, reqBerita, reqSettings
+      // 6. Fetch Poin
+      const reqPoin = supabase.from('student_points').select('total_poin, poin_default').eq('nisn', studentData.nisn).eq('tahun_ajaran_id', studentData.tahun_ajaran_id).order('semester', { ascending: false }).limit(1).maybeSingle()
+
+      const [resHariIni, resRekap, resNilai, resBerita, resSettings, resPoin] = await Promise.all([
+        reqPresensiHariIni, reqRekapBulan, reqNilai, reqBerita, reqSettings, reqPoin
       ])
 
       // Set Presensi Hari ini
@@ -125,10 +137,14 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         setBerita(applicableBerita)
       }
 
-      // Set Countdown
+      // Set Countdown & Default Poin
+      let defaultPoinSiswa = 100
       if (resSettings.data) {
         const labelStr = resSettings.data.find(s => s.setting_key === 'countdown_label')?.setting_value
         const dateStr = resSettings.data.find(s => s.setting_key === 'countdown_date')?.setting_value
+        const poinStr = resSettings.data.find(s => s.setting_key === 'poin_default_siswa')?.setting_value
+        if (poinStr) defaultPoinSiswa = parseInt(poinStr)
+
         if (labelStr && dateStr) {
           const targetDate = new Date(dateStr)
           if (targetDate >= today) {
@@ -138,6 +154,12 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
           }
         }
       }
+
+      // Set Poin Data
+      const currentPoin = resPoin.data?.total_poin ?? defaultPoinSiswa
+      const maxPoin = resPoin.data?.poin_default ?? defaultPoinSiswa
+      setPoinData({ current: currentPoin, max: maxPoin })
+      
       
     } catch (err) {
       console.error("Error fetching widgets:", err)
@@ -249,6 +271,38 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
           </div>
           <p className="text-xs font-bold text-slate-500 text-right">Tingkat Kehadiran: <span className="text-slate-700">{persentaseHadir}%</span></p>
         </div>
+
+        {/* WIDGET 2.5: Poin Saya */}
+        {poinData && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('POIN')}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Poin Siswa
+              </h3>
+              <button onClick={() => onNavigate('POIN')} className="text-xs font-bold text-indigo-500 hover:text-indigo-600">Detail &rarr;</button>
+            </div>
+            
+            <div className="flex items-center gap-6">
+              <div className="flex-1">
+                <div className="flex items-end gap-2 mb-2">
+                  <span className="text-4xl font-black text-slate-800 leading-none">{poinData.current}</span>
+                  <span className="text-sm font-bold text-slate-400 mb-1">/ {poinData.max}</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-2 mb-2 overflow-hidden">
+                  <div className={`h-2 rounded-full bg-gradient-to-r ${getPoinMeta(poinData.current, poinData.max).bar}`} style={{ width: `${Math.max(0, Math.min(100, (poinData.current / poinData.max) * 100))}%` }}></div>
+                </div>
+                <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-bold ${getPoinMeta(poinData.current, poinData.max).badge}`}>
+                  {getPoinMeta(poinData.current, poinData.max).emoji} {getPoinMeta(poinData.current, poinData.max).label}
+                </div>
+              </div>
+              
+              <div className="w-16 h-16 shrink-0 bg-slate-50 rounded-2xl flex items-center justify-center border border-slate-100 shadow-inner">
+                <span className="text-3xl">{getPoinMeta(poinData.current, poinData.max).emoji}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* WIDGET 3: Nilai Terbaru */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">

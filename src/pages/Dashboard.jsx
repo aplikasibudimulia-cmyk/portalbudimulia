@@ -7,6 +7,7 @@ import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
 import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
+import SiswaPoinSection from '../components/SiswaPoinSection'
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -521,6 +522,14 @@ function Dashboard() {
                 <svg className={`w-6 h-6 shrink-0 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Saya</span>}
               </button>
+              <button 
+                onClick={() => { setSelectedType('POIN'); setSidebarOpen(false) }}
+                title="Poin Siswa"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'POIN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'POIN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Poin Siswa</span>}
+              </button>
 
             </div>
           </div>
@@ -604,6 +613,8 @@ function Dashboard() {
               <SiswaNilaiSection studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
               <SiswaPresensiSection studentData={studentData} />
+            ) : selectedType === 'POIN' ? (
+              <SiswaPoinSection siswaNisn={studentData?.nisn} activeTa={{ id: studentData?.tahun_ajaran_id }} />
             ) : selectedType === 'PROFIL' ? (
               <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
             ) : selectedType ? (

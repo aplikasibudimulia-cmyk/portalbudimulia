@@ -8,7 +8,13 @@ const FITUR_LIST = [
   { id: 'ubah_data_siswa', label: 'Ubah Data Siswa', desc: 'Mengedit data siswa' },
   { id: 'upload_csv', label: 'Upload CSV', desc: 'Upload CSV data siswa' },
   { id: 'upload_foto', label: 'Upload Foto', desc: 'Upload foto siswa secara massal' },
-  { id: 'kelola_pengumuman', label: 'Kelola Pengumuman', desc: 'Mengelola jenis pengumuman & toggle akses' }
+  { id: 'kelola_pengumuman', label: 'Kelola Pengumuman', desc: 'Mengelola jenis pengumuman & toggle akses' },
+  // === SISTEM POIN SISWA ===
+  { id: 'lihat_tata_tertib', label: 'Lihat Tata Tertib', desc: 'Melihat daftar pasal tata tertib sekolah' },
+  { id: 'lihat_katalog_poin', label: 'Lihat Katalog Poin', desc: 'Melihat katalog poin pelanggaran & prestasi' },
+  { id: 'lihat_tahap_pembinaan', label: 'Lihat Tahap Pembinaan', desc: 'Melihat daftar tahap pembinaan siswa' },
+  { id: 'catat_poin', label: 'Catat Poin Siswa', desc: 'Input poin pelanggaran/prestasi ke siswa' },
+  { id: 'kelola_poin_siswa', label: 'Kelola Pengaturan Poin', desc: 'Set poin default, reset poin, lihat semua poin siswa' },
 ]
 
 export default function AdminRoleSection() {
