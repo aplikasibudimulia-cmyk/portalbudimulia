@@ -1795,16 +1795,16 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             <div className="absolute inset-0 flex items-center justify-center bg-white z-20 text-slate-400">Memuat siswa...</div>
           ) : (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              <table className="w-max text-xs whitespace-nowrap">
+              <table className="w-full min-w-max text-xs whitespace-nowrap">
                 <thead className="sticky top-0 z-30 bg-slate-50 shadow-sm">
                   <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
-                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40 }}>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top" rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 20, minWidth: 40, maxWidth: 40, width: 40 }}>
                       <div className="pt-4 flex items-start justify-center h-full">No</div>
                     </th>
-                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-nama-col" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-nama-col" rowSpan={2} style={{ position: "sticky", top: 0, left: 40, zIndex: 20, minWidth: maxNamaWidth, maxWidth: maxNamaWidth, width: maxNamaWidth }}>
                       <div className="pt-4 flex items-start justify-center h-full">Nama Siswa</div>
                     </th>
-                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-unsticky" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90 }}>
+                    <th className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top mobile-unsticky" rowSpan={2} style={{ position: "sticky", top: 0, left: 40 + maxNamaWidth, zIndex: 20, minWidth: 90, maxWidth: 90, width: 90 }}>
                       <div className="pt-4 flex items-start justify-center h-full">NISN</div>
                     </th>
                     {uniqueBabsClass.map((bab, bIdx) => {
@@ -1877,7 +1877,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                       return a.urutan - b.urutan;
                     }).map(k => (
                         <th key={k.id} 
-                          className={`text-center px-2 py-2 w-28 min-w-[110px] max-w-[130px] whitespace-normal break-words border-r border-slate-200 font-bold align-top ${!k.is_nilai_visible ? 'opacity-50' : ''} cursor-pointer transition-colors ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`} 
+                          className={`text-center px-2 py-2 min-w-[110px] whitespace-normal break-words border-r border-slate-200 font-bold align-top ${!k.is_nilai_visible ? 'opacity-50' : ''} cursor-pointer transition-colors ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`} 
                           title={k.deskripsi ? "Klik untuk kelola TP" : "Deskripsi belum diisi! Klik untuk mengisi."}
                           onClick={(e) => {
                               if(e.target.closest('button')) return;
@@ -1912,11 +1912,11 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     
                     return (
                       <tr key={s.nisn} className={`hover:bg-slate-200 transition-colors group ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"}`}>
-                        <td className={`text-center px-2 py-2.5 text-slate-400 border-r border-slate-100 font-medium ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 0, zIndex: 10, minWidth: 40, maxWidth: 40 }}>{idx + 1}</td>
-                        <td className={`px-4 py-2.5 font-bold text-slate-800 text-[14px] leading-none border-r border-slate-100 mobile-nama-col ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth }}>
+                        <td className={`text-center px-2 py-2.5 text-slate-400 border-r border-slate-100 font-medium ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 0, zIndex: 10, minWidth: 40, maxWidth: 40, width: 40 }}>{idx + 1}</td>
+                        <td className={`px-4 py-2.5 font-bold text-slate-800 text-[14px] leading-none border-r border-slate-100 mobile-nama-col ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40, zIndex: 10, minWidth: maxNamaWidth, maxWidth: maxNamaWidth, width: maxNamaWidth }}>
                           <div className="truncate w-full h-full" title={s.nama_lengkap}>{s.nama_lengkap}</div>
                         </td>
-                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 mobile-unsticky ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90 }}>{s.nisn}</td>
+                        <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 mobile-unsticky ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90, width: 90 }}>{s.nisn}</td>
                         {orderedKomponen.map(k => {
                           const cellKey = `${k.id}-${s.nisn}`
                           const val = nilaiData[k.id]?.[s.nisn]
