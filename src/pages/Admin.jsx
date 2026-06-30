@@ -128,6 +128,8 @@ const Toggle = ({ value, onChange, disabled, colorOn="bg-indigo-500" }) => (
 function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete, onRefresh }) {
   const clientId = useRef(Math.random().toString(36).substring(7)).current;
   const broadcastChannelRef = useRef(null)
+  const manualUploadRef = useRef(null)
+  const [targetUploadNisn, setTargetUploadNisn] = useState(null)
   const [showVerificationModal, setShowVerificationModal] = useState(false)
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
@@ -420,6 +422,66 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
     ]
     XLSX.utils.book_append_sheet(wb, ws, 'Template PDF')
     XLSX.writeFile(wb, `Template_Penamaan_PDF_${type.nama.replace(/\s+/g, '_')}.xlsx`)
+  }
+
+  
+  const handleManualUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !targetUploadNisn) return
+    if (!CLOUD_NAME || CLOUD_NAME === 'your_cloud_name') {
+      alert('Konfigurasi Cloudinary belum diatur di .env'); return
+    }
+    
+    const nisn = targetUploadNisn
+    const kode = actualKodes[nisn] || nisn
+    const results = { success: [], failed: [], skipped: [] }
+    
+    globalUploadManager.startUpload()
+    globalUploadManager.updateProgress(1, 1, file.name)
+    
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('upload_preset', UPLOAD_PRESET)
+    const sanitizeName = (str) => (str || 'Lainnya').replace(/\s+/g, '_')
+    formData.append('public_id', `${kode}${type.kode_jenis}`)
+    formData.append('folder', `pengumuman/${sanitizeName(type.nama)}`)
+    
+    try {
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`, {
+        method: 'POST',
+        body: formData
+      })
+      const data = await res.json()
+      
+      if (data.secure_url) {
+        const { error } = await supabase.from('berkas_pengumuman').upsert({
+          kode_siswa: kode,
+          kode_jenis: type.kode_jenis,
+          file_name: file.name,
+          file_url: data.secure_url,
+          is_accessible: true
+        }, { onConflict: 'kode_siswa,kode_jenis' })
+        
+        if (error) {
+          console.error(error)
+          results.failed.push(file.name)
+        } else {
+          results.success.push(file.name)
+        }
+      } else {
+        console.error(data)
+        results.failed.push(file.name)
+      }
+    } catch (err) {
+      console.error(err)
+      results.failed.push(file.name)
+    }
+    
+    globalUploadManager.finishUpload(results)
+    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kode, senderId: clientId } }) }
+    fetchFiles()
+    if (manualUploadRef.current) manualUploadRef.current.value = ''
+    setTargetUploadNisn(null)
   }
 
   const handleDownload = async (nisn, nama) => {
@@ -908,6 +970,15 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
                         </td>
                         <td className="text-center px-2 py-2 sticky right-0 border-l border-slate-100 shadow-[-2px_0_8px_rgba(0,0,0,0.04)] bg-white group-hover:bg-slate-50/80 transition-colors">
                           <div className="flex items-center justify-center gap-1">
+                            
+                            {!hasFile && (
+                              <button onClick={() => { setTargetUploadNisn(s.nisn); manualUploadRef.current?.click() }} title="Upload Manual"
+                                className="p-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 transition-colors">
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                              </button>
+                            )}
                             {hasFile && (
                               <>
                                 <button onClick={() => handleDownload(s.nisn, s.nama_lengkap)} title="Unduh"

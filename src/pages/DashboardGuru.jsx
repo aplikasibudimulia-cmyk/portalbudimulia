@@ -14,6 +14,9 @@ import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
 import bcrypt from 'bcryptjs'
 
+const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+
 const IconDashboard = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
 const IconUsers = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
 const IconKey = () => <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
@@ -56,6 +59,8 @@ const StudentAvatar = ({ student, fotos, className }) => {
 function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const clientId = useRef(Math.random().toString(36).substring(7)).current;
   const broadcastChannelRef = useRef(null)
+  const manualUploadRef = useRef(null)
+  const [targetUploadNisn, setTargetUploadNisn] = useState(null)
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
   const [fileNames, setFileNames] = useState({})
