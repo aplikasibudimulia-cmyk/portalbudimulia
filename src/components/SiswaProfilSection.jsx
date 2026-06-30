@@ -51,7 +51,7 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
       if (menuTypes && menuTypes.length > 0) {
         const { data: berkas } = await supabase.from('berkas_pengumuman').select('*').eq('kode_siswa', studentData.kode)
         const status = menuTypes.map(type => {
-          const b = berkas?.find(x => x.kode_jenis === type.kode_jenis)
+          const b = berkas?.find(x => x.kode_jenis === (type.dokumen_kode_jenis || type.kode_jenis))
           const hasFile = b?.file_url && b.file_url !== '-'
           let accessible = hasFile
           if (accessible && type.persyaratan && type.persyaratan.length > 0) {

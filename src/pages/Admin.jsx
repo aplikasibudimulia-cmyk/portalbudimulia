@@ -21,6 +21,7 @@ import CollapsibleSection from '../components/CollapsibleSection'
 import AdminTataTertibSection from '../components/AdminTataTertibSection'
 import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
 import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection'
+import AdminKumpulanDokumenSection from '../components/AdminKumpulanDokumenSection'
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
 import { logActivity } from '../utils/logger'
@@ -124,7 +125,9 @@ const Toggle = ({ value, onChange, disabled, colorOn="bg-indigo-500" }) => (
   </div>
 )
 
-function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, activeTa, onDelete, onRefresh }) {
+function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete, onRefresh }) {
+  const clientId = useRef(Math.random().toString(36).substring(7)).current;
+  const broadcastChannelRef = useRef(null)
   const [showVerificationModal, setShowVerificationModal] = useState(false)
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
@@ -139,11 +142,13 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   const [activeTab, setActiveTab] = useState('dokumen')
   const [selectedPreview, setSelectedPreview] = useState(null)
   const [toggling, setToggling] = useState(null)
+  const [actualKodes, setActualKodes] = useState({})
   const [activityLogs, setActivityLogs] = useState([])
   const inputRef = useRef(null)
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
   const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
   const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+      const uniqueClasses = [...new Set(students.map(s => s.kelas).filter(Boolean))].sort()
   const uniqueStudentCount = new Set(students.map(s => s.nisn)).size
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
@@ -165,8 +170,9 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       )
       .subscribe()
     // Listener untuk sync realtime antar perangkat admin/guru
-    const broadcastChannel = supabase.channel('dashboard-updates-all')
-      .on('broadcast', { event: 'berkas_updated' }, () => {
+    broadcastChannelRef.current = supabase.channel('dashboard-updates-all')
+      .on('broadcast', { event: 'berkas_updated' }, (payload) => {
+        if (payload.payload && payload.payload.senderId === clientId) return;
         console.log('[REALTIME SYNC] Berkas updated by other user, refetching...')
         fetchFiles()
       })
@@ -174,7 +180,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
     return () => {
       supabase.removeChannel(channel)
-      supabase.removeChannel(broadcastChannel)
+      if (broadcastChannelRef.current) supabase.removeChannel(broadcastChannelRef.current)
     }
   }, [type.id])
 
@@ -189,17 +195,63 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   const fetchFiles = async () => {
     const { data } = await supabase.from('berkas_pengumuman')
       .select('kode_siswa, file_name, file_url, is_accessible, persyaratan_terpenuhi')
-      .eq('kode_jenis', type.kode_jenis)
+      .eq('kode_jenis', type.dokumen_kode_jenis || type.kode_jenis)
     
-    setFiles(new Set(data?.filter(f => f.file_url && f.file_url !== '-').map(f => f.kode_siswa) ?? []))
-    setFileUrls(data?.reduce((acc, f) => (f.file_url && f.file_url !== '-') ? {...acc, [f.kode_siswa]: f.file_url} : acc, {}) ?? {})
-    setFileNames(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.file_name}), {}) ?? {})
-    setFileAccess(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.is_accessible}), {}) ?? {})
-    setFileReqs(data?.reduce((acc, f) => ({...acc, [f.kode_siswa]: f.persyaratan_terpenuhi || {}}), {}) ?? {})
+    if (!data || data.length === 0) {
+      setFiles(new Set()); setFileUrls({}); setFileNames({}); setFileAccess({}); setFileReqs({}); setActualKodes({});
+      return;
+    }
+    
+    const kodes = data.map(d => d.kode_siswa);
+    
+    // Fetch mapping by kode AND by nisn (since we don't know which one kode_siswa is)
+    const { data: enrDataKode } = await supabase.from('enrollment').select('kode, nisn').in('kode', kodes);
+    const { data: enrDataNisn } = await supabase.from('enrollment').select('kode, nisn').in('nisn', kodes);
+    const enrData = [...(enrDataKode || []), ...(enrDataNisn || [])];
+    
+    // Map to find nisn from kode, and kode from nisn
+    const kodeToNisn = new Map(enrData.map(e => [e.kode, e.nisn]));
+    const nisnToKode = new Map(enrData.map(e => [e.nisn, e.kode]));
+    
+    const filesSet = new Set();
+    const urls = {};
+    const names = {};
+    const access = {};
+    const reqs = {};
+    const actKodes = {};
+    
+    data.forEach(f => {
+      // f.kode_siswa could be either 'kode' (enrollment) or 'nisn'
+      const nisn = kodeToNisn.get(f.kode_siswa) || f.kode_siswa;
+      const kode = nisnToKode.get(nisn) || f.kode_siswa; // try to get kode
+      
+      if (f.file_url && f.file_url !== '-') {
+        filesSet.add(nisn);
+        filesSet.add(kode);
+        urls[nisn] = f.file_url;
+        urls[kode] = f.file_url;
+      }
+      names[nisn] = f.file_name;
+      names[kode] = f.file_name;
+      access[nisn] = f.is_accessible;
+      access[kode] = f.is_accessible;
+      reqs[nisn] = f.persyaratan_terpenuhi || {};
+      reqs[kode] = f.persyaratan_terpenuhi || {};
+      actKodes[nisn] = f.kode_siswa;
+      actKodes[kode] = f.kode_siswa;
+    });
+    
+    setFiles(filesSet);
+    setFileUrls(urls);
+    setFileNames(names);
+    setFileAccess(access);
+    setFileReqs(reqs);
+    setActualKodes(actKodes);
   }
 
-  const handleToggleReq = async (kode, reqId) => {
-    const currentReqs = fileReqs[kode] || {}
+  const handleToggleReq = async (nisn, reqId) => {
+      const kode = actualKodes[nisn] || nisn;
+    const currentReqs = fileReqs[nisn] || {}
     const newStatus = !currentReqs[reqId]
     const updatedReqs = { ...currentReqs, [reqId]: newStatus }
     
@@ -207,23 +259,20 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     
     const { error: upsertErr } = await supabase.from('berkas_pengumuman').upsert({
       kode_siswa: kode,
-      kode_jenis: type.kode_jenis,
+      kode_jenis: type.dokumen_kode_jenis || type.kode_jenis,
       persyaratan_terpenuhi: updatedReqs,
-      file_name: fileNames[kode] || '-',
-      file_url: fileUrls[kode] || '-'
+      file_name: fileNames[nisn] || '-',
+        file_url: fileUrls[nisn] || '-'
     }, { onConflict: 'kode_siswa,kode_jenis' })
     
     if (upsertErr) {
       alert('Gagal: ' + upsertErr.message)
     } else {
-      setFileReqs(prev => ({ ...prev, [kode]: updatedReqs }))
-      supabase.channel('dashboard-updates-all').send({
-        type: 'broadcast',
-        event: 'berkas_updated',
-        payload: { kode_siswa: kode }
-      })
+      setFileReqs(prev => ({ ...prev, [kode]: updatedReqs, [nisn]: updatedReqs }))
+      
     }
     
+    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kode || 'all', senderId: clientId } }) }
     setToggling(null)
   }
 
@@ -236,18 +285,19 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       icon: 'warning',
     })
     if (!confirmed) return
-    const codes = filtered.map(s => s.kode).filter(Boolean)
-    if (codes.length === 0) return
+    const nisns = filtered.map(s => s.nisn).filter(Boolean)
+    if (nisns.length === 0) return
     setToggling(`mass_req_${reqId}`)
     
-    const upserts = codes.map(kode => {
-      const currentReqs = fileReqs[kode] || {}
+    const upserts = nisns.map(nisn => {
+      const kode = actualKodes[nisn] || nisn;
+      const currentReqs = fileReqs[nisn] || {}
       return {
         kode_siswa: kode,
         kode_jenis: type.kode_jenis,
         persyaratan_terpenuhi: { ...currentReqs, [reqId]: targetStatus },
-        file_name: fileNames[kode] || '-',
-        file_url: fileUrls[kode] || '-'
+        file_name: fileNames[nisn] || '-',
+        file_url: fileUrls[nisn] || '-'
       }
     })
     
@@ -256,8 +306,8 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       alert('Gagal mengubah massal: ' + error.message)
     } else {
       const newFileReqs = { ...fileReqs }
-      codes.forEach(kode => {
-        newFileReqs[kode] = { ...(newFileReqs[kode] || {}), [reqId]: targetStatus }
+      nisns.forEach(nisn => {
+        newFileReqs[nisn] = { ...(newFileReqs[nisn] || {}), [reqId]: targetStatus }
       })
       setFileReqs(newFileReqs)
       supabase.channel('dashboard-updates-all').send({
@@ -295,7 +345,8 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     setToggling(null)
   }
 
-  const handleToggleFileAccess = async (kode) => {
+  const handleToggleFileAccess = async (nisn) => {
+    const kode = actualKodes[nisn] || nisn;
     const currentStatus = fileAccess[kode]
     setToggling(kode)
     const { error } = await supabase.from('berkas_pengumuman')
@@ -311,6 +362,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
         details: `${!currentStatus ? 'Membuka' : 'Menutup'} akses dokumen untuk kode siswa ${kode}.`
       })
     }
+    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kode || 'all', senderId: clientId } }) }
     setToggling(null)
   }
 
@@ -347,7 +399,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     })
 
     const dataToExport = sortedFiltered.map((s, i) => {
-      const fileName = `${s.kode}${type.kode_jenis}.pdf`
+      const fileName = `${s.nisn}_${type.kode_jenis}.pdf`
       return {
         'No': i + 1,
         'NAMA FILE PDF (WAJIB SAMA PERSIS)': fileName,
@@ -370,13 +422,15 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     XLSX.writeFile(wb, `Template_Penamaan_PDF_${type.nama.replace(/\s+/g, '_')}.xlsx`)
   }
 
-  const handleDownload = async (kode, nama) => {
-    const url = fileUrls[kode]
+  const handleDownload = async (nisn, nama) => {
+    const kode = actualKodes[nisn] || nisn;
+    const url = fileUrls[nisn] || fileUrls[kode]
     if (!url || url === '-') { alert('File tidak ditemukan untuk ' + nama); return }
     window.open(url, '_blank')
   }
 
-  const handleDeleteFile = async (kode, nama) => {
+  const handleDeleteFile = async (nisn, nama) => {
+    const kode = actualKodes[nisn] || nisn;
     const fileName = fileNames[kode] || `${kode}${type.kode_jenis}.pdf`
     const confirmed = await requestConfirm({
       title: 'Hapus File?',
@@ -438,7 +492,14 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
       
       const file = filesList[i]
       globalUploadManager.updateProgress(i + 1, filesList.length, file.name)
-      const kode = file.name.replace(/\.[^/.]+$/, '').replace(new RegExp(`${type.kode_jenis}$`, 'i'), '').trim()
+      let baseName = file.name.replace(/\.[^/.]+$/, '');
+        let kode;
+        if (baseName.includes('_')) {
+          kode = baseName.split('_')[0].trim();
+        } else {
+          kode = baseName.replace(new RegExp(`${type.dokumen_kode_jenis || type.kode_jenis}$`, 'i'), '').trim();
+        }
+        kode = kode.replace(/_$/, '');
       
       if (validKodes.size > 0 && !validKodes.has(kode)) { results.skipped.push(file.name); continue }
       
@@ -493,7 +554,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
     
     let matchReq = true
     if (type.persyaratan && type.persyaratan.length > 0 && reqFilter !== 'all') {
-      const terpenuhi = fileReqs[s.kode] || {}
+      const terpenuhi = fileReqs[s.nisn] || {}
       if (reqFilter === 'fulfilled') {
         if (!type.persyaratan.every(req => terpenuhi[req.id])) matchReq = false
       } else if (reqFilter === 'unfulfilled') {
@@ -509,7 +570,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
     let matchFile = true
     if (fileFilter !== 'all') {
-      const hasFile = !!fileUrls[s.kode]
+      const hasFile = !!fileUrls[s.nisn]
       if (fileFilter === 'has_file' && !hasFile) matchFile = false
       if (fileFilter === 'no_file' && hasFile) matchFile = false
     }
@@ -518,20 +579,20 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
   })
 
   // Stats calculations
-  const statsStudentsWithFile = students.filter(s => files.has(s.kode)).length
+  const statsStudentsWithFile = students.filter(s => files.has(s.nisn)).length
   const statsAllReqMet = type.persyaratan && type.persyaratan.length > 0
     ? students.filter(s => {
-        const terpenuhi = fileReqs[s.kode] || {}
+        const terpenuhi = fileReqs[s.nisn] || {}
         return type.persyaratan.every(req => terpenuhi[req.id])
       }).length
     : null
   const statsClassProgress = uniqueClasses.map(c => {
     const classStudents = students.filter(s => s.kelas === c)
     const total = classStudents.length
-    const withFile = classStudents.filter(s => files.has(s.kode)).length
+    const withFile = classStudents.filter(s => files.has(s.nisn)).length
     const allMet = type.persyaratan && type.persyaratan.length > 0
       ? classStudents.filter(s => {
-          const t = fileReqs[s.kode] || {}
+          const t = fileReqs[s.nisn] || {}
           return type.persyaratan.every(req => t[req.id])
         }).length
       : withFile
@@ -779,9 +840,9 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                 </thead>
                 <tbody>
                   {filtered.map((s, i) => {
-                    const hasFile = files.has(s.kode)
+                    const hasFile = files.has(s.nisn)
                     const reqs = type.persyaratan || []
-                    const terpenuhi = fileReqs[s.kode] || {}
+                    const terpenuhi = fileReqs[s.nisn] || {}
                     const allReqMet = reqs.length > 0 ? reqs.every(r => terpenuhi[r.id]) : true
                     const isComplete = hasFile && allReqMet
 
@@ -821,7 +882,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                                   className={`w-4 h-4 rounded focus:ring-0 cursor-pointer ${isChecked ? 'text-green-600' : 'text-slate-300 border-slate-300'}`}
                                   checked={isChecked}
                                   disabled={toggling === `${s.kode}_req_${req.id}`}
-                                  onChange={() => handleToggleReq(s.kode, req.id)}
+                                  onChange={() => handleToggleReq(s.nisn, req.id)}
                                 />
                               </label>
                             </td>
@@ -849,13 +910,13 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                           <div className="flex items-center justify-center gap-1">
                             {hasFile && (
                               <>
-                                <button onClick={() => handleDownload(s.kode, s.nama_lengkap)} title="Unduh"
+                                <button onClick={() => handleDownload(s.nisn, s.nama_lengkap)} title="Unduh"
                                   className="p-1 rounded bg-green-50 text-green-600 hover:bg-green-100 border border-green-200 transition-colors">
                                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                                   </svg>
                                 </button>
-                                <button onClick={() => handleDeleteFile(s.kode, s.nama_lengkap)} title="Hapus"
+                                <button onClick={() => handleDeleteFile(s.nisn, s.nama_lengkap)} title="Hapus"
                                   className="p-1 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition-colors">
                                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                     <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -884,10 +945,10 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
 
                 const hasFileReqs = type.persyaratan && type.persyaratan.length > 0
                 const grantedCount = classStudents.filter(s => {
-                  const hasFile = files.has(s.kode)
+                  const hasFile = files.has(s.nisn)
                   if (!hasFile) return false
                   if (!hasFileReqs) return true
-                  const terpenuhi = fileReqs[s.kode] || {}
+                  const terpenuhi = fileReqs[s.nisn] || {}
                   return type.persyaratan.every(r => terpenuhi[r.id])
                 }).length
 
@@ -956,10 +1017,10 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
               </div>
             </div>
             <div className="bg-slate-100 border-t border-slate-200 relative h-[60vh] min-h-[400px]">
-              {selectedPreview.kode && fileUrls[selectedPreview.kode] ? (
+              {selectedPreview && (fileUrls[selectedPreview.nisn] || (fileUrls[selectedPreview.nisn] || fileUrls[selectedPreview.kode])) ? (
                 <>
                   <div className="absolute top-4 right-4 z-10">
-                    <a href={fileUrls[selectedPreview.kode]}
+                    <a href={(fileUrls[selectedPreview.nisn] || fileUrls[selectedPreview.kode])}
                       target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-indigo-700 text-sm font-bold shadow-md border border-slate-200 transition-transform active:scale-95">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -970,7 +1031,7 @@ function AnnouncementTypeSection({ type, students, allFotos, uniqueClasses, acti
                   </div>
                   <iframe
                     key={selectedPreview.kode + type.kode_jenis}
-                    src={fileUrls[selectedPreview.kode]}
+                    src={(fileUrls[selectedPreview.nisn] || fileUrls[selectedPreview.kode])}
                     width="100%" height="100%"
                     className="w-full h-full block border-0"
                     title={`${type.nama} - ${selectedPreview.nama_lengkap}`}
@@ -1532,6 +1593,7 @@ function Admin() {
   const [students, setStudents] = useState([])
   const [fotos, setFotos] = useState([])
   const [studentsLoading, setStudentsLoading] = useState(false)
+  const [allEnrollments, setAllEnrollments] = useState([])
   const [announcement, setAnnouncement] = useState('')
   const [announcementSaving, setAnnouncementSaving] = useState(false)
   const [announcementMsg, setAnnouncementMsg] = useState(null)
@@ -1542,9 +1604,11 @@ function Admin() {
     nama: '', 
     kode_jenis: '',
     target_kelas: [],
+      dokumen_kode_jenis: null,
     show_tahun_lulus: false,
     show_nisn: true,
-    show_nipd: false
+    show_nipd: false,
+    ta_referensi_id: ''
   })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState(null)
@@ -1579,6 +1643,7 @@ function Admin() {
   const photoInputRef = useRef(null)
   const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
   const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+      const uniqueClasses = [...new Set(students.map(s => s.kelas).filter(Boolean))].sort()
 
   const [tahunAjarans, setTahunAjarans] = useState([])
   const [newTahunAjaran, setNewTahunAjaran] = useState('')
@@ -1602,6 +1667,7 @@ function Admin() {
       if (adminEmail && session.user.email !== adminEmail) { navigate('/dashboard'); return }
       setAuthLoading(false)
       fetchMenuTypes()
+    fetchKumpulanDokumen()
       fetchTahunAjarans()
       fetchStudents()
       fetchAnnouncement()
@@ -1637,6 +1703,13 @@ function Admin() {
     }
   }
 
+  
+  const [kumpulanDokumenList, setKumpulanDokumenList] = useState([])
+  const fetchKumpulanDokumen = async () => {
+    const { data } = await supabase.from('kumpulan_dokumen').select('*').order('created_at', { ascending: false })
+    if (data) setKumpulanDokumenList(data)
+  }
+
   const fetchMenuTypes = async () => {
     const { data } = await supabase.from('jenis_pengumuman').select('*').order('urutan')
     if (data) {
@@ -1649,6 +1722,10 @@ function Admin() {
     setStudentsLoading(true)
     const { data } = await supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
     if (data) setStudents(data)
+    
+    // Fetch ALL enrollments for the class target list in modals
+    const { data: enrData } = await supabase.from('enrollment').select('*, siswa_permanent(*), tahun_ajaran(nama, is_aktif)');
+    if (enrData) setAllEnrollments(enrData);
     
     const { data: fotoData } = await supabase.from('foto').select('*, tahun_ajaran:tahun_ajaran_id(nama)')
     if (fotoData) setFotos(fotoData)
@@ -2044,10 +2121,12 @@ function Admin() {
       visible: true, 
       urutan: menuTypes.length + 1,
       target_kelas: newType.target_kelas,
+        dokumen_kode_jenis: newType.dokumen_kode_jenis,
       show_tahun_lulus: newType.show_tahun_lulus,
       show_nisn: newType.show_nisn,
-      show_nipd: newType.show_nipd
-    })
+        show_nipd: newType.show_nipd,
+      ta_referensi_id: newType.ta_referensi_id || null
+      })
     setAddSaving(false)
     if (error) { setAddError(error.message); return }
     setShowAddModal(false); 
@@ -2055,6 +2134,7 @@ function Admin() {
       nama: '', 
       kode_jenis: '',
       target_kelas: [],
+      dokumen_kode_jenis: null,
       show_tahun_lulus: false,
       show_nisn: true,
       show_nipd: false
@@ -2095,11 +2175,14 @@ function Admin() {
       nama: editingType.nama,
       kode_jenis: editingType.kode_jenis,
       target_kelas: editingType.target_kelas,
+        dokumen_kode_jenis: editingType.dokumen_kode_jenis,
       show_tahun_lulus: editingType.show_tahun_lulus,
       show_nisn: editingType.show_nisn,
+      
       show_nipd: editingType.show_nipd,
-      persyaratan: editingType.persyaratan || []
-    }).eq('id', editingType.id)
+        persyaratan: editingType.persyaratan || [],
+        ta_referensi_id: editingType.ta_referensi_id || null
+      }).eq('id', editingType.id)
 
     setAddSaving(false)
     if (error) { setAddError(error.message); return }
@@ -2111,6 +2194,28 @@ function Admin() {
   const handleLogout = async () => { await supabase.auth.signOut(); navigate('/') }
 
   const activeType = menuTypes.find(t => t.id === activeMenu)
+  const getTypeStudents = (type) => {
+    if (!type) return students;
+    const targetTaId = type.ta_referensi_id || activeTa?.id;
+    if (!targetTaId) return students;
+    
+    let baseStudents = allEnrollments.filter(e => e.tahun_ajaran_id === targetTaId).map(e => ({
+      ...e.siswa_permanent,
+      nisn: e.nisn,
+      kelas: e.kelas,
+      kode: e.kode,
+      tahun_ajaran_id: e.tahun_ajaran_id,
+      tahun_ajaran: e.tahun_ajaran?.nama,
+      is_aktif: e.tahun_ajaran?.is_aktif || false
+    }));
+    
+    // Terapkan filter berdasarkan Target Kelas (jika ada)
+    if (type.target_kelas && type.target_kelas.length > 0) {
+      baseStudents = baseStudents.filter(s => type.target_kelas.includes(s.kelas));
+    }
+    
+    return baseStudents;
+  }
 
   if (authLoading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -2215,6 +2320,12 @@ function Admin() {
             <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Kelola Pengumuman</span>}
           </button>
           
+          
+          <button title="Kumpulan Dokumen" onClick={() => handleMenuNavigation('kumpulan_dokumen')}
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kumpulan_dokumen' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+            <IconFile /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Kumpulan Dokumen</span>}
+          </button>
+            
           {menuTypes.map(t => (
             <button key={t.id} onClick={() => handleMenuNavigation(t.id)}
               className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -2547,7 +2658,15 @@ function Admin() {
             </div>
           )}
 
-          {activeMenu === 'kelola_pengumuman' && (
+          
+        {activeMenu === 'kumpulan_dokumen' && (
+          <AdminKumpulanDokumenSection 
+            kumpulanDokumenList={kumpulanDokumenList} 
+            fetchKumpulanDokumen={fetchKumpulanDokumen} 
+          />
+        )}
+
+{activeMenu === 'kelola_pengumuman' && (
             <div className="animate-slide-up">
               <div className="flex items-center justify-between mb-6">
                 <div>
@@ -2645,17 +2764,48 @@ function Admin() {
                           placeholder="Misal: SKL" className="w-full px-3 py-2 border rounded-xl text-sm uppercase" />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-700 mb-2">Target Kelas</label>
-                        <div className="flex flex-col gap-2 p-3 border border-slate-200 rounded-xl bg-slate-50 max-h-32 overflow-y-auto">
-                          <label className="flex items-center gap-2 text-xs text-slate-800 font-medium">
-                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
-                              checked={newType.target_kelas.length === 0} 
-                              onChange={() => setNewType({...newType, target_kelas: []})} />
-                            Tampilkan ke Semua Kelas
-                          </label>
-                          <div className="h-px bg-slate-200 w-full my-1"></div>
-                          <div className="flex flex-wrap gap-3">
-                            {[...new Set((activeTa ? students.filter(s => s.tahun_ajaran === activeTa.nama) : students).map(s => s.kelas).filter(Boolean))].sort().map(c => (
+                          
+                            <div className="mb-4">
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Sumber File Dokumen (Opsional)</label>
+                              <select 
+                                value={editingType.dokumen_kode_jenis || ''} 
+                                onChange={e => setEditingType({ ...editingType, dokumen_kode_jenis: e.target.value || null })}
+                                className="w-full px-3 py-2 border rounded-xl text-sm bg-indigo-50"
+                              >
+                                <option value="">-- Gunakan Folder Pengumuman Ini Sendiri --</option>
+                                {kumpulanDokumenList?.map(kd => (
+                                  <option key={kd.id} value={kd.kode_jenis}>{kd.nama} ({kd.kode_jenis})</option>
+                                ))}
+                              </select>
+                              <p className="text-[10px] text-slate-500 mt-1">Jika dipilih, pengumuman ini akan meminjam file dari wadah dokumen lain.</p>
+                            </div>
+  \n<label className="block text-xs font-medium text-slate-700 mb-1">Tahun Ajaran Referensi Dokumen (Opsional)</label>
+                          <select 
+                            value={newType.ta_referensi_id || ''} 
+                            onChange={e => setNewType({ ...newType, ta_referensi_id: e.target.value || null })}
+                            className="w-full px-3 py-2 border rounded-xl text-sm mb-4"
+                          >
+                            <option value="">-- Gunakan Tahun Ajaran Aktif --</option>
+                            {tahunAjarans.map(ta => (
+                              <option key={ta.id} value={ta.id}>{ta.nama} {ta.is_aktif ? '(Aktif)' : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-2">Target Kelas</label>
+                          <div className="flex flex-col gap-2 p-3 border border-slate-200 rounded-xl bg-slate-50 max-h-32 overflow-y-auto">
+                            <label className="flex items-center gap-2 text-xs text-slate-800 font-medium">
+                              <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                                checked={newType.target_kelas.length === 0} 
+                                onChange={() => setNewType({...newType, target_kelas: []})} />
+                              Tampilkan ke Semua Kelas
+                            </label>
+                            <div className="h-px bg-slate-200 w-full my-1"></div>
+                            <div className="flex flex-wrap gap-3">
+                              {[...new Set(
+                                allEnrollments.filter(s => s.tahun_ajaran_id === (newType.ta_referensi_id || activeTa?.id))
+                                .map(s => s.kelas).filter(Boolean)
+                              )].sort().map(c => (
                               <label key={c} className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
                                 <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
                                   checked={newType.target_kelas.includes(c)}
@@ -2767,10 +2917,41 @@ function Admin() {
                       </div>
 
                       <div>
-                        <label className="block text-xs font-medium text-slate-700 mb-1">Target Kelas (Kosongkan jika semua kelas)</label>
-                        <div className="p-3 border border-slate-200 rounded-xl bg-slate-50 max-h-32 overflow-y-auto">
-                          <div className="flex flex-wrap gap-2">
-                            {[...new Set((activeTa ? students.filter(s => s.tahun_ajaran === activeTa.nama) : students).map(s => s.kelas).filter(Boolean))].sort().map(c => (
+                          
+                            <div className="mb-4">
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Sumber File Dokumen (Opsional)</label>
+                              <select 
+                                value={editingType.dokumen_kode_jenis || ''} 
+                                onChange={e => setEditingType({ ...editingType, dokumen_kode_jenis: e.target.value || null })}
+                                className="w-full px-3 py-2 border rounded-xl text-sm bg-indigo-50"
+                              >
+                                <option value="">-- Gunakan Folder Pengumuman Ini Sendiri --</option>
+                                {kumpulanDokumenList?.map(kd => (
+                                  <option key={kd.id} value={kd.kode_jenis}>{kd.nama} ({kd.kode_jenis})</option>
+                                ))}
+                              </select>
+                              <p className="text-[10px] text-slate-500 mt-1">Jika dipilih, pengumuman ini akan meminjam file dari wadah dokumen lain.</p>
+                            </div>
+  \n<label className="block text-xs font-medium text-slate-700 mb-1">Tahun Ajaran Referensi Dokumen (Opsional)</label>
+                          <select 
+                            value={editingType.ta_referensi_id || ''} 
+                            onChange={e => setEditingType({ ...editingType, ta_referensi_id: e.target.value || null })}
+                            className="w-full px-3 py-2 border rounded-xl text-sm mb-4"
+                          >
+                            <option value="">-- Gunakan Tahun Ajaran Aktif --</option>
+                            {tahunAjarans.map(ta => (
+                              <option key={ta.id} value={ta.id}>{ta.nama} {ta.is_aktif ? '(Aktif)' : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Target Kelas (Kosongkan jika semua kelas)</label>
+                          <div className="p-3 border border-slate-200 rounded-xl bg-slate-50 max-h-32 overflow-y-auto">
+                            <div className="flex flex-wrap gap-2">
+                              {[...new Set(
+                                allEnrollments.filter(s => s.tahun_ajaran_id === (editingType.ta_referensi_id || activeTa?.id))
+                                .map(s => s.kelas).filter(Boolean)
+                              )].sort().map(c => (
                               <label key={c} className="flex items-center gap-1.5 text-xs text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
                                 <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
                                   checked={(editingType.target_kelas || []).includes(c)}
@@ -2825,10 +3006,10 @@ function Admin() {
               <AnnouncementTypeSection
                 key={activeType.id}
                 type={activeType}
-                students={activeTa ? students.filter(s => s.tahun_ajaran === activeTa.nama) : students}
+                students={getTypeStudents(activeType)}
                 allFotos={fotos}
                 activeTa={activeTa}
-                uniqueClasses={[...new Set((activeTa ? students.filter(s => s.tahun_ajaran === activeTa.nama) : students).map(s => s.kelas).filter(Boolean))].sort()}
+                
                 onDelete={handleDeleteType}
                 onRefresh={fetchMenuTypes}
               />

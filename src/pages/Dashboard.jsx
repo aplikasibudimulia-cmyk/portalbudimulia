@@ -80,6 +80,11 @@ function Dashboard() {
         return
       }
       const data = JSON.parse(raw)
+      
+      // Fetch historical enrollments to check ta_referensi_id correctly
+      const { data: enrollments } = await supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn)
+      if (enrollments) data.enrollments = enrollments
+      
       setStudentData(data)
 
       const { data: types } = await supabase
@@ -90,6 +95,10 @@ function Dashboard() {
       const applicableTypes = visible.filter(t => {
         const target = t.target_kelas || []
         if (!Array.isArray(target) || target.length === 0) return true
+        if (t.ta_referensi_id && data.enrollments) {
+          const enr = data.enrollments.find(e => e.tahun_ajaran_id === t.ta_referensi_id)
+          if (enr) return target.includes(enr.kelas)
+        }
         return target.includes(data.kelas)
       })
 
@@ -188,11 +197,17 @@ function Dashboard() {
         return
       }
 
+      const allStudentKodes = [
+        ...(studentData?.enrollments?.map(e => e.kode) || []),
+        studentData?.kode,
+        studentData?.nisn
+      ].filter(Boolean);
+
       const { data: berkas } = await supabase
         .from('berkas_pengumuman')
         .select('*')
-        .eq('kode_siswa', studentData.kode)
-        .eq('kode_jenis', selectedType.kode_jenis)
+        .in('kode_siswa', allStudentKodes)
+        .eq('kode_jenis', selectedType.dokumen_kode_jenis || selectedType.kode_jenis)
         .maybeSingle()
         
       setStudentBerkas(berkas)
@@ -265,6 +280,10 @@ function Dashboard() {
       const applicableTypes = visible.filter(t => {
         const target = t.target_kelas || []
         if (!Array.isArray(target) || target.length === 0) return true
+        if (t.ta_referensi_id && studentData?.enrollments) {
+          const enr = studentData.enrollments.find(e => e.tahun_ajaran_id === t.ta_referensi_id)
+          if (enr) return target.includes(enr.kelas)
+        }
         return target.includes(studentData?.kelas)
       })
       setMenuTypes(prev => {
@@ -315,10 +334,10 @@ function Dashboard() {
         },
         (payload) => {
           console.log('[REALTIME DEBUG] Berkas update received:', payload)
-          if (payload.new && payload.new.kode_siswa === studentData.kode) {
+          if (payload.new && payload.new.kode_siswa === (studentData?.enrollments?.find(e => e.tahun_ajaran_id === (studentData.tahun_ajaran_id))?.kode || studentData.kode)) {
             console.log('[REALTIME DEBUG] Matched kode_siswa, updating state!')
             handleBerkasUpdate()
-          } else if (payload.eventType === 'DELETE' && payload.old && payload.old.kode_siswa === studentData.kode) {
+          } else if (payload.eventType === 'DELETE' && payload.old && (studentData?.enrollments?.map(e => e.kode).includes(payload.old.kode_siswa) || payload.old.kode_siswa === studentData.kode)) {
              handleBerkasUpdate()
           } else {
             // Also call handleBerkasUpdate just in case the filter was failing due to missing columns
@@ -334,9 +353,9 @@ function Dashboard() {
     const broadcastChannel = supabase.channel('dashboard-updates-all')
       .on('broadcast', { event: 'berkas_updated' }, (payload) => {
         console.log('[REALTIME DEBUG] Broadcast received:', payload)
-        if (payload.payload && payload.payload.kode_siswa === studentData.kode) {
+        if (payload.payload && (studentData?.enrollments?.map(e => e.kode).includes(payload.payload.kode_siswa) || payload.payload.kode_siswa === studentData.kode || studentData?.nisn === payload.payload.kode_siswa)) {
           handleBerkasUpdate()
-        } else if (payload.payload && payload.payload.kode_siswa === 'ALL') {
+        } else if (payload.payload && String(payload.payload.kode_siswa).toLowerCase() === 'all') {
           handleBerkasUpdate()
         }
       })

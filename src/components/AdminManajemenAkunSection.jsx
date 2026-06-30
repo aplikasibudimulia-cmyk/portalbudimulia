@@ -44,6 +44,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [showBiodataModal, setShowBiodataModal] = useState(false)
   const [biodataForm, setBiodataForm] = useState(null)
   const [studentEnrollments, setStudentEnrollments] = useState([])
+  const [guruWaliKelas, setGuruWaliKelas] = useState([])
+  const [guruMapel, setGuruMapel] = useState([])
 
   const fetchStudentEnrollments = async (nisn) => {
     const { data } = await supabase.from('enrollment').select('*, tahun_ajaran:tahun_ajaran_id(nama)').eq('nisn', nisn).order('created_at', { ascending: false })
@@ -388,6 +390,31 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           return acc
         }, {})).map(([mapel_id, kelas_list]) => ({ mapel_id, kelas_list }))
       })
+
+      // Init guruWaliKelas from ALL TAs (not just activeTa)
+      const waliKelasGrouped = (g?.guru_kelas || []).reduce((acc, gk) => {
+        const taId = gk.tahun_ajaran_id
+        const ta = tahunAjarans?.find(t => t.id === taId)
+        if (!acc[taId]) acc[taId] = { tahun_ajaran_id: taId, tahun_ajaran: ta?.nama || '', kelas_list: [] }
+        acc[taId].kelas_list.push(gk.kelas)
+        return acc
+      }, {})
+      setGuruWaliKelas(Object.values(waliKelasGrouped))
+
+      // Init guruMapel from ALL TAs (not just activeTa)
+      const mapelGrouped = (g?.guru_mapel || []).reduce((acc, gm) => {
+        const taId = gm.tahun_ajaran_id
+        const ta = tahunAjarans?.find(t => t.id === taId)
+        if (!acc[taId]) acc[taId] = { tahun_ajaran_id: taId, tahun_ajaran: ta?.nama || '', mapel_list: [] }
+        let mapelEntry = acc[taId].mapel_list.find(m => m.mapel_id === gm.mata_pelajaran_id)
+        if (!mapelEntry) {
+          mapelEntry = { mapel_id: gm.mata_pelajaran_id, kelas_list: [] }
+          acc[taId].mapel_list.push(mapelEntry)
+        }
+        if (!mapelEntry.kelas_list.includes(gm.kelas)) mapelEntry.kelas_list.push(gm.kelas)
+        return acc
+      }, {})
+      setGuruMapel(Object.values(mapelGrouped))
     }
     setShowBiodataModal(true)
   }
@@ -463,7 +490,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         
         const waliKelasRoleId = roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id
         if (waliKelasRoleId && biodataForm.role_ids.includes(waliKelasRoleId)) {
-          if (biodataForm.kelas_assigned.length === 0) {
+          const totalWaliKelas = guruWaliKelas.reduce((acc, wk) => acc + wk.kelas_list.length, 0)
+          if (totalWaliKelas === 0) {
             throw new Error("Sebagai Wali Kelas, Anda harus menugaskan minimal 1 kelas. Jika tidak jadi, silakan hapus centang role Wali Kelas atau batalkan edit.")
           }
         }
@@ -488,23 +516,28 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           await supabase.from('guru_role').insert(biodataForm.role_ids.map(rid => ({ guru_id: biodataForm.id, role_id: rid })))
         }
 
-        // Sync Classes/Mapel for Active TA
-        if (activeTa) {
-          await supabase.from('guru_kelas').delete().match({ guru_id: biodataForm.id, tahun_ajaran_id: activeTa.id })
-          if (biodataForm.kelas_assigned.length > 0) {
-            await supabase.from('guru_kelas').insert(biodataForm.kelas_assigned.map(k => ({ guru_id: biodataForm.id, kelas: k, tahun_ajaran_id: activeTa.id })))
-          }
-          
-          await supabase.from('guru_mapel').delete().match({ guru_id: biodataForm.id, tahun_ajaran_id: activeTa.id })
-          const mapelInserts = []
-          biodataForm.mapel_assigned.forEach(ma => {
-            if (!ma.mapel_id) return // Skip mapel that haven't been selected yet
-            ma.kelas_list.forEach(k => {
-              mapelInserts.push({ guru_id: biodataForm.id, mata_pelajaran_id: ma.mapel_id, kelas: k, tahun_ajaran_id: activeTa.id })
+        // Sync Wali Kelas across ALL TAs (from guruWaliKelas state)
+        await supabase.from('guru_kelas').delete().eq('guru_id', biodataForm.id)
+        const waliInserts = []
+        guruWaliKelas.forEach(wk => {
+          wk.kelas_list.forEach(k => {
+            waliInserts.push({ guru_id: biodataForm.id, kelas: k, tahun_ajaran_id: wk.tahun_ajaran_id })
+          })
+        })
+        if (waliInserts.length > 0) await supabase.from('guru_kelas').insert(waliInserts)
+
+        // Sync Mapel across ALL TAs (from guruMapel state)
+        await supabase.from('guru_mapel').delete().eq('guru_id', biodataForm.id)
+        const mapelInserts = []
+        guruMapel.forEach(gm => {
+          gm.mapel_list.forEach(ml => {
+            if (!ml.mapel_id) return
+            ml.kelas_list.forEach(k => {
+              mapelInserts.push({ guru_id: biodataForm.id, mata_pelajaran_id: ml.mapel_id, kelas: k, tahun_ajaran_id: gm.tahun_ajaran_id })
             })
           })
-          if (mapelInserts.length > 0) await supabase.from('guru_mapel').insert(mapelInserts)
-        }
+        })
+        if (mapelInserts.length > 0) await supabase.from('guru_mapel').insert(mapelInserts)
       }
 
       // 2. Save Akun Pengguna
@@ -1265,13 +1298,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
               <button onClick={() => setShowBiodataModal(false)} className="text-slate-400 hover:text-slate-600"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             
-            <form id="biodata-form" onSubmit={(e) => {
-              e.preventDefault();
-              if (biodataForm.role_ids?.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && biodataForm.kelas_assigned?.length === 0) {
-                alert("Pilih setidaknya satu kelas untuk Wali Kelas."); return;
-              }
-              handleSaveBiodata(e);
-            }} className="p-5 overflow-y-auto space-y-6 flex-1 min-h-0">
+            <form id="biodata-form" onSubmit={handleSaveBiodata} className="p-5 overflow-y-auto space-y-6 flex-1 min-h-0">
               
               {/* SECTION: BIODATA & FOTO */}
               <div className="flex flex-col md:flex-row gap-6">
@@ -1493,95 +1520,181 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                     </div>
                   </div>
 
-                  {activeTa && (
-                    <div className="space-y-4">
-                      {biodataForm.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && (
-                        <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
-                          <label className="block text-xs font-medium text-emerald-800 mb-1.5">Penugasan Wali Kelas (TA: {activeTa.nama})</label>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            {allClassesInTa.map(c => {
-                              const isTaken = takenWaliClasses.has(c) && takenWaliClasses.get(c) !== biodataForm.id
-                              return (
-                                <label key={c} className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-2xl cursor-pointer text-xs font-medium transition-colors ${isTaken ? 'opacity-50 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400' : (biodataForm.kelas_assigned.includes(c) ? 'border-emerald-500 bg-emerald-100 text-emerald-800' : 'border-emerald-200 hover:bg-emerald-100 bg-white text-emerald-700')}`}>
-                                  <input type="checkbox" className="hidden" disabled={isTaken} checked={biodataForm.kelas_assigned.includes(c)}
-                                    onChange={(e) => {
-                                      if (isTaken) return
-                                      const newKelas = e.target.checked ? [...biodataForm.kelas_assigned, c] : biodataForm.kelas_assigned.filter(k => k !== c)
-                                      setBiodataForm({...biodataForm, kelas_assigned: newKelas})
-                                    }} />
-                                  {c} {isTaken && <span className="text-[10px] text-rose-500 font-bold ml-1">(Terpakai)</span>}
-                                </label>
-                              )
-                            })}
+                                    <div className="space-y-4 mt-6 border-t border-slate-200 pt-6">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2"><svg className="w-4 h-4 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg> Penugasan Akademik Guru</h4>
+                    
+                    {biodataForm.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && (
+                      <div className="bg-emerald-50/30 p-4 rounded-xl border border-emerald-100 space-y-4">
+                        <label className="block text-xs font-bold text-emerald-800 uppercase tracking-wide">Penugasan Wali Kelas</label>
+                        
+                        {guruWaliKelas.map((wk, wkIdx) => {
+                           const classesInThisTa = getAvailableClasses(wk.tahun_ajaran_id);
+                           return (
+                             <div key={wkIdx} className="bg-white p-3 rounded-xl border border-emerald-200 shadow-sm">
+                               <div className="flex justify-between items-center mb-3">
+                                 <span className="text-xs font-bold text-slate-700">TA: {wk.tahun_ajaran}</span>
+                                 <button type="button" onClick={() => {
+                                   const newWk = [...guruWaliKelas];
+                                   newWk.splice(wkIdx, 1);
+                                   setGuruWaliKelas(newWk);
+                                 }} className="text-rose-500 hover:bg-rose-50 p-1 rounded"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                               </div>
+                               <div className="flex flex-wrap gap-2 mt-1">
+                                  {classesInThisTa.length === 0 ? <span className="text-[10px] text-slate-400 italic">Belum ada kelas di TA ini.</span> : classesInThisTa.map(c => {
+                                    return (
+                                      <label key={c} className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-2xl cursor-pointer text-xs font-medium transition-colors ${wk.kelas_list.includes(c) ? 'border-emerald-500 bg-emerald-100 text-emerald-800' : 'border-emerald-200 hover:bg-emerald-50 bg-white text-emerald-700'}`}>
+                                        <input type="checkbox" className="hidden" checked={wk.kelas_list.includes(c)}
+                                          onChange={(e) => {
+                                            const newWk = [...guruWaliKelas];
+                                            if (e.target.checked) newWk[wkIdx].kelas_list.push(c);
+                                            else newWk[wkIdx].kelas_list = newWk[wkIdx].kelas_list.filter(k => k !== c);
+                                            setGuruWaliKelas(newWk);
+                                          }} />
+                                        {c}
+                                      </label>
+                                    )
+                                  })}
+                               </div>
+                             </div>
+                           )
+                        })}
+
+                        <div className="flex gap-2 items-end mt-2">
+                          <div className="flex-1">
+                            <select 
+                              value={biodataForm.temp_ta_id || ''} 
+                              onChange={e => setBiodataForm({...biodataForm, temp_ta_id: e.target.value})}
+                              className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                            >
+                              <option value="">-- Tambah Tahun Ajaran Wali Kelas --</option>
+                              {tahunAjarans?.filter(ta => !guruWaliKelas.find(w => w.tahun_ajaran_id === ta.id)).map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                            </select>
                           </div>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              if(!biodataForm.temp_ta_id) return;
+                              const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id);
+                              setGuruWaliKelas([...guruWaliKelas, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, kelas_list: [] }]);
+                              setBiodataForm({...biodataForm, temp_ta_id: ''});
+                            }}
+                            className="bg-emerald-100 text-emerald-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-colors"
+                          >
+                            Tambah TA
+                          </button>
                         </div>
-                      )}
+                      </div>
+                    )}
+                    
+                    <div className="bg-indigo-50/30 p-4 rounded-xl border border-indigo-100 space-y-4">
+                      <label className="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Tugas Mengajar Mapel</label>
                       
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                        <div className="flex justify-between items-center mb-3">
-                          <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Tugas Mengajar Mapel</label>
-                          <button type="button" onClick={() => setBiodataForm({...biodataForm, mapel_assigned: [...biodataForm.mapel_assigned, { mapel_id: '', kelas_list: [] }]})} className="text-xs font-medium text-indigo-600 bg-indigo-100 hover:bg-indigo-200 px-3 py-1.5 rounded-2xl transition-colors flex items-center gap-1"><IconPlus className="w-3 h-3" /> Tambah Mapel</button>
-                        </div>
-                        {biodataForm.mapel_assigned.length === 0 ? (
-                          <p className="text-xs text-slate-400 italic">Belum ada penugasan mapel.</p>
-                        ) : (
-                          <div className="space-y-3">
-                            {biodataForm.mapel_assigned.map((ma, idx) => (
-                              <div key={idx} className="flex flex-col gap-2 bg-white p-3 border border-slate-200 rounded-2xl shadow-sm">
-                                <div className="flex gap-2 items-center">
-                                  <select value={ma.mapel_id} onChange={(e) => {
-                                      const newMa = [...biodataForm.mapel_assigned]; 
-                                      newMa[idx] = { ...newMa[idx], mapel_id: e.target.value }; 
-                                      setBiodataForm({...biodataForm, mapel_assigned: newMa})
-                                    }} className="flex-1 text-sm border border-slate-300 rounded-md py-1.5 px-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
-                                    <option value="">-- Pilih Mata Pelajaran --</option>
-                                    {mapels.map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
-                                  </select>
-                                  <button type="button" onClick={() => setBiodataForm({...biodataForm, mapel_assigned: biodataForm.mapel_assigned.filter((_, i) => i !== idx)})} className="p-1.5 text-red-500 hover:bg-red-50 rounded-md"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
-                                </div>
-                                
-                                <div className="w-full flex justify-between items-center mt-2 mb-1">
-                                  <span className="text-[10px] text-slate-500 font-medium uppercase">Pilih Kelas:</span>
-                                  <div className="flex gap-2">
+                      {guruMapel.map((gm, gmIdx) => {
+                         const classesInThisTa = getAvailableClasses(gm.tahun_ajaran_id);
+                         return (
+                           <div key={gmIdx} className="bg-white p-3 rounded-xl border border-indigo-200 shadow-sm">
+                             <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
+                               <span className="text-xs font-bold text-slate-700">TA: {gm.tahun_ajaran}</span>
+                               <div className="flex items-center gap-2">
+                                 <button type="button" onClick={() => {
+                                   const newGm = [...guruMapel];
+                                   newGm[gmIdx].mapel_list.push({ mapel_id: '', kelas_list: [] });
+                                   setGuruMapel(newGm);
+                                 }} className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200 font-bold">+ Mapel</button>
+                                 <button type="button" onClick={() => {
+                                   const newGm = [...guruMapel];
+                                   newGm.splice(gmIdx, 1);
+                                   setGuruMapel(newGm);
+                                 }} className="text-rose-500 hover:bg-rose-50 p-1 rounded"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                               </div>
+                             </div>
+
+                             <div className="space-y-3">
+                               {gm.mapel_list.length === 0 ? <p className="text-[10px] text-slate-400 italic">Belum ada mapel di TA ini.</p> : gm.mapel_list.map((ma, idx) => (
+                                <div key={idx} className="flex flex-col gap-2 bg-slate-50 p-2 border border-slate-200 rounded-lg">
+                                  <div className="flex gap-2 items-center">
+                                    <select value={ma.mapel_id} onChange={(e) => {
+                                        const newGm = [...guruMapel]; 
+                                        newGm[gmIdx].mapel_list[idx].mapel_id = e.target.value; 
+                                        setGuruMapel(newGm)
+                                      }} className="flex-1 text-xs border border-slate-300 rounded-md py-1.5 px-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white">
+                                      <option value="">-- Pilih Mata Pelajaran --</option>
+                                      {mapels.map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
+                                    </select>
                                     <button type="button" onClick={() => {
-                                      const newMa = [...biodataForm.mapel_assigned];
-                                      newMa[idx] = { ...newMa[idx], kelas_list: [...allClassesInTa] };
-                                      setBiodataForm({...biodataForm, mapel_assigned: newMa});
-                                    }} className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium">Pilih Semua</button>
-                                    <span className="text-[10px] text-slate-300">|</span>
-                                    <button type="button" onClick={() => {
-                                      const newMa = [...biodataForm.mapel_assigned];
-                                      newMa[idx] = { ...newMa[idx], kelas_list: [] };
-                                      setBiodataForm({...biodataForm, mapel_assigned: newMa});
-                                    }} className="text-[10px] text-slate-500 hover:text-slate-700 font-medium">Kosongkan</button>
+                                      const newGm = [...guruMapel];
+                                      newGm[gmIdx].mapel_list.splice(idx, 1);
+                                      setGuruMapel(newGm);
+                                    }} className="p-1 text-rose-500 hover:bg-rose-100 rounded-md"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                                  </div>
+                                  
+                                  <div className="w-full flex justify-between items-center mt-1 mb-1">
+                                    <span className="text-[10px] text-slate-500 font-medium">Pilih Kelas:</span>
+                                    <div className="flex gap-2">
+                                      <button type="button" onClick={() => {
+                                        const newGm = [...guruMapel];
+                                        newGm[gmIdx].mapel_list[idx].kelas_list = [...classesInThisTa];
+                                        setGuruMapel(newGm);
+                                      }} className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium">Semua</button>
+                                      <span className="text-[10px] text-slate-300">|</span>
+                                      <button type="button" onClick={() => {
+                                        const newGm = [...guruMapel];
+                                        newGm[gmIdx].mapel_list[idx].kelas_list = [];
+                                        setGuruMapel(newGm);
+                                      }} className="text-[10px] text-slate-500 hover:text-slate-700 font-medium">Kosongkan</button>
+                                    </div>
+                                  </div>
+                                  <div className="w-full flex flex-wrap gap-1.5">
+                                    {classesInThisTa.length === 0 ? <span className="text-[10px] text-slate-400 italic">Tidak ada opsi kelas.</span> : classesInThisTa.map(c => (
+                                      <label key={c} className={`px-2 py-1 border rounded cursor-pointer text-[10px] font-medium transition-colors ${ma.kelas_list.includes(c) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                                        <input type="checkbox" className="hidden" checked={ma.kelas_list.includes(c)}
+                                          onChange={(e) => {
+                                            const newGm = [...guruMapel]; 
+                                            const currentList = newGm[gmIdx].mapel_list[idx].kelas_list;
+                                            if (e.target.checked && !currentList.includes(c)) {
+                                              currentList.push(c);
+                                            } else {
+                                              newGm[gmIdx].mapel_list[idx].kelas_list = currentList.filter(k => k !== c);
+                                            }
+                                            setGuruMapel(newGm)
+                                          }} />
+                                        {c}
+                                      </label>
+                                    ))}
                                   </div>
                                 </div>
-                                <div className="w-full flex flex-wrap gap-1.5">
-                                  {allClassesInTa.map(c => (
-                                    <label key={c} className={`px-2 py-1 border rounded cursor-pointer text-xs font-medium transition-colors ${ma.kelas_list.includes(c) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-                                      <input type="checkbox" className="hidden" checked={ma.kelas_list.includes(c)}
-                                        onChange={(e) => {
-                                          const newMa = [...biodataForm.mapel_assigned]; 
-                                          const currentList = newMa[idx].kelas_list;
-                                          if (e.target.checked && !currentList.includes(c)) {
-                                            newMa[idx] = { ...newMa[idx], kelas_list: [...currentList, c] }
-                                          }
-                                          else {
-                                            newMa[idx] = { ...newMa[idx], kelas_list: currentList.filter(k => k !== c) }
-                                          }
-                                          setBiodataForm({...biodataForm, mapel_assigned: newMa})
-                                        }} />
-                                      {c}
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                               ))}
+                             </div>
+                           </div>
+                         )
+                      })}
+
+                      <div className="flex gap-2 items-end mt-2">
+                        <div className="flex-1">
+                          <select 
+                            value={biodataForm.temp_ta_id_mapel || ''} 
+                            onChange={e => setBiodataForm({...biodataForm, temp_ta_id_mapel: e.target.value})}
+                            className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                          >
+                            <option value="">-- Tambah Tahun Ajaran Mapel --</option>
+                            {tahunAjarans?.filter(ta => !guruMapel.find(m => m.tahun_ajaran_id === ta.id)).map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                          </select>
+                        </div>
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            if(!biodataForm.temp_ta_id_mapel) return;
+                            const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id_mapel);
+                            setGuruMapel([...guruMapel, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, mapel_list: [] }]);
+                            setBiodataForm({...biodataForm, temp_ta_id_mapel: ''});
+                          }}
+                          className="bg-indigo-100 text-indigo-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-indigo-200 transition-colors"
+                        >
+                          Tambah TA
+                        </button>
                       </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 

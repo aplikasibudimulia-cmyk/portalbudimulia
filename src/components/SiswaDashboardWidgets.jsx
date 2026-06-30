@@ -79,16 +79,20 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       const reqPresensiHariIni = supabase.from('presensi_harian').select('*').eq('tanggal', todayStr).eq('siswa_nisn', studentData.nisn).maybeSingle()
       
       // 2. Fetch Rekap Presensi Bulan Ini
-      const reqRekapBulan = supabase.from('presensi_harian').select('status').eq('siswa_nisn', studentData.nisn).like('tanggal', `${thisMonthPrefix}%`)
+      const startOfMonth = `${thisMonthPrefix}-01`
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+      const endOfMonth = `${thisMonthPrefix}-${String(lastDay).padStart(2, '0')}`
+      const reqRekapBulan = supabase.from('presensi_harian').select('status').eq('siswa_nisn', studentData.nisn).gte('tanggal', startOfMonth).lte('tanggal', endOfMonth)
       
       // 3. Fetch Nilai Terbaru
       const reqNilai = supabase.from('nilai_siswa')
         .select(`
           nilai,
-          nilai_komponen!inner (nama, mata_pelajaran!inner (nama))
+          nilai_komponen!inner (nama, is_nilai_visible, mata_pelajaran!inner (nama))
         `)
         .eq('siswa_nisn', studentData.nisn)
-        .order('created_at', { ascending: false })
+        .eq('nilai_komponen.is_nilai_visible', true)
+        .order('updated_at', { ascending: false })
         .limit(3)
         
       // 4. Fetch Berita Sekolah
@@ -173,7 +177,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     const { data: berkas } = await supabase.from('berkas_pengumuman').select('*').eq('kode_siswa', studentData.kode)
     
     const status = menuTypes.map(type => {
-      const b = berkas?.find(x => x.kode_jenis === type.kode_jenis)
+      const b = berkas?.find(x => x.kode_jenis === (type.dokumen_kode_jenis || type.kode_jenis))
       const hasFile = b?.file_url && b.file_url !== '-'
       // Check persyaratan
       let accessible = hasFile

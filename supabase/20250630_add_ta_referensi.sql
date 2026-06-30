@@ -1,0 +1,1 @@
+ALTER TABLE jenis_pengumuman ADD COLUMN ta_referensi_id BIGINT REFERENCES tahun_ajaran(id) ON DELETE SET NULL;
