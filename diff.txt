@@ -1,0 +1,950 @@
+﻿diff --git a/src/components/AdminManajemenAkunSection.jsx b/src/components/AdminManajemenAkunSection.jsx
+index 8565608..abdd1fc 100644
+--- a/src/components/AdminManajemenAkunSection.jsx
++++ b/src/components/AdminManajemenAkunSection.jsx
+@@ -43,6 +43,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
+   // Modal Biodata (Unified for Create & Edit)
+   const [showBiodataModal, setShowBiodataModal] = useState(false)
+   const [biodataForm, setBiodataForm] = useState(null)
++  const [studentEnrollments, setStudentEnrollments] = useState([])
++
++  const fetchStudentEnrollments = async (nisn) => {
++    const { data } = await supabase.from('enrollment').select('*, tahun_ajaran:tahun_ajaran_id(nama)').eq('nisn', nisn).order('created_at', { ascending: false })
++    setStudentEnrollments(data || [])
++  }
+ 
+   // Modal Export Excel
+   const [showExportModal, setShowExportModal] = useState(false)
+@@ -331,23 +337,32 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
+ 
+   // --- MODAL BIODATA ---
+ 
+-  const openBiodataModal = (row = null) => {
++    const openBiodataModal = async (row = null) => {
+     if (activeTab === 'murid') {
++      let enrollmentsMap = {};
++      if (row) {
++        setLoadingEnrollments(true);
++        const { data } = await supabase.from('enrollment').select('*, tahun_ajaran:tahun_ajaran_id(nama)').eq('nisn', row.foreign_id).order('created_at', { ascending: false });
++        setStudentEnrollments(data || []);
++        (data || []).forEach(e => { enrollmentsMap[e.tahun_ajaran_id] = e.kelas });
++      } else {
++        setStudentEnrollments([]);
++      }
++
+       setBiodataForm({
+         isNew: !row,
++        selected_ta_id: activeTa?.id || '',
++        enrollments: enrollmentsMap,
+         row: row,
+         original_foreign_id: row?.foreign_id || '',
+         foreign_id: row?.foreign_id || '',
+         nama: row?.nama || '',
+-        kelas: row?.kelas !== '-' ? row?.kelas : '',
+-        username: row?.hasAkun ? row.username : (row ? `${row.foreign_id}@gmail.com` : ''),
++        telegram_ortu: row?.telegram_ortu || '',
++        no_whatsapp: row?.no_whatsapp || '',
++        id: row?.akun_id,
++        username: row?.email || '',
+         password: '',
+-        hasAkun: row?.hasAkun || false,
+-        akun_id: row?.akun_id,
+-        foto_url: row?.foto_url || null,
+-        akun_status: row?.hasAkun ? row.status : 'aktif',
+-        telegram_ortu: row?.rawStudent?.telegram_ortu || '',
+-        no_whatsapp: row?.rawStudent?.no_whatsapp || ''
++        status: row?.status || 'Aktif',
+       })
+     } else {
+       const g = row?.rawGuru
+@@ -419,867 +434,33 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
+           no_whatsapp: formatPhoneNumber(biodataForm.no_whatsapp) || null
+         }, { onConflict: 'nisn' })
+         
+-        // Upsert or Delete Enrollment
+-        if (activeTa) {
+-          if (biodataForm.kelas && biodataForm.kelas !== '-') {
+-            if (biodataForm.isNew) {
+-              await supabase.from('enrollment').insert({
+-                kode: `${biodataForm.kelas}_${biodataForm.foreign_id}_${activeTa.nama.replace('/', '_')}`,
+-                nisn: biodataForm.foreign_id,
+-                kelas: biodataForm.kelas,
+-                tahun_ajaran_id: activeTa.id
+-              })
++        // Upsert or Delete Enrollments for all TAs
++        if (tahunAjarans && biodataForm.enrollments) {
++          for (const taObj of tahunAjarans) {
++            const assignedKelas = biodataForm.enrollments[taObj.id];
++            if (assignedKelas && assignedKelas.trim() !== '' && assignedKelas !== '-') {
++               const { data: existingEnrol } = await supabase.from('enrollment')
++                  .select('id').eq('nisn', biodataForm.foreign_id).eq('tahun_ajaran_id', taObj.id).maybeSingle();
++               
++               if (existingEnrol) {
++                  await supabase.from('enrollment').update({ kelas: assignedKelas }).eq('id', existingEnrol.id);
++               } else {
++                  await supabase.from('enrollment').insert({
++                    kode: `${assignedKelas}_${biodataForm.foreign_id}_${taObj.nama.replace('/', '_')}`,
++                    nisn: biodataForm.foreign_id,
++                    kelas: assignedKelas,
++                    tahun_ajaran_id: taObj.id
++                  });
++               }
+             } else {
+-              await supabase.from('enrollment')
+-                .update({ kelas: biodataForm.kelas })
+-                .match({ nisn: biodataForm.foreign_id, tahun_ajaran_id: activeTa.id })
++               // If empty, delete any existing enrollment for this TA
++               await supabase.from('enrollment').delete().match({ 
++                 nisn: biodataForm.foreign_id, 
++                 tahun_ajaran_id: taObj.id 
++               })
+             }
+-          } else {
+-            // Jika kelas dikosongkan atau '-', hapus enrollment untuk TA aktif ini
+-            await supabase.from('enrollment').delete().match({ 
+-              nisn: biodataForm.foreign_id, 
+-              tahun_ajaran_id: activeTa.id 
+-            })
+-          }
+-        }
+-      } else {
+-        // Upsert Guru
+-        if (!biodataForm.kode) throw new Error("Kode Guru harus diisi!")
+-        
+-        const waliKelasRoleId = roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id
+-        if (waliKelasRoleId && biodataForm.role_ids.includes(waliKelasRoleId)) {
+-          if (biodataForm.kelas_assigned.length === 0) {
+-            throw new Error("Sebagai Wali Kelas, Anda harus menugaskan minimal 1 kelas. Jika tidak jadi, silakan hapus centang role Wali Kelas atau batalkan edit.")
+-          }
+-        }
+-
+-        const guruPayload = { 
+-          kode: biodataForm.kode, 
+-          nama_guru: biodataForm.nama
+-        }
+-        if (biodataForm.isNew) {
+-          const { data, error } = await supabase.from('guru').insert([guruPayload]).select()
+-          if (error) throw error
+-          f_id = data[0].id.toString()
+-          biodataForm.id = data[0].id
+-        } else {
+-          await supabase.from('guru').update(guruPayload).eq('id', biodataForm.id)
+-          f_id = biodataForm.id.toString()
+-        }
+-
+-        // Sync Roles
+-        await supabase.from('guru_role').delete().eq('guru_id', biodataForm.id)
+-        if (biodataForm.role_ids.length > 0) {
+-          await supabase.from('guru_role').insert(biodataForm.role_ids.map(rid => ({ guru_id: biodataForm.id, role_id: rid })))
+-        }
+-
+-        // Sync Classes/Mapel for Active TA
+-        if (activeTa) {
+-          await supabase.from('guru_kelas').delete().match({ guru_id: biodataForm.id, tahun_ajaran_id: activeTa.id })
+-          if (biodataForm.kelas_assigned.length > 0) {
+-            await supabase.from('guru_kelas').insert(biodataForm.kelas_assigned.map(k => ({ guru_id: biodataForm.id, kelas: k, tahun_ajaran_id: activeTa.id })))
+-          }
+-          
+-          await supabase.from('guru_mapel').delete().match({ guru_id: biodataForm.id, tahun_ajaran_id: activeTa.id })
+-          const mapelInserts = []
+-          biodataForm.mapel_assigned.forEach(ma => {
+-            if (!ma.mapel_id) return // Skip mapel that haven't been selected yet
+-            ma.kelas_list.forEach(k => {
+-              mapelInserts.push({ guru_id: biodataForm.id, mata_pelajaran_id: ma.mapel_id, kelas: k, tahun_ajaran_id: activeTa.id })
+-            })
+-          })
+-          if (mapelInserts.length > 0) await supabase.from('guru_mapel').insert(mapelInserts)
+-        }
+-      }
+-
+-      // 2. Save Akun Pengguna
+-      if (biodataForm.username) { // Only create/update akun if username is provided
+-        let uName = biodataForm.username.includes('@') ? biodataForm.username : `${biodataForm.username}@gmail.com`
+-        const akunPayload = {
+-          foreign_id: f_id,
+-          role: activeTab,
+-          username: uName,
+-          status: biodataForm.akun_status
+-        }
+-        if (biodataForm.password) {
+-          akunPayload.password = bcrypt.hashSync(biodataForm.password, bcrypt.genSaltSync(10))
+-        } else if (biodataForm.isNew && !biodataForm.hasAkun) {
+-          akunPayload.password = bcrypt.hashSync('123456', bcrypt.genSaltSync(10)) // default password
+-        }
+-
+-        if (biodataForm.hasAkun && biodataForm.akun_id) {
+-          await supabase.from('akun_pengguna').update(akunPayload).eq('id', biodataForm.akun_id)
+-        } else {
+-          await supabase.from('akun_pengguna').upsert([akunPayload], { onConflict: 'username' })
+-        }
+-      }
+-
+-      setShowBiodataModal(false)
+-      fetchData()
+-      onRefresh?.()
+-    } catch (err) {
+-      alert("Gagal menyimpan: " + err.message)
+-    }
+-    
+-    setIsProcessing(false)
+-    setProgressText('')
+-  }
+-
+-  // --- PHOTO UPLOAD LOGIC ---
+-
+-  const handleIndividualPhotoUpload = async (e) => {
+-    const file = e.target.files?.[0]
+-    if (!file || !uploadingPhotoFor) return
+-    setIsProcessing(true); setProgressText("Mengunggah foto...")
+-    
+-    try {
+-      const formData = new FormData()
+-      formData.append('file', file)
+-      formData.append('upload_preset', UPLOAD_PRESET)
+-      
+-      let publicId, folder
+-      if (activeTab === 'murid') {
+-        if (!activeTa) throw new Error("Tahun ajaran aktif diperlukan")
+-        publicId = `FOTO_${uploadingPhotoFor.foreign_id}_${activeTa.id}_${Date.now()}`
+-        folder = `foto/${activeTa.nama.replace(/\//g, '_')}`
+-      } else {
+-        publicId = `GURU_${uploadingPhotoFor.id}_${Date.now()}`
+-        folder = `foto_guru`
+-      }
+-      
+-      formData.append('public_id', publicId)
+-      formData.append('folder', folder)
+-
+-      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: 'POST', body: formData })
+-      if (!res.ok) throw new Error("Upload ke Cloudinary gagal")
+-      const data = await res.json()
+-
+-      const bustedUrl = `${data.secure_url}?t=${Date.now()}`
+-
+-      // Update Database
+-      if (activeTab === 'murid') {
+-        await supabase.from('foto').upsert({
+-          nisn: uploadingPhotoFor.foreign_id,
+-          tahun_ajaran_id: activeTa.id,
+-          cloudinary_url: bustedUrl,
+-          cloudinary_public_id: data.public_id
+-        }, { onConflict: 'nisn,tahun_ajaran_id' })
+-      } else {
+-        await supabase.from('guru').update({ foto_url: bustedUrl }).eq('id', uploadingPhotoFor.id)
+-      }
+-      
+-      // Update form if modal is open
+-      if (showBiodataModal && biodataForm && biodataForm.row?.foreign_id === uploadingPhotoFor.foreign_id) {
+-        setBiodataForm(prev => ({...prev, foto_url: bustedUrl}))
+-      }
+-
+-      fetchData()
+-      onRefresh?.()
+-    } catch (err) { alert(err.message) }
+-    
+-    setIsProcessing(false); setProgressText(''); setUploadingPhotoFor(null)
+-    if (individualPhotoInputRef.current) individualPhotoInputRef.current.value = ''
+-  }
+-
+-  const handleRapihkanKode = async () => {
+-    if (!activeTa) return
+-    const confirmed = await requestConfirm({
+-      title: 'Rapihkan Kode Siswa?',
+-      message: `Apakah Anda yakin ingin merapihkan ulang seluruh kode PDF siswa di tahun ajaran ${activeTa.nama} berdasarkan urutan abjad?\n\nJangan khawatir, semua file PDF yang sudah terupload akan otomatis menyesuaikan diri!`,
+-      confirmLabel: 'Rapihkan Kode',
+-      confirmColor: 'indigo',
+-      icon: 'warning',
+-    })
+-    if (!confirmed) return
+-    
+-    setIsProcessing(true)
+-    try {
+-      const activeStudents = students.filter(s => s.tahun_ajaran_id === activeTa.id)
+-      const sorted = [...activeStudents].sort((a, b) => {
+-        const classA = a.kelas || ''
+-        const classB = b.kelas || ''
+-        if (classA !== classB) return classA.localeCompare(classB)
+-        return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+-      })
+-
+-      let currentClass = null
+-      let currentAbsen = 1
+-      const payload = []
+-
+-      const formattedTa = activeTa.nama.replace('/', '_')
+-
+-      sorted.forEach((s) => {
+-        if (s.kelas !== currentClass) {
+-          currentClass = s.kelas
+-          currentAbsen = 1
+-        }
+-        const absen = currentAbsen++
+-        const newKode = `${s.kelas}${absen}${formattedTa}`
+-
+-        if (s.kode !== newKode) {
+-          payload.push({
+-            nisn: s.nisn,
+-            tahun_ajaran_id: activeTa.id,
+-            new_kode: newKode
+-          })
+-        }
+-      })
+-
+-      if (payload.length > 0) {
+-        // Chunk array to prevent payload too large
+-        for (let i = 0; i < payload.length; i += 500) {
+-          const chunk = payload.slice(i, i + 500)
+-          const { error } = await supabase.rpc('batch_update_enrollment_kode', { payload: chunk })
+-          if (error) throw error
+-        }
+-        alert(`Berhasil merapihkan ${payload.length} kode siswa!`)
+-        onRefresh?.()
+-        fetchData()
+-      } else {
+-        alert('Semua kode siswa sudah rapi!')
+-      }
+-    } catch (err) {
+-      alert('Gagal merapihkan kode: ' + err.message)
+-    } finally {
+-      setIsProcessing(false)
+-    }
+-  }
+-
+-  const handleExportExcel = async (choice) => {
+-    setShowExportModal(false)
+-    setIsProcessing(true)
+-    setProgressText('Menyiapkan file Excel...')
+-    try {
+-      const wb = XLSX.utils.book_new()
+-
+-      if (choice === '1' || choice === '3') {
+-        const sortedFilteredMurid = [...students]
+-          .filter(s => activeTa ? s.tahun_ajaran_id === activeTa.id : true)
+-          .sort((a, b) => {
+-            const classA = a.kelas || ''
+-            const classB = b.kelas || ''
+-            if (classA !== classB) return classA.localeCompare(classB)
+-            return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+-          })
+-
+-        let currentClass = null
+-        let currentAbsen = 1
+-
+-        const dataMurid = sortedFilteredMurid.map(s => {
+-          if (s.kelas !== currentClass) {
+-            currentClass = s.kelas
+-            currentAbsen = 1
+-          }
+-          const absen = currentAbsen++
+-          return {
+-            'No Absen': absen,
+-            'KODE PDF (PENTING)': s.kode || '',
+-            'NISN': s.nisn || '',
+-            'Nama Lengkap': s.nama_lengkap || '',
+-            'Kelas': s.kelas || '',
+-            'Tahun Ajaran': s.tahun_ajaran || '',
+-            'Email': s.email_aktif || '',
+-            'No Telp': s.no_whatsapp || '',
+-            'Kode Akses': s.kode_akses || '',
+-            'Password Login': s.raw_password || ''
+           }
+-        })
+-        const wsMurid = XLSX.utils.json_to_sheet(dataMurid)
+-        XLSX.utils.book_append_sheet(wb, wsMurid, 'Data Murid')
+-      }
+-
+-      if (choice === '2' || choice === '3') {
+-        const { data: gurus } = await supabase.from('guru').select('*, guru_role(role_id), guru_kelas(kelas), guru_mapel(mata_pelajaran_id, kelas)')
+-        const { data: rolesData } = await supabase.from('roles').select('*')
+-        
+-        const dataGuru = (gurus || []).map((g, i) => {
+-          const roleNames = g.guru_role?.map(gr => rolesData?.find(r => r.id === gr.role_id)?.nama).filter(Boolean).join(', ') || ''
+-          const kelasAjar = g.guru_kelas?.map(gk => gk.kelas).join(', ') || ''
+-          return {
+-            'No': i + 1,
+-            'Kode Guru': g.kode || '',
+-            'Nama Guru': g.nama_guru || '',
+-            'Username': g.user_name || '',
+-            'Role/Jabatan': roleNames,
+-            'Kelas Wali/Ajar': kelasAjar,
+-            'No HP': g.no_hp || '',
+-            'Email': g.email || ''
+-          }
+-        })
+-        const wsGuru = XLSX.utils.json_to_sheet(dataGuru)
+-        XLSX.utils.book_append_sheet(wb, wsGuru, 'Data Guru & Staff')
+-      }
+-
+-      let filename = 'Export_Data_Pengguna.xlsx'
+-      if (choice === '1') filename = 'Export_Data_Murid.xlsx'
+-      if (choice === '2') filename = 'Export_Data_Guru.xlsx'
+-      XLSX.writeFile(wb, filename)
+-
+-    } catch (err) {
+-      alert('Gagal export: ' + err.message)
+-    } finally {
+-      setIsProcessing(false)
+-      setProgressText('')
+-    }
+-  }
+-
+-  const handleMassPhotoUpload = async (e) => {
+-    const files = Array.from(e.target.files)
+-    if (!files.length) return
+-    const confirmed = await requestConfirm({
+-      title: 'Upload Foto Massal?',
+-      message: `Akan mengunggah ${files.length} foto. Pastikan nama file adalah ${activeTab === 'murid' ? 'NISN' : 'KODE GURU'}. Lanjutkan?`,
+-      confirmLabel: 'Upload Foto',
+-      confirmColor: 'indigo',
+-      icon: 'info',
+-    })
+-    if (!confirmed) return
+-
+-    setIsProcessing(true)
+-    let success = 0, failed = 0
+-    
+-    for (let i = 0; i < files.length; i++) {
+-      setProgressText(`Mengunggah foto ${i+1}/${files.length}...`)
+-      const file = files[i]
+-      const iden = file.name.split('.').slice(0, -1).join('.').trim() // NISN or KODE
+-      
+-      try {
+-        const formData = new FormData()
+-        formData.append('file', file)
+-        formData.append('upload_preset', UPLOAD_PRESET)
+-        
+-        let targetId = null
+-        if (activeTab === 'guru') {
+-          const { data } = await supabase.from('guru').select('id').eq('kode', iden).maybeSingle()
+-          if (!data) throw new Error("Guru tidak ditemukan")
+-          targetId = data.id
+         }
+-
+-        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: 'POST', body: formData })
+-        if (!res.ok) throw new Error("Upload failed")
+-        const result = await res.json()
+-
+-        if (activeTab === 'murid') {
+-          await supabase.from('foto').upsert({
+-            nisn: iden,
+-            tahun_ajaran_id: activeTa.id,
+-            cloudinary_url: result.secure_url,
+-            cloudinary_public_id: result.public_id
+-          }, { onConflict: 'nisn,tahun_ajaran_id' })
+-        } else {
+-          await supabase.from('guru').update({ foto_url: result.secure_url }).eq('id', targetId)
+-        }
+-        success++
+-      } catch (err) { failed++ }
+-    }
+-    
+-    setIsProcessing(false); setProgressText('')
+-    alert(`Selesai! Berhasil: ${success}, Gagal: ${failed}`)
+-    if (massPhotoInputRef.current) massPhotoInputRef.current.value = ''
+-    fetchData()
+-    onRefresh?.()
+-  }
+-
+-  // --- EXCEL IMPORT (Guru Only) ---
+-  const handleCsvImportGuru = async (e) => {
+-    const file = e.target.files?.[0]
+-    if (!file) return
+-    setIsProcessing(true); setProgressText("Memproses Excel...")
+-
+-    try {
+-      const buffer = await file.arrayBuffer()
+-      const wb = XLSX.read(buffer)
+-      const ws = wb.Sheets[wb.SheetNames[0]]
+-      const data = XLSX.utils.sheet_to_json(ws, { defval: '' })
+-
+-      if (!data.length) { alert("File Excel kosong"); setIsProcessing(false); return }
+-
+-      const defaultRole = roles.find(r => r.nama.toLowerCase() === 'guru')
+-      let successCount = 0, errorCount = 0
+-
+-      for (const row of data) {
+-        const kode = String(row.kode || row.KODE || row['Kode Guru'] || '').trim()
+-        const nama = String(row.nama_guru || row['NAMA GURU'] || row.nama || row['Nama Guru'] || '').trim()
+-        const username = String(row.user_name || row.username || row.Username || row['Username'] || '').trim()
+-        const email = String(row.email || row.Email || row['Email'] || '').trim()
+-        
+-        if (!kode || !nama) continue
+-        
+-        const payload = { kode, nama_guru: nama }
+-        const finalUsername = username || email
+-        if (finalUsername) payload.user_name = finalUsername
+-        
+-        const { data: exist } = await supabase.from('guru').select('id').eq('kode', payload.kode).maybeSingle()
+-        let guruId
+-        
+-        const applyAkunPengguna = async (gId) => {
+-          if (!finalUsername) return
+-          let uName = finalUsername.includes('@') ? finalUsername : `${finalUsername}@gmail.com`
+-          const { data: akunExist } = await supabase.from('akun_pengguna').select('id').eq('foreign_id', gId.toString()).eq('role', 'guru').maybeSingle()
+-          if (akunExist) {
+-             await supabase.from('akun_pengguna').update({ username: uName }).eq('id', akunExist.id)
+-          } else {
+-             const akunPayload = {
+-               foreign_id: gId.toString(),
+-               role: 'guru',
+-               username: uName,
+-               status: 'aktif',
+-               password: bcrypt.hashSync('123456', bcrypt.genSaltSync(10))
+-             }
+-             await supabase.from('akun_pengguna').upsert([akunPayload], { onConflict: 'username' })
+-          }
+-        }
+-
+-        if (exist) {
+-          guruId = exist.id
+-          const { error } = await supabase.from('guru').update(payload).eq('id', guruId)
+-          await applyAkunPengguna(guruId)
+-          if (error) errorCount++; else successCount++
+-        } else {
+-          const { data: newGuru, error } = await supabase.from('guru').insert([payload]).select()
+-          if (error) { errorCount++; continue }
+-          guruId = newGuru[0].id
+-          await applyAkunPengguna(guruId)
+-          successCount++
+-          if (defaultRole) await supabase.from('guru_role').insert([{ guru_id: guruId, role_id: defaultRole.id }])
+-        }
+-      }
+-      alert(`Sinkronisasi selesai!\nBerhasil: ${successCount}\nGagal: ${errorCount}`)
+-    } catch (err) {
+-      alert('Gagal memproses file: ' + err.message)
+-    }
+-    setIsProcessing(false); setProgressText(''); fetchData()
+-    if (csvInputRef.current) csvInputRef.current.value = ''
+-  }
+-
+-  // --- EXCEL IMPORT (Siswa Only) ---
+-  const handleCsvImportSiswa = async (e) => {
+-    const file = e.target.files?.[0]
+-    if (!file) return
+-    setIsProcessing(true); setProgressText("Memproses Excel Siswa...")
+-
+-    try {
+-      const buffer = await file.arrayBuffer()
+-      const wb = XLSX.read(buffer)
+-      const ws = wb.Sheets[wb.SheetNames[0]]
+-      const data = XLSX.utils.sheet_to_json(ws, { defval: '' })
+-
+-      if (!data.length) { alert("File Excel kosong"); setIsProcessing(false); return }
+-
+-      let successCount = 0, errorCount = 0
+-
+-      for (const row of data) {
+-        const nisn = String(row.nisn || row.NISN || '').trim()
+-        const nama = String(row.nama_lengkap || row.nama || row['NAMA LENGKAP'] || row['NAMA'] || '').trim()
+-        const kelas = String(row.kelas || row.KELAS || '').trim()
+-        const telegram = String(row.telegram_ortu || row['TELEGRAM ORTU'] || row.telegram || '').trim()
+-        const whatsapp = formatPhoneNumber(row.no_whatsapp || row['NO WHATSAPP'] || row.whatsapp || row.WA || '')
+-
+-        if (!nisn || !nama) continue
+-        
+-        // Upsert Siswa Permanent
+-        const payloadSiswa = { 
+-          nisn, 
+-          nama_lengkap: nama,
+-          ...(telegram ? { telegram_ortu: telegram } : {}),
+-          ...(whatsapp ? { no_whatsapp: whatsapp } : {})
+-        }
+-        
+-        const { error: errSiswa } = await supabase.from('siswa_permanent').upsert(payloadSiswa, { onConflict: 'nisn' })
+-        
+-        if (errSiswa) {
+-          errorCount++
+-          continue
+-        }
+-
+-        // Upsert Enrollment jika ada TA aktif dan Kelas
+-        if (activeTa && kelas && kelas !== '-') {
+-          const { error: errEnrol } = await supabase.from('enrollment').upsert({
+-            kode: `${kelas}_${nisn}_${activeTa.id}`,
+-            nisn: nisn,
+-            kelas: kelas,
+-            tahun_ajaran_id: activeTa.id
+-          }, { onConflict: 'nisn,tahun_ajaran_id' })
+-          if (errEnrol) console.error(errEnrol)
+-        }
+-
+-        successCount++
+-      }
+-      alert(`Sinkronisasi Siswa selesai!\nBerhasil: ${successCount}\nGagal: ${errorCount}`)
+-    } catch (err) {
+-      alert('Gagal memproses file: ' + err.message)
+-    }
+-    setIsProcessing(false); setProgressText(''); fetchData(); onRefresh?.()
+-    if (csvSiswaInputRef.current) csvSiswaInputRef.current.value = ''
+-  }
+-
+-  // Helper for UI
+-  const getGuruRoles = (guru) => guru?.guru_role?.map(gr => roles.find(r => r.id === gr.role_id)?.nama).filter(Boolean) || []
+-  const getGuruWali = (guru) => guru?.guru_kelas?.filter(gk => gk.tahun_ajaran_id === activeTa?.id).map(gk => gk.kelas) || []
+-  const getGuruMapel = (guru) => {
+-    const activeMapels = guru?.guru_mapel?.filter(gm => gm.tahun_ajaran_id === activeTa?.id) || []
+-    const mapelGroup = {}
+-    activeMapels.forEach(gm => {
+-      const mName = mapels.find(m => m.id === gm.mata_pelajaran_id)?.nama || 'Unknown'
+-      if (!mapelGroup[mName]) mapelGroup[mName] = []
+-      mapelGroup[mName].push(gm.kelas)
+-    })
+-    return mapelGroup
+-  }
+-
+-  const allClassesInTa = [...new Set(
+-    students
+-      .filter(s => s.tahun_ajaran === activeTa?.nama)
+-      .map(s => s.kelas)
+-      .filter(k => k && k !== '-')
+-  )].sort()
+-
+-  const takenWaliClasses = new Map()
+-  guruList.forEach(g => {
+-    if (g.guru_kelas) {
+-      g.guru_kelas.forEach(gk => {
+-        if (gk.tahun_ajaran_id === activeTa?.id) {
+-          takenWaliClasses.set(gk.kelas, g.id)
+-        }
+-      })
+-    }
+-  })
+-
+-  const handleDeletePhotoModal = async () => {
+-    const confirmed = await requestConfirm({
+-      title: 'Hapus Foto?',
+-      message: 'Yakin ingin menghapus foto ini?',
+-      confirmLabel: 'Hapus',
+-      confirmColor: 'red',
+-      icon: 'danger'
+-    })
+-    if (!confirmed) return
+-    setIsProcessing(true)
+-    try {
+-      if (activeTab === 'murid') {
+-        await supabase.from('foto').delete().eq('nisn', biodataForm.foreign_id)
+-      } else {
+-        await supabase.from('guru').update({ foto_url: null }).eq('id', biodataForm.id)
+-      }
+-      setBiodataForm(prev => ({ ...prev, foto_url: null }))
+-      fetchData()
+-      onRefresh?.()
+-    } catch (err) {
+-      alert("Gagal menghapus: " + err.message)
+-    }
+-    setIsProcessing(false)
+-  }
+-
+-  // --- LOGIN AS USER (IMPERSONATE) ---
+-  const handleLoginAsUser = async (row) => {
+-    if (!row) return
+-    try {
+-      if (activeTab === 'murid') {
+-        // Build siswa session (same logic as Login.jsx)
+-        const { data: siswa } = await supabase
+-          .from('siswa_permanent')
+-          .select('*')
+-          .eq('nisn', row.foreign_id)
+-          .maybeSingle()
+-        
+-        if (!siswa) { alert('Data siswa tidak ditemukan.'); return }
+-
+-        const { data: activeTaData } = await supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).single()
+-        
+-        let enrollment = {}
+-        if (activeTaData) {
+-          const { data: enrol } = await supabase.from('enrollment').select('*').eq('nisn', siswa.nisn).eq('tahun_ajaran_id', activeTaData.id).maybeSingle()
+-          if (enrol) enrollment = enrol
+-        }
+-
+-        const sessionData = {
+-          ...siswa,
+-          kode: enrollment.kode || null,
+-          kelas: enrollment.kelas || null,
+-          tahun_ajaran_id: activeTaData?.id || null,
+-          tahun_ajaran: activeTaData?.nama || null,
+-          akun_id: 'siswa_' + siswa.id
+-        }
+-
+-        const { data: tokenRecord, error } = await supabase.from('impersonate_tokens').insert({
+-          role: 'murid',
+-          session_data: sessionData
+-        }).select('id').single()
+-
+-        if (error) throw error
+-        window.open(`/impersonate?token=${tokenRecord.id}`, '_blank')
+-
+-      } else {
+-        // Build guru session (same logic as Login.jsx)
+-        const akun = akunList.find(a => a.foreign_id === row.foreign_id)
+-        if (!akun) { alert('Akun guru belum dibuat. Buat akun terlebih dahulu.'); return }
+-
+-        const { data: guru } = await supabase
+-          .from('guru')
+-          .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
+-          .eq('id', akun.foreign_id)
+-          .single()
+-
+-        if (!guru) { alert('Data guru tidak ditemukan.'); return }
+-
+-        const sessionData = {
+-          id: guru.id,
+-          kode: guru.kode,
+-          nama_guru: guru.nama_guru,
+-          user_name: guru.user_name,
+-          foto_url: guru.foto_url,
+-          roles: guru.guru_role.map(r => ({ id: r.role_id, nama: r.roles?.nama })),
+-          kelas: guru.guru_kelas,
+-          akun_id: akun.id,
+-          app_role: akun.role
+-        }
+-
+-        const { data: tokenRecord, error } = await supabase.from('impersonate_tokens').insert({
+-          role: 'guru',
+-          session_data: sessionData
+-        }).select('id').single()
+-
+-        if (error) throw error
+-        window.open(`/impersonate?token=${tokenRecord.id}`, '_blank')
+-      }
+-    } catch (err) {
+-      alert('Gagal login sebagai user: ' + err.message)
+-    }
+-  }
+-
+-  return (
+-    <div className="animate-slide-up flex flex-col min-h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)] lg:h-[calc(100vh-4rem)] pb-2 md:pb-0">
+-      <input type="file" accept="image/*" ref={individualPhotoInputRef} className="hidden" onChange={handleIndividualPhotoUpload} />
+-      <input type="file" accept="image/*" multiple ref={massPhotoInputRef} className="hidden" onChange={handleMassPhotoUpload} />
+-      <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvInputRef} className="hidden" onChange={handleCsvImportGuru} />
+-      <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvSiswaInputRef} className="hidden" onChange={handleCsvImportSiswa} />
+-
+-      {/* Header */}
+-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
+-        <div>
+-          <h2 className="text-2xl font-bold text-slate-900">Manajemen Akun & Data Pengguna</h2>
+-          <p className="text-slate-500 text-sm mt-1">Satu pintu untuk mengelola biodata, akun login, dan penugasan.</p>
+-        </div>
+-        <div className="flex flex-wrap items-center gap-2">
+-          {activeTab === 'guru' ? (
+-            <button onClick={() => csvInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+-              <IconUpload /> Import Excel Guru
+-            </button>
+-          ) : (
+-            <button onClick={() => csvSiswaInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+-              <IconUpload /> Import Excel Siswa
+-            </button>
+-          )}
+-          <button onClick={() => massPhotoInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+-            <IconCamera /> Upload Foto Massal
+-          </button>
+-          <button onClick={() => setShowExportModal(true)} disabled={isProcessing} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50" title="Export Excel data pengguna">
+-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+-            Export Data
+-          </button>
+-          {activeTab === 'murid' && (
+-            <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
+-              className="px-3 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-100 flex items-center gap-2 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
+-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M12 3v18"/><path d="m8 8-4 4 4 4"/><path d="m16 16 4-4-4-4"/></svg>
+-              Rapihkan Kode (A-Z)
+-            </button>
+-          )}
+-          <button onClick={() => openBiodataModal()} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
+-            <IconPlus /> Buat Data Baru
+-          </button>
+-        </div>
+-      </div>
+-
+-              {/* Summary Cards */}
+-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0">
+-          {(activeTab === 'murid' ? [
+-            { l: 'Total Murid', v: dataForCards.length, type: 'all' },
+-            { l: 'Punya Akun', v: dataForCards.filter(m => m.hasAkun).length, type: 'with_akun' },
+-            { l: 'Tanpa Akun', v: dataForCards.filter(m => !m.hasAkun).length, type: 'without_akun' },
+-            { l: 'Akun Aktif', v: dataForCards.filter(m => m.hasAkun && m.status === 'aktif').length, type: 'active_akun' }
+-          ] : [
+-            { l: 'Total Guru & Staff', v: dataForCards.length, type: 'all' },
+-            { l: 'Punya Akun', v: dataForCards.filter(g => g.hasAkun).length, type: 'with_akun' },
+-            { l: 'Tanpa Akun', v: dataForCards.filter(g => !g.hasAkun).length, type: 'without_akun' },
+-            { l: 'Admin', v: dataForCards.filter(g => {
+-                const akun = akunList.find(a => a.id === g.akun_id);
+-                return akun && (akun.role === 'admin' || akun.role === 'superadmin');
+-              }).length, type: 'active_akun'
+-            }
+-          ]).map(stat => (
+-            <div 
+-              key={stat.l} 
+-              onClick={() => setSummaryFilter(stat.type)}
+-              className={`bg-white border rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:-translate-y-1 ${summaryFilter === stat.type ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/30' : 'border-slate-200 hover:border-indigo-300'}`}
+-            >
+-              <p className={`text-sm font-medium ${summaryFilter === stat.type ? 'text-indigo-600' : 'text-slate-500'}`}>{stat.l}</p>
+-              <p className={`text-2xl font-bold mt-1 ${summaryFilter === stat.type ? 'text-indigo-900' : 'text-slate-900'}`}>{stat.v}</p>
+-            </div>
+-          ))}
+-        </div>
+-
+-      {/* Tabs */}
+-      <div className="flex gap-6 border-b border-slate-200 mb-6 shrink-0">
+-        {[
+-          { id: 'murid', label: 'Murid', icon: <IconUsers className="w-4 h-4" /> },
+-          { id: 'guru', label: 'Guru & Staff', icon: <IconKey className="w-4 h-4" /> }
+-        ].map(tab => (
+-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSearch(''); setSelectedClassFilter('all') }}
+-            className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === tab.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+-            {tab.icon} {tab.label}
+-          </button>
+-        ))}
+-      </div>
+-
+-      {/* Toolbar */}
+-      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3 shrink-0">
+-        <div className="relative flex-1">
+-          <input type="text" placeholder="Cari nama, username, ID, atau kode..." value={search} onChange={(e) => setSearch(e.target.value)}
+-            className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+-        </div>
+-        {activeTab === 'murid' && (
+-          <div className="flex items-center px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-semibold">
+-            <span className="mr-2">TA:</span>
+-            <select value={selectedTaFilter} onChange={(e) => { setSelectedTaFilter(e.target.value); setSelectedClassFilter('all') }} className="bg-transparent outline-none cursor-pointer">
+-              <option value="all">Semua</option>
+-              {tahunAjarans?.map(ta => <option key={ta.id} value={ta.nama}>{ta.nama}</option>)}
+-            </select>
+-          </div>
+-        )}
+-      </div>
+-
+-      {/* Class Filter (Murid Only) */}
+-      {activeTab === 'murid' && uniqueClasses.length > 0 && (
+-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2 shrink-0">
+-          <button onClick={() => setSelectedClassFilter('all')} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>Semua</button>
+-          {uniqueClasses.map(c => (
+-            <button key={c} onClick={() => setSelectedClassFilter(c)} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === c ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>{c}</button>
+-          ))}
+-        </div>
+-      )}
+-
+-      {/* Table */}
+-      <div className="bg-white border-none rounded-xl shadow-sm flex flex-col overflow-hidden flex-1 min-h-[500px] lg:min-h-0">
+-        {loading || isProcessing ? (
+-          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 py-20">
+-            <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
+-            <p>{progressText || "Memuat data..."}</p>
+-          </div>
+-        ) : (
+-          <div className="overflow-auto flex-1">
+-            <table className="w-full text-sm text-left whitespace-nowrap min-w-[800px]">
+-              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600 shadow-sm">
+-                <tr>
+-                  <th className="px-4 py-3">Foto</th>
+-                  <th className="px-4 py-3">Identitas</th>
+-                  <th className="px-4 py-3">Akun Login</th>
+-                  {activeTab === 'murid' ? (
+-                    <th className="px-4 py-3">Kelas (TA)</th>
+-                  ) : (
+-                    <th className="px-4 py-3">Role & Penugasan</th>
+-                  )}
+-                  <th className="px-4 py-3 text-center bg-slate-50 shadow-[-4px_0_10px_rgba(0,0,0,0.05)] sticky right-0">Aksi</th>
+-                </tr>
+-              </thead>
+-              <tbody className="divide-y divide-slate-100">
+-                {mergedData.length === 0 ? (
+-                  <tr><td colSpan={5} className="p-8 text-center text-slate-500">Tidak ada data ditemukan.</td></tr>
+-                ) : mergedData.map(row => (
+-                  <tr key={row.id} className="hover:bg-slate-50/50">
+-                    <td className="px-4 py-3">
+-                      <div className="relative group inline-flex">
+-                        {row.foto_url ? <img src={row.foto_url} className="w-10 h-10 rounded-full object-cover border" /> : <FallbackAvatar name={row.nama} />}
+-                        <button onClick={() => { setUploadingPhotoFor(row); individualPhotoInputRef.current?.click() }}
+-                          className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-indigo-600 cursor-pointer z-10">
+-                          <IconCamera className="w-4 h-4" />
+-                        </button>
+-                      </div>
+-                    </td>
+-                    <td className="px-4 py-3 cursor-pointer hover:bg-slate-100/80 transition-colors rounded-2xl" onClick={() => openBiodataModal(row)}>
+-                      <div className="flex items-center gap-1.5">
+-                        <p className="font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">{row.nama}</p>
+-                        <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+-                      </div>
+-                      <p className="text-xs text-slate-500 font-mono mt-0.5">{activeTab === 'murid' ? row.foreign_id : `Kode: ${row.kode}`}</p>
+-                    </td>
+-                    <td className="px-4 py-3">
+-                      {row.hasAkun ? (
+-                        <div className="flex flex-col gap-1">
+-                          <p className="text-slate-800 font-medium">{row.username}</p>
+-                          <span className={`w-fit px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.status === 'aktif' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{row.status === 'aktif' ? 'Aktif' : 'Nonaktif'}</span>
+-                        </div>
+-                      ) : (
+-                        <p className="text-xs italic text-slate-400 font-medium">(Belum Punya Akun)</p>
+-                      )}
+-                    </td>
+-                    <td className="px-4 py-3">
+-                      {activeTab === 'murid' ? (
+-                        <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">{row.kelas} ({row.tahun_ajaran})</span>
+-                      ) : (
+-                        <div className="flex flex-col gap-1.5 max-w-[200px] whitespace-normal">
+-                          <div className="flex flex-wrap gap-1">{getGuruRoles(row.rawGuru).map(r => <span key={r} className="px-1.5 py-0.5 text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 rounded">{r}</span>)}</div>
+-                          {getGuruWali(row.rawGuru).length > 0 && <p className="text-[10px] text-slate-600"><span className="font-bold">Wali:</span> {getGuruWali(row.rawGuru).join(', ')}</p>}
+-                          {Object.keys(getGuruMapel(row.rawGuru)).length > 0 && <p className="text-[10px] text-slate-600"><span className="font-bold">Mapel:</span> {Object.keys(getGuruMapel(row.rawGuru)).join(', ')}</p>}
+-                        </div>
+-                      )}
+-                    </td>
+-                    <td className="px-4 py-3 text-center sticky right-0 bg-white shadow-[-4px_0_10px_rgba(0,0,0,0.05)]">
+-                      <div className="flex items-center justify-center gap-2">
+-                        {row.hasAkun && (
+-                          <button onClick={(e) => { e.stopPropagation(); handleResetPassword(row); }} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl" title="Reset & Kirim WA">
+-                            <IconKey className="w-4 h-4" />
+-                          </button>
+-                        )}
+-                        <button onClick={(e) => { e.stopPropagation(); handleDeletePermanen(row); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-2xl" title="Hapus Permanen"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+-                      </div>
+-                    </td>
+-                  </tr>
+-                ))}
+-              </tbody>
+-            </table>
+-          </div>
+-        )}
+-      </div>
+-
+-      {/* BIODATA MODAL */}
+-      {showBiodataModal && biodataForm && createPortal(
+-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
+-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+-            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+-              <h3 className="font-bold text-lg text-slate-800">{biodataForm.isNew ? 'Buat Data Baru' : 'Edit Data Lengkap'} ({activeTab === 'murid' ? 'Siswa' : 'Guru'})</h3>
+-              <button onClick={() => setShowBiodataModal(false)} className="text-slate-400 hover:text-slate-600"><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+-            </div>
+-            
+-            <form id="biodata-form" onSubmit={(e) => {
+-              if (biodataForm.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && biodataForm.kelas_assigned.length === 0) {
+-                alert("Pilih setidaknya satu kelas untuk Wali Kelas."); e.preventDefault(); return;
+-              }
+-              handleSaveBiodata(e);
+-            }} className="p-5 overflow-y-auto space-y-6 flex-1 min-h-0">
+-              
+-              {/* SECTION: BIODATA & FOTO */}
+-              <div className="flex flex-col md:flex-row gap-6">
+-                <div className="flex-1">
+-                  <h4 className="text-sm font-bold text-slate-800 border-b pb-2 mb-3">Informasi Biodata</h4>
+-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+-                    {activeTab === 'murid' ? (
+-                      <>
+-                        <div>
+-                          <label className="block text-xs font-medium text-slate-700 mb-1">NISN * <span className="text-amber-500 font-normal">(Ubah dengan hati-hati)</span></label>
+-                          <input required value={biodataForm.foreign_id} onChange={e => setBiodataForm({...biodataForm, foreign_id: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-2xl text-sm bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+-                        </div>
+-                        <div>
+-                          <label className="block text-xs font-medium text-slate-700 mb-1">Nama Lengkap *</label>
+-                          <input required value={biodataForm.nama} onChange={e => setBiodataForm({...biodataForm, nama: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm" />
+-                        </div>
+-                        <div className="md:col-span-2">
+-                          <label className="block text-xs font-medium text-slate-700 mb-1">Kelas (TA: {activeTa?.nama})</label>
+-                          <input value={biodataForm.kelas} onChange={e => setBiodataForm({...biodataForm, kelas: e.target.value})} placeholder="Contoh: X.1" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+-                        </div>
+-                        <div className="md:col-span-2 grid grid-cols-2 gap-4">
+-                          <div className="md:col-span-1">
+-                            <label className="block text-xs font-medium text-slate-700 mb-1">No. WhatsApp</label>
+-                            <input value={biodataForm.no_whatsapp || ''} onChange={e => setBiodataForm({...biodataForm, no_whatsapp: e.target.value})} placeholder="Contoh: 62812xxx" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                           </div>
+                           <div className="md:col-span-1">
+                             <label className="block text-xs font-medium text-slate-700 mb-1">ID Telegram Orang Tua</label>

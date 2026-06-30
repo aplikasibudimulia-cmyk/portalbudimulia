@@ -27,21 +27,41 @@ function Login() {
     try {
       if (loginRole === 'Siswa') {
         // --- LOGIC LOGIN SISWA ---
-        const { data: siswa, error: siswaError } = await supabase
-          .from('siswa_permanent')
+        const { data: akun, error: akunError } = await supabase
+          .from('akun_pengguna')
           .select('*')
-          .ilike('email_aktif', username.trim())
+          .ilike('username', username.trim())
           .maybeSingle()
 
-        if (siswaError || !siswa) {
+        if (akunError || !akun || akun.role !== 'murid') {
           setLoading(false)
           setNotification({ type: 'error', message: 'Email tidak terdaftar sebagai Siswa.' })
           return
         }
 
-        if (password.trim() !== siswa.kode_akses) {
+        if (akun.status !== 'aktif') {
           setLoading(false)
-          setNotification({ type: 'error', message: 'Kode akses salah.' })
+          setNotification({ type: 'error', message: 'Akun Anda dinonaktifkan. Silakan hubungi admin.' })
+          return
+        }
+
+        // Verifikasi Password dengan bcrypt
+        const isMatch = bcrypt.compareSync(password.trim(), akun.password || '')
+        if (!isMatch) {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Kata sandi salah. Silakan coba lagi.' })
+          return
+        }
+
+        const { data: siswa, error: siswaError } = await supabase
+          .from('siswa_permanent')
+          .select('*')
+          .eq('nisn', akun.foreign_id)
+          .maybeSingle()
+
+        if (siswaError || !siswa) {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Biodata Siswa tidak ditemukan.' })
           return
         }
 
@@ -59,7 +79,8 @@ function Login() {
           kelas: enrollment.kelas || null,
           tahun_ajaran_id: activeTa?.id || null,
           tahun_ajaran: activeTa?.nama || null,
-          akun_id: 'siswa_' + siswa.id
+          akun_id: akun.id,
+          role: akun.role
         }
 
         localStorage.setItem('siswa_session', JSON.stringify(sessionData))

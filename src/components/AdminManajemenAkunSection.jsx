@@ -43,6 +43,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   // Modal Biodata (Unified for Create & Edit)
   const [showBiodataModal, setShowBiodataModal] = useState(false)
   const [biodataForm, setBiodataForm] = useState(null)
+  const [studentEnrollments, setStudentEnrollments] = useState([])
+
+  const fetchStudentEnrollments = async (nisn) => {
+    const { data } = await supabase.from('enrollment').select('*, tahun_ajaran:tahun_ajaran_id(nama)').eq('nisn', nisn).order('created_at', { ascending: false })
+    setStudentEnrollments(data || [])
+  }
 
   // Modal Export Excel
   const [showExportModal, setShowExportModal] = useState(false)
@@ -260,10 +266,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     // Update Supabase akun_pengguna
     const { error } = await supabase.from('akun_pengguna').update({ password: hash }).eq('id', row.akun_id)
     
-    // Update plain text kode_akses if it's a guru (for display purposes)
-    if (!error && activeTab !== 'murid') {
-      const guruId = row.id
-      if (guruId) await supabase.from('guru').update({ kode_akses: generatedPass }).eq('id', guruId)
+    // Update plain text kode_akses for display purposes
+    if (!error) {
+      if (activeTab === 'murid') {
+        await supabase.from('siswa_permanent').update({ kode_akses: generatedPass }).eq('nisn', row.foreign_id)
+      } else {
+        const guruId = row.id
+        if (guruId) await supabase.from('guru').update({ kode_akses: generatedPass }).eq('id', guruId)
+      }
     }
     
     setIsProcessing(false)
@@ -331,8 +341,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   // --- MODAL BIODATA ---
 
-  const openBiodataModal = (row = null) => {
+  const openBiodataModal = async (row = null) => {
     if (activeTab === 'murid') {
+      if (row) {
+        await fetchStudentEnrollments(row.foreign_id);
+      } else {
+        setStudentEnrollments([]);
+      }
       setBiodataForm({
         isNew: !row,
         row: row,
@@ -411,36 +426,36 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           if (rpcError) throw new Error("Gagal memigrasikan NISN: " + rpcError.message)
         }
         
-        // Upsert Siswa
-        await supabase.from('siswa_permanent').upsert({
+        let uNameSiswa = biodataForm.username ? (biodataForm.username.includes('@') ? biodataForm.username : `${biodataForm.username}@gmail.com`) : null;
+        let pWordSiswa = biodataForm.password ? biodataForm.password : (biodataForm.isNew && !biodataForm.hasAkun ? '123456' : undefined);
+
+        const siswaPayload = {
           nisn: biodataForm.foreign_id,
           nama_lengkap: biodataForm.nama,
           telegram_ortu: biodataForm.telegram_ortu || null,
           no_whatsapp: formatPhoneNumber(biodataForm.no_whatsapp) || null
-        }, { onConflict: 'nisn' })
+        }
+        if (uNameSiswa) siswaPayload.email_aktif = uNameSiswa;
+        if (pWordSiswa !== undefined) siswaPayload.kode_akses = pWordSiswa;
+
+        // Upsert Siswa
+        await supabase.from('siswa_permanent').upsert(siswaPayload, { onConflict: 'nisn' })
         
-        // Upsert or Delete Enrollment
-        if (activeTa) {
-          if (biodataForm.kelas && biodataForm.kelas !== '-') {
-            if (biodataForm.isNew) {
-              await supabase.from('enrollment').insert({
-                kode: `${biodataForm.kelas}_${biodataForm.foreign_id}_${activeTa.nama.replace('/', '_')}`,
-                nisn: biodataForm.foreign_id,
-                kelas: biodataForm.kelas,
-                tahun_ajaran_id: activeTa.id
-              })
-            } else {
-              await supabase.from('enrollment')
-                .update({ kelas: biodataForm.kelas })
-                .match({ nisn: biodataForm.foreign_id, tahun_ajaran_id: activeTa.id })
-            }
-          } else {
-            // Jika kelas dikosongkan atau '-', hapus enrollment untuk TA aktif ini
-            await supabase.from('enrollment').delete().match({ 
-              nisn: biodataForm.foreign_id, 
-              tahun_ajaran_id: activeTa.id 
-            })
-          }
+        // Sync Enrollments
+        // Hapus semua enrollment untuk siswa ini terlebih dahulu, lalu insert ulang sesuai studentEnrollments
+        await supabase.from('enrollment').delete().eq('nisn', biodataForm.foreign_id)
+        
+        if (studentEnrollments.length > 0) {
+          const insertData = studentEnrollments.map(enrol => {
+             const taName = enrol.tahun_ajaran?.nama || '';
+             return {
+               kode: `${enrol.kelas}_${biodataForm.foreign_id}_${taName.replace('/', '_')}`,
+               nisn: biodataForm.foreign_id,
+               kelas: enrol.kelas,
+               tahun_ajaran_id: enrol.tahun_ajaran_id
+             }
+          })
+          await supabase.from('enrollment').insert(insertData)
         }
       } else {
         // Upsert Guru
@@ -1251,8 +1266,9 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             </div>
             
             <form id="biodata-form" onSubmit={(e) => {
-              if (biodataForm.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && biodataForm.kelas_assigned.length === 0) {
-                alert("Pilih setidaknya satu kelas untuk Wali Kelas."); e.preventDefault(); return;
+              e.preventDefault();
+              if (biodataForm.role_ids?.includes(roles.find(r => r.nama?.toLowerCase() === 'wali kelas')?.id) && biodataForm.kelas_assigned?.length === 0) {
+                alert("Pilih setidaknya satu kelas untuk Wali Kelas."); return;
               }
               handleSaveBiodata(e);
             }} className="p-5 overflow-y-auto space-y-6 flex-1 min-h-0">
@@ -1272,9 +1288,133 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                           <label className="block text-xs font-medium text-slate-700 mb-1">Nama Lengkap *</label>
                           <input required value={biodataForm.nama} onChange={e => setBiodataForm({...biodataForm, nama: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm" />
                         </div>
-                        <div className="md:col-span-2">
-                          <label className="block text-xs font-medium text-slate-700 mb-1">Kelas (TA: {activeTa?.nama})</label>
-                          <input value={biodataForm.kelas} onChange={e => setBiodataForm({...biodataForm, kelas: e.target.value})} placeholder="Contoh: X.1" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                        <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                          <label className="block text-xs font-bold text-slate-700 mb-3 border-b border-slate-200 pb-2">Riwayat Kelas Terdaftar</label>
+                          
+                          <div className="space-y-2 mb-4">
+                            {studentEnrollments.length === 0 && (
+                              <p className="text-xs text-slate-400 italic">Belum ada riwayat kelas.</p>
+                            )}
+                            {studentEnrollments.map((enrol, idx) => (
+                               <div key={idx} className="flex gap-3 items-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                                  <div className="flex-1">
+                                    <p className="text-[10px] font-bold text-slate-500 uppercase">{enrol.tahun_ajaran?.nama || enrol.tahun_ajaran_nama || ''}</p>
+                                    {enrol.isEditing ? (
+                                        <input 
+                                          autoFocus
+                                          value={enrol.tempEditKelas || ''}
+                                          onChange={e => {
+                                              const newEnrols = [...studentEnrollments];
+                                              newEnrols[idx].tempEditKelas = e.target.value;
+                                              setStudentEnrollments(newEnrols);
+                                          }}
+                                          onKeyDown={e => {
+                                              if (e.key === 'Enter') {
+                                                  e.preventDefault();
+                                                  const newEnrols = [...studentEnrollments];
+                                                  newEnrols[idx].kelas = newEnrols[idx].tempEditKelas || '-';
+                                                  newEnrols[idx].isEditing = false;
+                                                  setStudentEnrollments(newEnrols);
+                                              }
+                                          }}
+                                          className="w-full px-2 py-1 mt-1 border border-indigo-300 rounded text-sm bg-white focus:ring-2 focus:ring-indigo-500 outline-none" 
+                                          placeholder="Ketik kelas"
+                                        />
+                                    ) : (
+                                        <p 
+                                          className="text-sm font-semibold text-slate-800 cursor-pointer hover:text-indigo-600 inline-block"
+                                          onClick={() => {
+                                              const newEnrols = [...studentEnrollments];
+                                              newEnrols[idx].isEditing = true;
+                                              newEnrols[idx].tempEditKelas = newEnrols[idx].kelas;
+                                              setStudentEnrollments(newEnrols);
+                                          }}
+                                          title="Klik untuk mengedit"
+                                        >
+                                          {enrol.kelas} <span className="text-slate-400 text-[10px] ml-1 font-normal">(klik untuk edit)</span>
+                                        </p>
+                                    )}
+                                  </div>
+                                  
+                                  {enrol.isEditing ? (
+                                      <button type="button" onClick={() => {
+                                          const newEnrols = [...studentEnrollments];
+                                          newEnrols[idx].kelas = newEnrols[idx].tempEditKelas || '-';
+                                          newEnrols[idx].isEditing = false;
+                                          setStudentEnrollments(newEnrols);
+                                      }} className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-indigo-200">Apply</button>
+                                  ) : (
+                                      <button type="button" onClick={() => {
+                                          const filtered = studentEnrollments.filter((_, i) => i !== idx);
+                                          setStudentEnrollments(filtered);
+                                      }} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-colors text-xs font-medium">Hapus</button>
+                                  )}
+                               </div>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-2 items-end p-3 bg-white rounded-xl border border-slate-200">
+                            <div className="flex-1">
+                              <label className="block text-[10px] text-slate-500 mb-1">Pilih Tahun Ajaran</label>
+                              <select 
+                                value={biodataForm.temp_ta_id || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, temp_ta_id: e.target.value, temp_kelas: '', kelasError: ''})}
+                                className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                              >
+                                <option value="">-- Tahun Ajaran --</option>
+                                {tahunAjarans?.map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex-1">
+                              <label className="block text-[10px] text-slate-500 mb-1">Ketik / Pilih Kelas</label>
+                              <input 
+                                list="kelas-options-temp"
+                                value={biodataForm.temp_kelas || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, temp_kelas: e.target.value})}
+                                placeholder="Cth: X.1"
+                                className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                              />
+                              <datalist id="kelas-options-temp">
+                                {biodataForm.temp_ta_id && [...new Set(students?.filter(s => s.tahun_ajaran_id === biodataForm.temp_ta_id).map(s => s.kelas).filter(c => c && c !== '-'))].sort().map(c => (
+                                  <option key={c} value={c} />
+                                ))}
+                              </datalist>
+                            </div>
+                            <button 
+                              type="button" 
+                              onClick={() => {
+                                if(!biodataForm.temp_ta_id || !biodataForm.temp_kelas) {
+                                  setBiodataForm({...biodataForm, kelasError: 'Pilih Tahun Ajaran dan isi Kelas terlebih dahulu!'});
+                                  return;
+                                }
+                                const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id);
+                                
+                                const existingIndex = studentEnrollments.findIndex(e => e.tahun_ajaran_id === biodataForm.temp_ta_id);
+                                if (existingIndex >= 0) {
+                                  setBiodataForm({...biodataForm, kelasError: 'Kelas untuk Tahun Ajaran ini sudah ada di daftar.'});
+                                  return;
+                                }
+
+                                setStudentEnrollments([...studentEnrollments, {
+                                  tahun_ajaran_id: ta.id,
+                                  tahun_ajaran: { nama: ta.nama },
+                                  kelas: biodataForm.temp_kelas,
+                                  nisn: biodataForm.foreign_id
+                                }]);
+                                setBiodataForm({...biodataForm, temp_ta_id: '', temp_kelas: '', kelasError: ''});
+                              }}
+                              className="px-4 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors"
+                            >
+                              Tambah
+                            </button>
+                          </div>
+                          {biodataForm.kelasError && (
+                            <p className="text-xs text-red-500 mt-2 font-medium bg-red-50 p-2 rounded-lg border border-red-200 shadow-sm flex items-center gap-2">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              {biodataForm.kelasError}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-slate-500 mt-2 italic">*Kelas yang ditambahkan di sini akan otomatis tersimpan saat Anda menekan tombol "Simpan Data" di bawah.</p>
                         </div>
                         <div className="md:col-span-2 grid grid-cols-2 gap-4">
                           <div className="md:col-span-1">
