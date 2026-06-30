@@ -114,26 +114,25 @@ function Dashboard() {
         setShowProfileConfig(newShowProfile)
       }
       
-      // 1. Photo for current active year
-      if (data.tahun_ajaran_id) {
-        urls.push(`https://res.cloudinary.com/dwyhpysp5/image/upload/SKL-BM/FOTO_${data.nisn}_${data.tahun_ajaran_id}`)
-      }
-      
-      // 2. Fetch older photos
-      let query = supabase
+      // 1. Fetch all photos from database
+      const { data: allFotos } = await supabase
         .from('foto')
         .select('cloudinary_url, tahun_ajaran_id')
         .eq('nisn', data.nisn)
-        .order('tahun_ajaran_id', { ascending: false })
         
-      if (data.tahun_ajaran_id) {
-        query = query.neq('tahun_ajaran_id', data.tahun_ajaran_id)
-      }
-      
-      const { data: oldFotos } = await query
-      
-      if (oldFotos && oldFotos.length > 0) {
-        oldFotos.forEach(f => urls.push(f.cloudinary_url))
+      if (allFotos && allFotos.length > 0) {
+        // Put the photo for the current active year first
+        const currentYearFoto = allFotos.find(f => f.tahun_ajaran_id === data.tahun_ajaran_id)
+        if (currentYearFoto && currentYearFoto.cloudinary_url) {
+          urls.push(currentYearFoto.cloudinary_url)
+        }
+        
+        // Add the rest
+        allFotos.forEach(f => {
+          if (f.tahun_ajaran_id !== data.tahun_ajaran_id && f.cloudinary_url) {
+            urls.push(f.cloudinary_url)
+          }
+        })
       }
       
       urls.push(DEFAULT_AVATAR)

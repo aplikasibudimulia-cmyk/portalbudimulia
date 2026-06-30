@@ -29,6 +29,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [search, setSearch] = useState(initialSearchQuery || '')
   const [selectedTaFilter, setSelectedTaFilter] = useState(activeTa?.nama || 'all')
   const [selectedClassFilter, setSelectedClassFilter] = useState('all')
+  const [summaryFilter, setSummaryFilter] = useState('all')
+
+  const getAvailableClasses = (taId) => {
+    if (!taId) return []
+    return [...new Set(students?.filter(s => s.tahun_ajaran_id === taId && s.kelas && s.kelas !== '-').map(s => s.kelas))].sort()
+  }
   
   const [loading, setLoading] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -203,6 +209,28 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   }
 
   // --- ACTIONS ---
+
+  // Backup data for cards before summary filter is applied
+  const dataForCards = [...mergedData];
+
+  // Apply Summary Filter
+  if (summaryFilter !== 'all') {
+    if (summaryFilter === 'with_akun') {
+      mergedData = mergedData.filter(a => a.hasAkun)
+    } else if (summaryFilter === 'without_akun') {
+      mergedData = mergedData.filter(a => !a.hasAkun)
+    } else if (summaryFilter === 'active_akun') {
+      if (activeTab === 'murid') {
+        mergedData = mergedData.filter(a => a.hasAkun && a.status === 'aktif')
+      } else {
+        mergedData = mergedData.filter(a => {
+          const akun = akunList.find(ak => ak.id === a.akun_id);
+          return akun && (akun.role === 'admin' || akun.role === 'superadmin');
+        })
+      }
+    }
+  }
+
 
   const handleResetPassword = (row) => {
     if (!row.hasAkun || !row.akun_id) {
@@ -1065,23 +1093,27 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
               {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0">
           {(activeTab === 'murid' ? [
-            { l: 'Total Murid', v: mergedData.length },
-            { l: 'Punya Akun', v: mergedData.filter(m => m.hasAkun).length },
-            { l: 'Tanpa Akun', v: mergedData.filter(m => !m.hasAkun).length },
-            { l: 'Akun Aktif', v: mergedData.filter(m => m.hasAkun && m.status === 'aktif').length }
+            { l: 'Total Murid', v: dataForCards.length, type: 'all' },
+            { l: 'Punya Akun', v: dataForCards.filter(m => m.hasAkun).length, type: 'with_akun' },
+            { l: 'Tanpa Akun', v: dataForCards.filter(m => !m.hasAkun).length, type: 'without_akun' },
+            { l: 'Akun Aktif', v: dataForCards.filter(m => m.hasAkun && m.status === 'aktif').length, type: 'active_akun' }
           ] : [
-            { l: 'Total Guru & Staff', v: mergedData.length },
-            { l: 'Punya Akun', v: mergedData.filter(g => g.hasAkun).length },
-            { l: 'Tanpa Akun', v: mergedData.filter(g => !g.hasAkun).length },
-            { l: 'Admin', v: mergedData.filter(g => {
+            { l: 'Total Guru & Staff', v: dataForCards.length, type: 'all' },
+            { l: 'Punya Akun', v: dataForCards.filter(g => g.hasAkun).length, type: 'with_akun' },
+            { l: 'Tanpa Akun', v: dataForCards.filter(g => !g.hasAkun).length, type: 'without_akun' },
+            { l: 'Admin', v: dataForCards.filter(g => {
                 const akun = akunList.find(a => a.id === g.akun_id);
                 return akun && (akun.role === 'admin' || akun.role === 'superadmin');
-              }).length 
+              }).length, type: 'active_akun'
             }
           ]).map(stat => (
-            <div key={stat.l} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">{stat.l}</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">{stat.v}</p>
+            <div 
+              key={stat.l} 
+              onClick={() => setSummaryFilter(stat.type)}
+              className={`bg-white border rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:-translate-y-1 ${summaryFilter === stat.type ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/30' : 'border-slate-200 hover:border-indigo-300'}`}
+            >
+              <p className={`text-sm font-medium ${summaryFilter === stat.type ? 'text-indigo-600' : 'text-slate-500'}`}>{stat.l}</p>
+              <p className={`text-2xl font-bold mt-1 ${summaryFilter === stat.type ? 'text-indigo-900' : 'text-slate-900'}`}>{stat.v}</p>
             </div>
           ))}
         </div>
