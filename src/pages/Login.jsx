@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import bcrypt from 'bcryptjs'
@@ -87,6 +87,67 @@ function Login() {
         logActivity({ userRole: 'Siswa', action: 'Siswa Login', details: `Siswa ${siswa.nama_lengkap} login via eBudiMulia.` })
         navigate('/dashboard')
 
+      } else if (loginRole === 'Orang Tua') {
+        // --- LOGIC LOGIN ORANG TUA ---
+        const { data: akun, error: akunError } = await supabase
+          .from('akun_pengguna')
+          .select('*')
+          .ilike('username', username.trim())
+          .maybeSingle()
+
+        if (akunError || !akun || akun.role !== 'orang_tua') {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Username tidak terdaftar sebagai Orang Tua.' })
+          return
+        }
+
+        if (akun.status !== 'aktif') {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Akun Anda dinonaktifkan. Silakan hubungi admin.' })
+          return
+        }
+
+        // Verifikasi Password dengan bcrypt
+        const isMatch = bcrypt.compareSync(password.trim(), akun.password || '')
+        if (!isMatch) {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Kata sandi salah. Silakan coba lagi.' })
+          return
+        }
+
+        const { data: siswa, error: siswaError } = await supabase
+          .from('siswa_permanent')
+          .select('*')
+          .eq('nisn', akun.foreign_id)
+          .maybeSingle()
+
+        if (siswaError || !siswa) {
+          setLoading(false)
+          setNotification({ type: 'error', message: 'Data Anak tidak ditemukan.' })
+          return
+        }
+
+        const { data: activeTa } = await supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).single()
+        let enrollment = {}
+        if (activeTa) {
+          const { data: enrol } = await supabase.from('enrollment').select('*').eq('nisn', siswa.nisn).eq('tahun_ajaran_id', activeTa.id).maybeSingle()
+          if (enrol) enrollment = enrol
+        }
+
+        const sessionData = {
+          ...siswa,
+          kode: enrollment.kode || null,
+          kelas: enrollment.kelas || null,
+          tahun_ajaran_id: activeTa?.id || null,
+          tahun_ajaran: activeTa?.nama || null,
+          akun_id: akun.id,
+          role: akun.role
+        }
+
+        localStorage.setItem('orangtua_session', JSON.stringify(sessionData))
+        logActivity({ userRole: 'Orang Tua', action: 'Orang Tua Login', details: `Orang Tua dari ${siswa.nama_lengkap} login via portal.` })
+        navigate('/dashboard-orang-tua')
+
       } else {
         // --- LOGIC LOGIN GURU / STAFF ---
         const { data: akun, error: akunError } = await supabase
@@ -107,10 +168,10 @@ function Login() {
           return
         }
 
-        const isGuruStaffAkun = akun.role === 'guru' || akun.role === 'admin'
+        const isGuruStaffAkun = ['guru', 'admin', 'staff', 'staf', 'piket'].includes((akun.role || '').toLowerCase())
         if (!isGuruStaffAkun) {
           setLoading(false)
-          setNotification({ type: 'error', message: `Akun ini bukan milik Guru / Staff.` })
+          setNotification({ type: 'error', message: `Akun ini bukan milik Guru / Staff / Piket.` })
           return
         }
 
@@ -169,8 +230,8 @@ function Login() {
           </div>
 
           {/* Role Toggle Tabs */}
-          <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
-            {['Siswa', 'Guru / Staff'].map((role) => (
+          <div className="flex p-1 bg-slate-100 rounded-xl mb-6 flex-wrap">
+            {['Siswa', 'Orang Tua', 'Guru / Staff'].map((role) => (
               <button
                 key={role}
                 type="button"
@@ -180,7 +241,7 @@ function Login() {
                   setPassword('')
                   setNotification(null)
                 }}
-                className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all duration-200 ${
+                className={`flex-1 py-2 px-2 text-sm font-semibold rounded-lg transition-all duration-200 min-w-[30%] ${
                   loginRole === role
                     ? 'bg-white text-slate-900 shadow-sm border border-slate-200/50'
                     : 'text-slate-500 hover:text-slate-700'
@@ -209,7 +270,7 @@ function Login() {
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-slate-700 mb-2">
-                {loginRole === 'Siswa' ? 'Email Siswa (Gmail)' : 'Username Pegawai'}
+                {loginRole === 'Siswa' ? 'Email Siswa (Gmail)' : loginRole === 'Orang Tua' ? 'Username Orang Tua' : 'Username Pegawai'}
               </label>
               <input
                 id="username"
@@ -217,7 +278,7 @@ function Login() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder={loginRole === 'Siswa' ? 'contoh: nama@gmail.com' : 'Masukkan username'}
+                placeholder={loginRole === 'Siswa' ? 'contoh: nama@gmail.com' : loginRole === 'Orang Tua' ? 'contoh: ebm.nama123' : 'Masukkan username'}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck="false"
@@ -269,6 +330,11 @@ function Login() {
 
         <p className="text-center text-xs text-slate-500 mt-8 font-medium">
           &copy; {new Date().getFullYear()} eBudiMulia SMP Budi Mulia Jakarta.<br />All rights reserved.
+          <br /><br />
+          <Link to="/login-admin" className="text-slate-400 hover:text-indigo-600 transition-colors flex items-center justify-center gap-1">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            Akses Admin
+          </Link>
         </p>
       </div>
     </div>

@@ -61,6 +61,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const broadcastChannelRef = useRef(null)
   const manualUploadRef = useRef(null)
   const [targetUploadNisn, setTargetUploadNisn] = useState(null)
+  const handleManualUpload = () => {}
+  const [showInfo, setShowInfo] = useState(false)
   const [files, setFiles] = useState(new Set())
   const [fileUrls, setFileUrls] = useState({})
   const [fileNames, setFileNames] = useState({})
@@ -157,8 +159,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
       if (eNisn) enrData.push(...eNisn);
     }
     
-    const kodeToNisn = new Map(enrData.map(e => [e.kode, e.nisn]));
-    const nisnToKode = new Map(enrData.map(e => [e.nisn, e.kode]));
+    const kodeToNisn = new Map(enrData.map(e => [String(e.kode), String(e.nisn)]));
+    const nisnToKode = new Map(enrData.map(e => [String(e.nisn), String(e.kode)]));
 
     const filesSet = new Set();
     const urls = {};
@@ -168,27 +170,36 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
     const actKodes = {};
     
     data.forEach(f => {
-      const nisn = kodeToNisn.get(f.kode_siswa) || f.kode_siswa;
-      const kode = nisnToKode.get(nisn) || f.kode_siswa;
+      const fKodeStr = String(f.kode_siswa);
+      const nisn = kodeToNisn.get(fKodeStr) || fKodeStr;
+      const kode = nisnToKode.get(nisn) || fKodeStr;
+      const strNisn = String(nisn);
+      const strKode = String(kode);
       
       if (f.file_url && f.file_url !== '-') {
-        filesSet.add(nisn);
-        filesSet.add(kode);
-        urls[nisn] = f.file_url;
-        urls[kode] = f.file_url;
+        filesSet.add(strNisn);
+        filesSet.add(strKode);
+        filesSet.add(fKodeStr);
+        urls[strNisn] = f.file_url;
+        urls[strKode] = f.file_url;
+        urls[fKodeStr] = f.file_url;
       }
-      names[nisn] = f.file_name;
-      names[kode] = f.file_name;
+      names[strNisn] = f.file_name;
+      names[strKode] = f.file_name;
+      names[fKodeStr] = f.file_name;
       if (f.is_accessible !== undefined) {
-        access[nisn] = f.is_accessible;
-        access[kode] = f.is_accessible;
+        access[strNisn] = f.is_accessible;
+        access[strKode] = f.is_accessible;
+        access[fKodeStr] = f.is_accessible;
       }
       if (f.persyaratan_terpenuhi !== undefined) {
-        reqs[nisn] = f.persyaratan_terpenuhi || {};
-        reqs[kode] = f.persyaratan_terpenuhi || {};
+        reqs[strNisn] = f.persyaratan_terpenuhi || {};
+        reqs[strKode] = f.persyaratan_terpenuhi || {};
+        reqs[fKodeStr] = f.persyaratan_terpenuhi || {};
       }
-      actKodes[nisn] = f.kode_siswa;
-      actKodes[kode] = f.kode_siswa;
+      actKodes[strNisn] = f.kode_siswa;
+      actKodes[strKode] = f.kode_siswa;
+      actKodes[fKodeStr] = f.kode_siswa;
     });
     
     setFiles(filesSet);
@@ -332,6 +343,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
     const query = search.toLowerCase()
     filteredStudents = filteredStudents.filter(s => s.nama_lengkap.toLowerCase().includes(query) || s.nisn.includes(query))
   }
+  
+  filteredStudents.sort((a, b) => (a.nama_lengkap || '').localeCompare(b.nama_lengkap || ''))
 
   return (
     <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem)] md:h-[calc(100vh-4rem)]">
@@ -388,9 +401,11 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
                 {filteredStudents.length === 0 ? (
                   <tr><td colSpan="6" className="px-5 py-8 text-center text-slate-500">Tidak ada siswa yang cocok.</td></tr>
                 ) : filteredStudents.map((s, idx) => {
-                  const hasFile = files.has(s.nisn)
-                  const isAccessible = fileAccess[s.nisn]
-                  const isToggling = toggling === s.nisn
+                  const strNisn = String(s.nisn)
+                  const strKode = s.kode ? String(s.kode) : ''
+                  const hasFile = files.has(strNisn) || (strKode && files.has(strKode))
+                  const isAccessible = fileAccess[strNisn] || (strKode && fileAccess[strKode])
+                  const isToggling = toggling === strNisn
 
                   return (
                     <tr key={s.kode} className="group hover:bg-slate-50/50 bg-white">
@@ -410,7 +425,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
                         )}
                       </td>
                       {type.persyaratan && type.persyaratan.map(req => {
-                        const terpenuhi = fileReqs[s.nisn] || {}
+                        const terpenuhi = fileReqs[strNisn] || (strKode ? fileReqs[strKode] : undefined) || {}
                         const isChecked = !!(terpenuhi[req.id])
                         return (
                           <td key={req.id} className="text-center px-2 py-2">
@@ -418,8 +433,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
                               <input type="checkbox"
                                 className={`w-4 h-4 rounded focus:ring-0 cursor-pointer ${isChecked ? 'text-green-600' : 'text-slate-300 border-slate-300'}`}
                                 checked={isChecked}
-                                disabled={!canKelola || toggling === `${s.nisn}_req_${req.id}`}
-                                onChange={() => handleToggleReq(s.nisn, req.id)}
+                                disabled={!canKelola || toggling === `${strNisn}_req_${req.id}`}
+                                onChange={() => handleToggleReq(strNisn, req.id)}
                               />
                             </label>
                           </td>
@@ -454,8 +469,20 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
         </div>
 
         {/* Sidebar Progress Per Kelas */}
-        <div className="w-full lg:w-72 shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm p-5 flex flex-col h-auto lg:h-full lg:max-h-full overflow-y-auto">
-          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-5">Progress Per Kelas (Akses Dokumen)</h3>
+        <div className="w-full lg:w-72 shrink-0 flex flex-col gap-3 h-auto lg:h-full lg:max-h-full">
+          <button 
+            onClick={() => setShowInfo(!showInfo)}
+            className="flex items-center justify-between px-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm text-slate-700 text-xs font-bold hover:bg-slate-50 transition-colors w-full"
+          >
+            <span>Informasi Progress Kelas</span>
+            <svg className={`w-4 h-4 transition-transform ${showInfo ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          
+          {showInfo && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 flex flex-col h-auto overflow-y-auto flex-1">
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-5">Progress Per Kelas (Akses Dokumen)</h3>
           <div className="space-y-4">
             {uniqueClasses.map(c => {
               const classStudents = displayStudents.filter(s => s.kelas === c)
@@ -500,6 +527,8 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
               )
             })}
           </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -705,11 +734,11 @@ export default function DashboardGuru() {
         setStudents(siswaData)
 
         // For default tabs, only show active TA students
-        const activeWaliClasses = allWaliAssignments.filter(k => !activeTaData || k.tahun_ajaran_id === activeTaData.id).map(k => k.kelas)
-        const activeMapelClasses = allMapelAssignments.filter(m => !activeTaData || m.tahun_ajaran_id === activeTaData.id).map(m => m.kelas)
+        const activeWaliClasses = allWaliAssignments.filter(k => activeTaData && k.tahun_ajaran_id == activeTaData.id).map(k => k.kelas)
+        const activeMapelClasses = allMapelAssignments.filter(m => activeTaData && m.tahun_ajaran_id == activeTaData.id).map(m => m.kelas)
 
-        setWaliStudents(siswaData.filter(s => (!activeTaData || s.tahun_ajaran_id === activeTaData.id) && activeWaliClasses.includes(s.kelas)))
-        setMapelStudents(siswaData.filter(s => (!activeTaData || s.tahun_ajaran_id === activeTaData.id) && activeMapelClasses.includes(s.kelas)))
+        setWaliStudents(siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeWaliClasses.includes(s.kelas)))
+        setMapelStudents(siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeMapelClasses.includes(s.kelas)))
       }
 
       const { data: fotoData } = await supabase.from('foto').select('*')
@@ -827,11 +856,11 @@ export default function DashboardGuru() {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
   }
 
-  const waliClassesStr = session.kelas?.filter(k => !activeTa || k.tahun_ajaran_id === activeTa.id).map(k => k.kelas).join(', ') || '-'
-  const mapelClassesStr = session.guru_mapel_raw?.filter(m => !activeTa || m.tahun_ajaran_id === activeTa.id).map(m => m.kelas).join(', ') || '-'
+  const waliClassesStr = session.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa.id).map(k => k.kelas).join(', ') || '-'
+  const mapelClassesStr = session.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa.id).map(m => m.kelas).join(', ') || '-'
   const allAssignedClassesStr = Array.from(new Set([
-    ...(session.kelas?.filter(k => !activeTa || k.tahun_ajaran_id === activeTa.id).map(k => k.kelas) || []),
-    ...(session.guru_mapel_raw?.filter(m => !activeTa || m.tahun_ajaran_id === activeTa.id).map(m => m.kelas) || [])
+    ...(session.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa.id).map(k => k.kelas) || []),
+    ...(session.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa.id).map(m => m.kelas) || [])
   ])).join(', ') || 'Belum ada'
 
   const uniqueWaliClasses = [...new Set(waliStudents.map(s => s.kelas).filter(Boolean))].sort()
@@ -919,12 +948,7 @@ export default function DashboardGuru() {
 
               {fitur.has('kelola_presensi_sekolah') && (
                 <>
-                  <button onClick={() => { setActiveMenu('piket_dashboard'); setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'piket_dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                      }`}>
-                    <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Piket</span>}
-                  </button>
+
                   <button onClick={() => { setActiveMenu('data_presensi_siswa'); setSidebarOpen(false); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'data_presensi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                       }`}>
@@ -1086,7 +1110,7 @@ export default function DashboardGuru() {
                               <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
                                 <IconUsers /> Statistik Kelas Saya
                               </h3>
-                              <div className="text-3xl font-black text-indigo-600 mb-1">{students.length}</div>
+                              <div className="text-3xl font-black text-indigo-600 mb-1">{students.filter(s => activeTa && s.tahun_ajaran_id == activeTa.id).length}</div>
                               <p className="text-sm text-slate-500">Total siswa aktif di kelas yang Anda ampu</p>
                             </div>
                             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center items-center text-center">

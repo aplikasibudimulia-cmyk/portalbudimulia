@@ -11,41 +11,43 @@ const STATUS_COLORS = {
 }
 
 export default function SiswaRiwayatPresensi({ studentData }) {
-  const today = new Date()
-  const currentMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
-  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr)
+  const todayStr = new Date().toISOString().split('T')[0]
+  const [startDate, setStartDate] = useState(todayStr)
+  const [endDate, setEndDate] = useState(todayStr)
   const [presensiList, setPresensiList] = useState([])
   const [loading, setLoading] = useState(true)
+  const [expandedDate, setExpandedDate] = useState(null)
 
-  // Generate opsi bulan (misal 6 bulan terakhir)
-  const monthOptions = Array.from({ length: 6 }).map((_, i) => {
-    const d = new Date()
-    d.setMonth(d.getMonth() - i)
-    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    const label = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })
-    return { val, label }
-  })
+  const [effectiveDates, setEffectiveDates] = useState([])
 
   useEffect(() => {
     fetchPresensi()
-  }, [selectedMonth])
+  }, [startDate, endDate])
 
   const fetchPresensi = async () => {
     setLoading(true)
-    // Mencari tanggal yang dimulai dengan YYYY-MM
-    // Menggunakan operator like atau gte/lte
-    const startDate = `${selectedMonth}-01`
-    const nextMonthDate = new Date(selectedMonth + '-01')
-    nextMonthDate.setMonth(nextMonthDate.getMonth() + 1)
-    const endDate = nextMonthDate.toISOString().split('T')[0]
+    
+    let sesiQuery = supabase.from('sesi_presensi').select('tanggal').order('tanggal', { ascending: false })
+    if (startDate) sesiQuery = sesiQuery.gte('tanggal', startDate)
+    if (endDate) sesiQuery = sesiQuery.lte('tanggal', endDate)
+    else if (startDate && !endDate) sesiQuery = sesiQuery.lte('tanggal', startDate)
+    
+    const { data: sesiData } = await sesiQuery
+    if (sesiData) {
+      setEffectiveDates(sesiData.map(s => s.tanggal))
+    }
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('presensi_harian')
-      .select('*')
+      .select('status, waktu, tanggal, tipe, selfie_url')
       .eq('siswa_nisn', studentData.nisn)
-      .gte('tanggal', startDate)
-      .lt('tanggal', endDate)
       .order('tanggal', { ascending: false })
+
+    if (startDate) query = query.gte('tanggal', startDate)
+    if (endDate) query = query.lte('tanggal', endDate)
+    else if (startDate && !endDate) query = query.lte('tanggal', startDate)
+
+    const { data, error } = await query
 
     if (!error && data) {
       setPresensiList(data)
@@ -62,17 +64,20 @@ export default function SiswaRiwayatPresensi({ studentData }) {
           <h3 className="font-bold text-slate-800 text-lg">Riwayat Kehadiran</h3>
           <p className="text-sm text-slate-500 mt-0.5">Pantau catatan presensi harian Anda</p>
         </div>
-        <div className="flex items-center gap-2">
-          <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-          <select 
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow appearance-none cursor-pointer pr-8 bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2224%22%20height%3D%2224%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[length:16px] bg-[right_10px_center] bg-no-repeat"
-          >
-            {monthOptions.map(opt => (
-              <option key={opt.val} value={opt.val}>{opt.label}</option>
-            ))}
-          </select>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <input 
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow w-full sm:w-auto"
+          />
+          <span className="text-slate-400 font-bold text-sm hidden sm:block">s/d</span>
+          <input 
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow w-full sm:w-auto"
+          />
         </div>
       </div>
 
@@ -93,40 +98,86 @@ export default function SiswaRiwayatPresensi({ studentData }) {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {presensiList.map((item) => {
-              const d = new Date(item.tanggal)
-              const tanggalStr = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-              const statusColor = STATUS_COLORS[item.status] || 'bg-slate-50 text-slate-600 border-slate-200'
-              const statusLabel = STATUS_LABELS[item.status] || item.status
-
-              return (
-                <div key={item.id} className="p-4 sm:p-5 hover:bg-slate-50/80 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-full border-2 flex items-center justify-center font-black text-lg shrink-0 ${statusColor}`}>
-                      {item.status}
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-800">{tanggalStr}</p>
-                      <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6l4 2"/></svg>
-                        Tercatat pukul <span className="font-bold text-slate-700">{item.waktu || '-'} WIB</span>
-                      </p>
-                    </div>
+            {(() => {
+              const dates = effectiveDates
+              if (dates.length === 0) {
+                return (
+                  <div className="py-12 text-center text-slate-500 text-sm">
+                    Tidak ada sesi presensi yang aktif pada rentang tanggal tersebut.
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-3 py-1 text-xs font-bold rounded-full border ${statusColor}`}>
-                      {statusLabel}
-                    </span>
-                    {item.metode === 'qr_scan' && (
-                      <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                        Scan QR
-                      </span>
+                )
+              }
+
+              return dates.map(tanggal => {
+                const records = presensiList.filter(r => r.tanggal === tanggal)
+                const tglStr = new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+                
+                // Tentukan status utama
+                const masukRecord = records.find(r => r.tipe === 'masuk' || !r.tipe)
+                let s = { label: 'Belum Presensi', cls: 'bg-slate-100 text-slate-500 border-slate-200' }
+                
+                if (masukRecord) {
+                  s = STATUS_LABELS[masukRecord.status] ? { label: STATUS_LABELS[masukRecord.status], cls: STATUS_COLORS[masukRecord.status] } : { label: masukRecord.status, cls: 'bg-slate-100 text-slate-700' }
+                }
+                const isExpanded = expandedDate === tanggal
+
+                return (
+                  <div key={tanggal} className="flex flex-col">
+                    {/* ACCORDION HEADER */}
+                    <button 
+                      onClick={() => setExpandedDate(isExpanded ? null : tanggal)}
+                      className={`w-full flex items-center justify-between p-4 sm:p-5 transition-colors ${isExpanded ? 'bg-indigo-50/50' : 'hover:bg-slate-50/80'}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <svg className={`w-5 h-5 text-slate-400 transform transition-transform ${isExpanded ? 'rotate-90 text-indigo-500' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/></svg>
+                        <span className="font-bold text-slate-800 text-sm sm:text-base">{tglStr}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-3 py-1 text-xs font-bold rounded-md border ${s.cls}`}>{s.label}</span>
+                      </div>
+                    </button>
+
+                    {/* ACCORDION BODY */}
+                    {isExpanded && (
+                      <div className="p-4 sm:p-6 bg-slate-50/50 border-t border-slate-100 shadow-inner">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                          {['masuk', 'pulang'].map(tipe => {
+                            const p = records.find(r => r.tipe === tipe || (!r.tipe && tipe === 'masuk'))
+                            
+                            if (!p) return (
+                              <div key={tipe} className="flex flex-col items-center justify-center p-6 rounded-xl bg-white border border-slate-200 min-h-[200px]">
+                                <span className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">{tipe}</span>
+                                <span className="text-sm font-semibold text-slate-300">Belum ada data</span>
+                              </div>
+                            )
+
+                            const pStatus = STATUS_LABELS[p.status] ? { label: STATUS_LABELS[p.status], cls: STATUS_COLORS[p.status] } : { label: p.status, cls: 'bg-slate-100 text-slate-700' }
+                            
+                            return (
+                              <div key={tipe} className="flex flex-col items-center p-6 rounded-xl bg-white border border-slate-200 shadow-sm relative">
+                                <span className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">{tipe}</span>
+                                <span className={`text-xs font-bold px-3 py-1 rounded-md ${pStatus.cls}`}>{pStatus.label}</span>
+                                <span className="text-base font-black text-slate-700 mt-2">{p.waktu} WIB</span>
+                                
+                                {p.selfie_url ? (
+                                  <div className="mt-4 rounded-xl overflow-hidden border-4 border-slate-100 shadow-md">
+                                    <img src={p.selfie_url} alt={`Selfie ${tipe}`} className="w-32 h-32 sm:w-40 sm:h-40 object-cover" />
+                                  </div>
+                                ) : (
+                                  <div className="mt-4 w-32 h-32 sm:w-40 sm:h-40 bg-slate-100 rounded-xl flex items-center justify-center border-2 border-dashed border-slate-300">
+                                    <span className="text-xs font-medium text-slate-400">Tidak ada foto</span>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            })()}
           </div>
         )}
       </div>

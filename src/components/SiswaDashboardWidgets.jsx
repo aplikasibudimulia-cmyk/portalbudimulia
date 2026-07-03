@@ -12,7 +12,7 @@ const getPoinMeta = (p, max = 100) => {
   return { bar: 'from-red-400 to-red-600', badge: 'bg-red-100 text-red-700 border-red-300', label: 'Kritis', emoji: '🔴' }
 }
 
-export default function SiswaDashboardWidgets({ studentData, menuTypes, onNavigate }) {
+export default function SiswaDashboardWidgets({ studentData, menuTypes, onNavigate, isOrangTua = false, showFeatureConfig = { presensi: true, nilai: true, poin: true } }) {
   const [presensiHariIni, setPresensiHariIni] = useState(null)
   const [rekapBulan, setRekapBulan] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
   const [nilaiTerbaru, setNilaiTerbaru] = useState([])
@@ -39,15 +39,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   useEffect(() => {
     fetchAllWidgets()
     
-    // Set Motivasi Harian (Day of Year)
-    const now = new Date()
-    const start = new Date(now.getFullYear(), 0, 0)
-    const diff = now - start
-    const oneDay = 1000 * 60 * 60 * 24
-    const dayOfYear = Math.floor(diff / oneDay)
-    setMotivasi(MOTIVASI_LIST[dayOfYear % MOTIVASI_LIST.length])
-    
-    // Subscribe realtime untuk presensi hari ini (jika piket update)
+    // Setup realtime untuk presensi hari ini (jika piket update)
     const channel = supabase.channel(`siswa-dashboard-widgets-${studentData.nisn}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, () => {
         fetchPresensi()
@@ -127,12 +119,10 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
 
       // Set Nilai
       if (resNilai.data) {
-        // filter jika mata_pelajaran/komponen invisible? 
-        // prompt: is_nilai_visible = true. Karena kita tidak ubah DB, kita asumsikan ditampilkan jika sudah ada nilai.
         setNilaiTerbaru(resNilai.data)
       }
 
-      // Set Berita (Filter by kelas locally or array overlap in supabase)
+      // Set Berita
       if (resBerita.data) {
         const applicableBerita = resBerita.data.filter(b => {
           if (!b.target_kelas || b.target_kelas.length === 0) return true
@@ -164,7 +154,6 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       const maxPoin = resPoin.data?.poin_default ?? defaultPoinSiswa
       setPoinData({ current: currentPoin, max: maxPoin })
       
-      
     } catch (err) {
       console.error("Error fetching widgets:", err)
     } finally {
@@ -192,7 +181,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         nama: type.nama,
         hasFile,
         accessible,
-        isNew: false // TODO: logic isNew jika tgl upload < 3 hari
+        isNew: false
       }
     })
     setDokumenStatus(status)
@@ -215,69 +204,73 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     <div className="animate-slide-up space-y-6">
       
       {/* WIDGET 1: Status Presensi Hari Ini */}
-      <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-slate-800 text-lg mb-1">
-              {presensiHariIni ? `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉` : 'Perhatian: Belum Presensi'}
-            </h3>
-            {presensiHariIni ? (
-              <p className="text-sm text-slate-500 flex items-center gap-2">
-                Status: <span className="font-bold px-2 py-0.5 bg-slate-100 rounded-full border border-slate-200 text-slate-700">{STATUS_LABELS[presensiHariIni.status] || presensiHariIni.status}</span>
-                Jam: <span className="font-bold">{presensiHariIni.waktu} WIB</span>
-              </p>
-            ) : (
-              <p className="text-sm text-amber-700">Anda belum melakukan presensi hari ini. Silakan klik tombol di samping.</p>
+      {!isOrangTua && showFeatureConfig.presensi && (
+        <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg mb-1">
+                {presensiHariIni ? `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉` : 'Perhatian: Belum Presensi'}
+              </h3>
+              {presensiHariIni ? (
+                <p className="text-sm text-slate-500 flex items-center gap-2">
+                  Status: <span className="font-bold px-2 py-0.5 bg-slate-100 rounded-full border border-slate-200 text-slate-700">{STATUS_LABELS[presensiHariIni.status] || presensiHariIni.status}</span>
+                  Jam: <span className="font-bold">{presensiHariIni.waktu} WIB</span>
+                </p>
+              ) : (
+                <p className="text-sm text-amber-700">Anda belum melakukan presensi hari ini. Silakan klik tombol di samping.</p>
+              )}
+            </div>
+            {!presensiHariIni && (
+              <button 
+                onClick={() => onNavigate('PRESENSI')}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-indigo-100"
+              >
+                Scan QR
+              </button>
             )}
           </div>
-          {!presensiHariIni && (
-            <button 
-              onClick={() => onNavigate('PRESENSI')}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-indigo-100"
-            >
-              Scan QR
-            </button>
-          )}
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* WIDGET 2: Ringkasan Kehadiran */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md transition-shadow group" onClick={() => onNavigate('PRESENSI')}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-              <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-              Kehadiran Bulan Ini
-            </h3>
-            <svg className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/></svg>
+        {showFeatureConfig.presensi && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md transition-shadow group" onClick={() => onNavigate('PRESENSI')}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Kehadiran Bulan Ini
+              </h3>
+              <svg className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/></svg>
+            </div>
+            <div className="grid grid-cols-4 gap-2 mb-4 text-center">
+              <div className="bg-emerald-50 rounded-xl p-2 border border-emerald-100">
+                <p className="text-xl font-black text-emerald-600">{rekapBulan.H + rekapBulan.T}</p>
+                <p className="text-[10px] font-bold text-emerald-500 uppercase">Hadir</p>
+              </div>
+              <div className="bg-blue-50 rounded-xl p-2 border border-blue-100">
+                <p className="text-xl font-black text-blue-600">{rekapBulan.S}</p>
+                <p className="text-[10px] font-bold text-blue-500 uppercase">Sakit</p>
+              </div>
+              <div className="bg-purple-50 rounded-xl p-2 border border-purple-100">
+                <p className="text-xl font-black text-purple-600">{rekapBulan.I}</p>
+                <p className="text-[10px] font-bold text-purple-500 uppercase">Izin</p>
+              </div>
+              <div className="bg-rose-50 rounded-xl p-2 border border-rose-100">
+                <p className="text-xl font-black text-rose-600">{rekapBulan.A}</p>
+                <p className="text-[10px] font-bold text-rose-500 uppercase">Alpha</p>
+              </div>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2 mb-1.5 overflow-hidden">
+              <div className={`h-2 rounded-full ${pbColor}`} style={{ width: `${persentaseHadir}%` }}></div>
+            </div>
+            <p className="text-xs font-bold text-slate-500 text-right">Tingkat Kehadiran: <span className="text-slate-700">{persentaseHadir}%</span></p>
           </div>
-          <div className="grid grid-cols-4 gap-2 mb-4 text-center">
-            <div className="bg-emerald-50 rounded-xl p-2 border border-emerald-100">
-              <p className="text-xl font-black text-emerald-600">{rekapBulan.H + rekapBulan.T}</p>
-              <p className="text-[10px] font-bold text-emerald-500 uppercase">Hadir</p>
-            </div>
-            <div className="bg-blue-50 rounded-xl p-2 border border-blue-100">
-              <p className="text-xl font-black text-blue-600">{rekapBulan.S}</p>
-              <p className="text-[10px] font-bold text-blue-500 uppercase">Sakit</p>
-            </div>
-            <div className="bg-purple-50 rounded-xl p-2 border border-purple-100">
-              <p className="text-xl font-black text-purple-600">{rekapBulan.I}</p>
-              <p className="text-[10px] font-bold text-purple-500 uppercase">Izin</p>
-            </div>
-            <div className="bg-rose-50 rounded-xl p-2 border border-rose-100">
-              <p className="text-xl font-black text-rose-600">{rekapBulan.A}</p>
-              <p className="text-[10px] font-bold text-rose-500 uppercase">Alpha</p>
-            </div>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-2 mb-1.5 overflow-hidden">
-            <div className={`h-2 rounded-full ${pbColor}`} style={{ width: `${persentaseHadir}%` }}></div>
-          </div>
-          <p className="text-xs font-bold text-slate-500 text-right">Tingkat Kehadiran: <span className="text-slate-700">{persentaseHadir}%</span></p>
-        </div>
+        )}
 
         {/* WIDGET 2.5: Poin Saya */}
-        {poinData && (
+        {!isOrangTua && showFeatureConfig.poin && poinData && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('POIN')}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -309,39 +302,41 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         )}
 
         {/* WIDGET 3: Nilai Terbaru */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-              <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-              Nilai Terbaru
-            </h3>
-            <button onClick={() => onNavigate('NILAI')} className="text-xs font-bold text-indigo-500 hover:text-indigo-600">Lihat Semua &rarr;</button>
+        {showFeatureConfig.nilai && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                Nilai Terbaru
+              </h3>
+              <button onClick={() => onNavigate('NILAI')} className="text-xs font-bold text-indigo-500 hover:text-indigo-600">Lihat Semua &rarr;</button>
+            </div>
+            {nilaiTerbaru.length > 0 ? (
+              <div className="space-y-3">
+                {nilaiTerbaru.map((n, idx) => (
+                  <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <div className="truncate pr-3">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{n.nilai_komponen?.mata_pelajaran?.nama}</p>
+                      <p className="text-sm font-bold text-slate-700 truncate">{n.nilai_komponen?.nama}</p>
+                    </div>
+                    <div className="w-10 h-10 shrink-0 bg-indigo-100 text-indigo-700 font-black rounded-lg flex items-center justify-center">
+                      {n.nilai}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6">
+                <p className="text-sm text-slate-400">Belum ada nilai yang dipublikasikan.</p>
+              </div>
+            )}
           </div>
-          {nilaiTerbaru.length > 0 ? (
-            <div className="space-y-3">
-              {nilaiTerbaru.map((n, idx) => (
-                <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="truncate pr-3">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{n.nilai_komponen?.mata_pelajaran?.nama}</p>
-                    <p className="text-sm font-bold text-slate-700 truncate">{n.nilai_komponen?.nama}</p>
-                  </div>
-                  <div className="w-10 h-10 shrink-0 bg-indigo-100 text-indigo-700 font-black rounded-lg flex items-center justify-center">
-                    {n.nilai}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-6">
-              <p className="text-sm text-slate-400">Belum ada nilai yang dipublikasikan.</p>
-            </div>
-          )}
-        </div>
+        )}
 
       </div>
 
       {/* WIDGET 4: Dokumen Siap Diambil */}
-      {dokumenStatus.length > 0 && (
+      {!isOrangTua && dokumenStatus.length > 0 && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
             <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>

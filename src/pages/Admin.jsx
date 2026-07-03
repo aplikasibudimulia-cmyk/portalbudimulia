@@ -142,6 +142,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
   const [fileFilter, setFileFilter] = useState('all')
   const { isUploading, progress: uploadProgress, results: uploadResults } = useUploadManager()
   const [activeTab, setActiveTab] = useState('dokumen')
+  const [showInfo, setShowInfo] = useState(false)
+  const [showProgressSidebar, setShowProgressSidebar] = useState(window.innerWidth >= 1024)
   const [selectedPreview, setSelectedPreview] = useState(null)
   const [toggling, setToggling] = useState(null)
   const [actualKodes, setActualKodes] = useState({})
@@ -544,7 +546,11 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
     // Gunakan global manager alih-alih state lokal
     globalUploadManager.startUpload()
     
-    const validKodes = new Set(students.map(s => String(s.kode ?? '').trim()).filter(Boolean))
+    const validKodes = new Set()
+    students.forEach(s => {
+      if (s.kode) validKodes.add(String(s.kode).trim())
+      if (s.nisn) validKodes.add(String(s.nisn).trim())
+    })
     const results = { success: [], failed: [], skipped: [] }
     
     for (let i = 0; i < filesList.length; i++) {
@@ -638,7 +644,7 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
     }
 
     return matchSearch && matchClass && matchReq && matchFile
-  })
+  }).sort((a, b) => (a.nama_lengkap || '').localeCompare(b.nama_lengkap || ''))
 
   // Stats calculations
   const statsStudentsWithFile = students.filter(s => files.has(s.nisn)).length
@@ -668,6 +674,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
       {ConfirmModalComponent}
       <input ref={inputRef} type="file" multiple accept="application/pdf" className="hidden"
         onChange={e => handleUpload(Array.from(e.target.files))} />
+      <input ref={manualUploadRef} type="file" accept="application/pdf" className="hidden"
+        onChange={handleManualUpload} />
 
       {/* STICKY TOP SECTION */}
       <div className="shrink-0">
@@ -676,6 +684,17 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
             <h2 className="text-xl font-bold text-slate-900">{type.nama}</h2>
             <p className="text-slate-500 text-xs mt-0.5">Format berkas: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">{'<kode>'}{type.kode_jenis}.pdf</code></p>
           </div>
+          <button
+            onClick={() => window.open(`/laporan-pengumuman/${type.id}`, '_blank')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-semibold transition-all border border-violet-200 shadow-sm hover:shadow-md active:scale-95"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Buka Laporan
+          </button>
         </div>
 
         <div className="flex gap-4 border-b border-slate-200 mb-4">
@@ -691,6 +710,29 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
 
         {activeTab === 'dokumen' && (
           <>
+            <div className="flex justify-end gap-2 mb-4 flex-wrap">
+              <button 
+                onClick={() => setShowInfo(!showInfo)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium transition-colors border border-slate-200"
+              >
+                <svg className={`w-4 h-4 transition-transform ${showInfo ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 9l-7 7-7-7" />
+                </svg>
+                {showInfo ? 'Sembunyikan Statistik & Kontrol' : 'Tampilkan Statistik & Kontrol'}
+              </button>
+              <button 
+                onClick={() => setShowProgressSidebar(!showProgressSidebar)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium transition-colors border border-slate-200"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
+                </svg>
+                {showProgressSidebar ? 'Sembunyikan Progress Kelas' : 'Tampilkan Progress Kelas'}
+              </button>
+            </div>
+
+            {showInfo && (
+              <>
             {/* STATS DASHBOARD */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
@@ -715,41 +757,51 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
 
 
             {/* CONTROL TOGGLES & ACTION BUTTONS */}
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
-                <span className="text-xs text-slate-600 font-medium">Akses</span>
-                <Toggle value={type.aktif} onChange={v => handleToggle('aktif', v)} disabled={toggling !== null} colorOn="bg-green-500" />
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 mb-3">
+              {/* Toggles Grid */}
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full xl:w-auto">
+                <div className="flex items-center justify-between sm:justify-start gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                  <span className="text-xs text-slate-600 font-medium">Akses</span>
+                  <Toggle value={type.aktif} onChange={v => handleToggle('aktif', v)} disabled={toggling !== null} colorOn="bg-green-500" />
+                </div>
+                <div className="flex items-center justify-between sm:justify-start gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                  <span className="text-xs text-slate-600 font-medium">Tampil (Siswa)</span>
+                  <Toggle value={type.visible} onChange={v => handleToggle('visible', v)} disabled={toggling !== null} colorOn="bg-blue-500" />
+                </div>
+                <div className="flex items-center justify-between sm:justify-start gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                  <span className="text-xs text-slate-600 font-medium">Tampil (Guru)</span>
+                  <Toggle value={type.visible_guru ?? true} onChange={v => handleToggle('visible_guru', v)} disabled={toggling !== null} colorOn="bg-cyan-500" />
+                </div>
+                <div className="flex items-center justify-between sm:justify-start gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                  <span className="text-xs text-slate-600 font-medium">Tampil (Orangtua)</span>
+                  <Toggle value={type.visible_orangtua ?? true} onChange={v => handleToggle('visible_orangtua', v)} disabled={toggling !== null} colorOn="bg-indigo-500" />
+                </div>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
-                <span className="text-xs text-slate-600 font-medium">Tampil (Siswa)</span>
-                <Toggle value={type.visible} onChange={v => handleToggle('visible', v)} disabled={toggling !== null} colorOn="bg-blue-500" />
-              </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
-                <span className="text-xs text-slate-600 font-medium">Tampil (Guru)</span>
-                <Toggle value={type.visible_guru ?? true} onChange={v => handleToggle('visible_guru', v)} disabled={toggling !== null} colorOn="bg-cyan-500" />
-              </div>
-              <div className="flex-1" />
-              {type.persyaratan && type.persyaratan.length > 0 && (
-                <button onClick={() => setShowVerificationModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-medium transition-all border border-purple-200">
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                  Verifikasi Massal
+
+              {/* Action Buttons Grid */}
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full xl:w-auto xl:justify-end">
+                {type.persyaratan && type.persyaratan.length > 0 && (
+                  <button onClick={() => setShowVerificationModal(true)}
+                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-medium transition-all border border-purple-200">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    Verifikasi Massal
+                  </button>
+                )}
+                <button onClick={() => handleBulkAccess(true)} className="px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-medium border border-teal-200 justify-center">Buka Semua</button>
+                <button onClick={() => handleBulkAccess(false)} className="px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-medium border border-orange-200 justify-center">Tutup Semua</button>
+                <button onClick={handleDownloadTemplate} disabled={isUploading}
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-medium transition-all">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Template PDF
                 </button>
-              )}
-              <button onClick={() => handleBulkAccess(true)} className="px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-medium border border-teal-200">Buka Semua</button>
-              <button onClick={() => handleBulkAccess(false)} className="px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-medium border border-orange-200">Tutup Semua</button>
-              <button onClick={handleDownloadTemplate} disabled={isUploading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-medium transition-all">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Template Penamaan PDF
-              </button>
-              <button onClick={() => inputRef.current?.click()} disabled={isUploading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-xs font-medium transition-all">
-                <IconUpload /> Upload PDF
-            </button>
-              {onDelete && (
-                <button onClick={onDelete} className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 border border-slate-200 hover:border-red-300 text-slate-500 hover:text-red-600 text-xs font-medium transition-all">Hapus</button>
-              )}
+                <button onClick={() => inputRef.current?.click()} disabled={isUploading}
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-xs font-medium transition-all">
+                  <IconUpload /> Upload PDF
+                </button>
+                {onDelete && (
+                  <button onClick={onDelete} className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 border border-slate-200 hover:border-red-300 text-slate-500 hover:text-red-600 text-xs font-medium transition-all justify-center">Hapus</button>
+                )}
+              </div>
             </div>
 
             {/* UPLOAD PROGRESS */}
@@ -783,7 +835,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
                 </div>
               </div>
             )}
-
+              </>
+            )}
 
           </>
         )}
@@ -1006,53 +1059,55 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
           )}
           </div>
           {/* Sidebar Progress Per Kelas */}
-          <div className="w-full lg:w-72 shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm p-5 flex flex-col h-auto lg:h-full lg:max-h-full overflow-y-auto">
-            <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-5">Progress Per Kelas (Akses Dokumen)</h3>
-            <div className="space-y-4">
-              {uniqueClasses.map(c => {
-                const classStudents = students.filter(s => s.kelas === c)
-                const total = classStudents.length
-                if (total === 0) return null
+          {showProgressSidebar && (
+            <div className="w-full lg:w-72 shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm p-5 flex flex-col h-auto lg:h-full lg:max-h-full overflow-y-auto">
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-5">Progress Per Kelas (Akses Dokumen)</h3>
+              <div className="space-y-4">
+                {uniqueClasses.map(c => {
+                  const classStudents = students.filter(s => s.kelas === c)
+                  const total = classStudents.length
+                  if (total === 0) return null
 
-                const hasFileReqs = type.persyaratan && type.persyaratan.length > 0
-                const grantedCount = classStudents.filter(s => {
-                  const hasFile = files.has(s.nisn)
-                  if (!hasFile) return false
-                  if (!hasFileReqs) return true
-                  const terpenuhi = fileReqs[s.nisn] || {}
-                  return type.persyaratan.every(r => terpenuhi[r.id])
-                }).length
+                  const hasFileReqs = type.persyaratan && type.persyaratan.length > 0
+                  const grantedCount = classStudents.filter(s => {
+                    const hasFile = files.has(s.nisn)
+                    if (!hasFile) return false
+                    if (!hasFileReqs) return true
+                    const terpenuhi = fileReqs[s.nisn] || {}
+                    return type.persyaratan.every(r => terpenuhi[r.id])
+                  }).length
 
-                const accessedCount = classStudents.filter(s => activityLogs.some(log => log.detail.includes(s.nama_lengkap))).length
-                
-                const grantedPercent = total > 0 ? (grantedCount / total) * 100 : 0
-                const accessedPercent = total > 0 ? (accessedCount / total) * 100 : 0
+                  const accessedCount = classStudents.filter(s => activityLogs.some(log => log.detail.includes(s.nama_lengkap))).length
+                  
+                  const grantedPercent = total > 0 ? (grantedCount / total) * 100 : 0
+                  const accessedPercent = total > 0 ? (accessedCount / total) * 100 : 0
 
-                return (
-                  <div key={c} className="flex flex-col gap-3 p-3 border border-slate-100 rounded-lg bg-slate-50/50">
-                    <div>
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                        <span>{c} (Dapat Akses)</span>
-                        <span>{grantedCount}/{total}</span>
+                  return (
+                    <div key={c} className="flex flex-col gap-3 p-3 border border-slate-100 rounded-lg bg-slate-50/50">
+                      <div>
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                          <span>{c} (Dapat Akses)</span>
+                          <span>{grantedCount}/{total}</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
+                          <div className={`h-full rounded-full transition-all duration-500 ${grantedPercent >= 100 ? 'bg-indigo-600' : 'bg-indigo-400'}`} style={{ width: `${grantedPercent}%` }}></div>
+                        </div>
                       </div>
-                      <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
-                        <div className={`h-full rounded-full transition-all duration-500 ${grantedPercent >= 100 ? 'bg-indigo-600' : 'bg-indigo-400'}`} style={{ width: `${grantedPercent}%` }}></div>
+                      <div>
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
+                          <span>Telah Mengunduh</span>
+                          <span>{accessedCount}/{total}</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
+                          <div className={`h-full rounded-full transition-all duration-500 ${accessedPercent >= 100 ? 'bg-emerald-500' : 'bg-emerald-400'}`} style={{ width: `${accessedPercent}%` }}></div>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                        <span>Telah Mengunduh</span>
-                        <span>{accessedCount}/{total}</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
-                        <div className={`h-full rounded-full transition-all duration-500 ${accessedPercent >= 100 ? 'bg-emerald-500' : 'bg-emerald-400'}`} style={{ width: `${accessedPercent}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-auto">
@@ -1061,8 +1116,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
       )}
 
       {/* PREVIEW MODAL */}
-      {selectedPreview && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-6 px-4 animate-fade-in">
+      {selectedPreview && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto py-6 px-4 animate-fade-in">
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm"
             onClick={() => setSelectedPreview(null)} />
           <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[90vh]">
@@ -1119,7 +1174,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {showVerificationModal && (
@@ -1522,7 +1578,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((s, i) => {
+                {filtered.sort((a,b) => (a.nama_lengkap||'').localeCompare(b.nama_lengkap||'')).map((s, i) => {
                   const displayedPhoto = allFotos
                     .filter(f => f.nisn === s.nisn && f.cloudinary_url)
                     .sort((a, b) => (b.tahun_ajaran?.nama || '').localeCompare(a.tahun_ajaran?.nama || ''))[0]
@@ -1658,7 +1714,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 function Admin() {
   const navigate = useNavigate()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
-  const [activeMenu, setActiveMenu] = useState(null)
+  const [activeMenu, setActiveMenu] = useState('dashboard')
   const [authLoading, setAuthLoading] = useState(true)
   const [menuTypes, setMenuTypes] = useState([])
   const [students, setStudents] = useState([])
@@ -1679,7 +1735,10 @@ function Admin() {
     show_tahun_lulus: false,
     show_nisn: true,
     show_nipd: false,
-    ta_referensi_id: ''
+    ta_referensi_id: '',
+    visible_siswa: true,
+    visible_guru: true,
+    visible_orangtua: true
   })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState(null)
@@ -1785,7 +1844,7 @@ function Admin() {
     const { data } = await supabase.from('jenis_pengumuman').select('*').order('urutan')
     if (data) {
       setMenuTypes(data)
-      setActiveMenu(prev => prev ?? data[0]?.id ?? 'konfigurasi')
+      setActiveMenu(prev => prev ?? 'dashboard')
     }
   }
 
@@ -2189,13 +2248,15 @@ function Admin() {
       nama: newType.nama.trim(),
       kode_jenis: newType.kode_jenis.trim().toUpperCase(),
       aktif: false, 
-      visible: true, 
+      visible: newType.visible_siswa !== false,
+      visible_guru: newType.visible_guru !== false,
+      visible_orangtua: newType.visible_orangtua !== false,
       urutan: menuTypes.length + 1,
       target_kelas: newType.target_kelas,
-        dokumen_kode_jenis: newType.dokumen_kode_jenis,
+      dokumen_kode_jenis: newType.dokumen_kode_jenis,
       show_tahun_lulus: newType.show_tahun_lulus,
       show_nisn: newType.show_nisn,
-        show_nipd: newType.show_nipd,
+      show_nipd: newType.show_nipd,
       ta_referensi_id: newType.ta_referensi_id || null
       })
     setAddSaving(false)
@@ -2208,7 +2269,10 @@ function Admin() {
       dokumen_kode_jenis: null,
       show_tahun_lulus: false,
       show_nisn: true,
-      show_nipd: false
+      show_nipd: false,
+      visible_siswa: true,
+      visible_guru: true,
+      visible_orangtua: true
     })
     fetchMenuTypes()
   }
@@ -2252,7 +2316,10 @@ function Admin() {
       
       show_nipd: editingType.show_nipd,
         persyaratan: editingType.persyaratan || [],
-        ta_referensi_id: editingType.ta_referensi_id || null
+        ta_referensi_id: editingType.ta_referensi_id || null,
+        visible: editingType.visible !== false,
+        visible_guru: editingType.visible_guru !== false,
+        visible_orangtua: editingType.visible_orangtua !== false
       }).eq('id', editingType.id)
 
     setAddSaving(false)
@@ -2471,7 +2538,7 @@ function Admin() {
         </div>
         <div className="p-4 md:p-6 lg:p-8 w-full">
           {activeMenu === 'dashboard' && (
-            <AdminDashboardSection />
+            <AdminDashboardSection onNavigate={handleMenuNavigation} />
           )}
 
           {activeMenu === 'log_aktivitas' && (
@@ -2785,9 +2852,13 @@ function Admin() {
                           <span className="text-xs text-slate-500">Akses</span>
                           <span className={`text-xs font-bold ${t.aktif ? 'text-green-600' : 'text-slate-500'}`}>{t.aktif ? 'Aktif' : 'Off'}</span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2" title="Biru: Siswa, Nila: Orangtua, Cyan: Guru">
                           <span className="text-xs text-slate-500">Tampil</span>
-                          <span className={`text-xs font-bold ${t.visible ? 'text-blue-600' : 'text-slate-500'}`}>{t.visible ? 'Ya' : 'Tidak'}</span>
+                          <div className="flex items-center gap-1">
+                            <span title="Siswa" className={`w-2.5 h-2.5 rounded-full ${t.visible !== false ? 'bg-blue-500' : 'bg-slate-200'}`}></span>
+                            <span title="Orangtua" className={`w-2.5 h-2.5 rounded-full ${t.visible_orangtua !== false ? 'bg-indigo-500' : 'bg-slate-200'}`}></span>
+                            <span title="Guru" className={`w-2.5 h-2.5 rounded-full ${t.visible_guru !== false ? 'bg-cyan-500' : 'bg-slate-200'}`}></span>
+                          </div>
                         </div>
                         <button
                           onClick={() => {
@@ -2908,6 +2979,31 @@ function Admin() {
                             <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
                               checked={newType.show_tahun_lulus} onChange={e => setNewType({...newType, show_tahun_lulus: e.target.checked})} />
                             Tampilkan Tahun Lulus
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-2">Target Penerima</label>
+                        <div className="space-y-2 p-3 border border-indigo-200 rounded-xl bg-indigo-50">
+                          <p className="text-[10px] text-indigo-500 mb-2">Centang role yang dapat melihat pengumuman ini di dashboard masing-masing.</p>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={newType.visible_siswa !== false}
+                              onChange={e => setNewType({...newType, visible_siswa: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> Siswa / Murid</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={newType.visible_orangtua !== false}
+                              onChange={e => setNewType({...newType, visible_orangtua: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block"></span> Orangtua Murid</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={newType.visible_guru !== false}
+                              onChange={e => setNewType({...newType, visible_guru: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-cyan-500 inline-block"></span> Guru</span>
                           </label>
                         </div>
                       </div>
@@ -3055,6 +3151,31 @@ function Admin() {
                             <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
                               checked={editingType.show_tahun_lulus} onChange={e => setEditingType({...editingType, show_tahun_lulus: e.target.checked})} />
                             Tampilkan Tahun Lulus
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-2">Target Penerima</label>
+                        <div className="space-y-2 p-3 border border-indigo-200 rounded-xl bg-indigo-50">
+                          <p className="text-[10px] text-indigo-500 mb-2">Centang role yang dapat melihat pengumuman ini di dashboard masing-masing.</p>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={editingType.visible !== false}
+                              onChange={e => setEditingType({...editingType, visible: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> Siswa / Murid</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={editingType.visible_orangtua !== false}
+                              onChange={e => setEditingType({...editingType, visible_orangtua: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block"></span> Orangtua Murid</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500"
+                              checked={editingType.visible_guru !== false}
+                              onChange={e => setEditingType({...editingType, visible_guru: e.target.checked})} />
+                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-cyan-500 inline-block"></span> Guru</span>
                           </label>
                         </div>
                       </div>

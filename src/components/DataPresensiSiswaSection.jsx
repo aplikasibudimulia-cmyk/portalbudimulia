@@ -9,11 +9,16 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   const [presensiHariIni, setPresensiHariIni] = useState([])
   const [loading, setLoading] = useState(true)
   
-  const [selectedKelas, setSelectedKelas] = useState(null)
+  const [selectedKelas, setSelectedKelas] = useState('Semua Siswa')
   const [studentsInClass, setStudentsInClass] = useState([])
   const [presensiData, setPresensiData] = useState({})
   const [searchDetail, setSearchDetail] = useState('')
   
+  const [sesiAktif, setSesiAktif] = useState(false)
+  const [linkGrupGuru, setLinkGrupGuru] = useState('')
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [tempLinkGrup, setTempLinkGrup] = useState('')
+
   const [isSaving, setIsSaving] = useState(false)
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
@@ -37,11 +42,33 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         .from('siswa_lengkap')
         .select('nisn, nama_lengkap, kelas')
         .eq('is_aktif', true)
+        .order('nama_lengkap')
 
       if (siswaData) {
         setSemuaSiswa(siswaData)
         const uniqueClasses = [...new Set(siswaData.map(s => s.kelas).filter(Boolean))].sort()
-        setSemuaKelas(uniqueClasses)
+        setSemuaKelas(['Semua Siswa', ...uniqueClasses])
+        
+        if (!isRealtime && studentsInClass.length === 0) {
+          setStudentsInClass(siswaData)
+        }
+      }
+
+      const { data: sesiData } = await supabase
+        .from('sesi_presensi')
+        .select('*')
+        .eq('tanggal', tanggal)
+        .maybeSingle()
+      setSesiAktif(!!sesiData)
+
+      const { data: pengData } = await supabase
+        .from('pengaturan_sekolah')
+        .select('setting_value')
+        .eq('setting_key', 'link_grup_guru')
+        .maybeSingle()
+      if (pengData && !isRealtime) {
+        setLinkGrupGuru(pengData.setting_value)
+        setTempLinkGrup(pengData.setting_value)
       }
 
       const { data: presensiDataDB } = await supabase
@@ -54,7 +81,8 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         
         // Sync presensiData (state form) jika sedang membuka kelas
         if (selectedKelas && siswaData) {
-          const classStudents = siswaData.filter(s => s.kelas === selectedKelas)
+          const targetKelas = selectedKelas === 'Semua Siswa' ? null : selectedKelas;
+          const classStudents = targetKelas ? siswaData.filter(s => s.kelas === targetKelas) : siswaData;
           setPresensiData(prev => {
             const newData = isRealtime ? { ...prev } : {}
             classStudents.forEach(s => {
@@ -84,20 +112,15 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
 
   const loadKelasDetail = async (kelasName) => {
     setSelectedKelas(kelasName)
-    setPresensiData({})
     setSearchDetail('')
     
-    const { data: students } = await supabase
-      .from('siswa_lengkap')
-      .select('*')
-      .eq('kelas', kelasName)
-      .eq('is_aktif', true)
-      .order('nama_lengkap')
+    const targetKelas = kelasName === 'Semua Siswa' ? null : kelasName;
+    const classStudents = targetKelas ? semuaSiswa.filter(s => s.kelas === targetKelas) : semuaSiswa;
       
-    if (students) {
-      setStudentsInClass(students)
+    if (classStudents) {
+      setStudentsInClass(classStudents)
       const dataMap = {}
-      students.forEach(s => {
+      classStudents.forEach(s => {
         const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
         if (rec) {
           dataMap[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
@@ -112,6 +135,28 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       alert('Presensi QR Code tidak dapat diubah manual.')
       return
     }
+
+    const isTogglingOff = presensiData[nisn]?.status === status;
+    
+    if (isTogglingOff) {
+      setPresensiData(prev => {
+        const newData = { ...prev }
+        delete newData[nisn]
+        return newData
+      })
+      try {
+        setIsSaving(true)
+        const { error } = await supabase.from('presensi_harian').delete().eq('tanggal', tanggal).eq('siswa_nisn', nisn)
+        if (error) throw error
+      } catch (e) {
+        console.error(e)
+        alert('Gagal membatalkan: ' + e.message)
+      } finally {
+        setIsSaving(false)
+      }
+      return
+    }
+
     const now = new Date().toTimeString().slice(0, 5)
     const newTime = (status === 'T' || status === 'P') ? (presensiData[nisn]?.time || now) : null
     
@@ -233,6 +278,95 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
   }
 
+  const handleMulaiSesi = async () => {
+    setIsSaving(true)
+    const { error } = await supabase
+      .from('sesi_presensi')
+      .insert({ tanggal, dibuka_oleh: session.id })
+    if (!error) {
+      setSesiAktif(true)
+    } else {
+      alert('Gagal memulai sesi: ' + error.message)
+    }
+    setIsSaving(false)
+  }
+
+  const handleAkhiriSesi = async () => {
+    const confirmed = await requestConfirm({
+      title: 'Selesaikan Presensi Hari Ini',
+      message: 'Apakah Anda yakin ingin menyelesaikan sesi presensi hari ini? Ini tidak menghapus data presensi yang sudah diinput, namun fitur presensi dan QR Scan siswa akan ditutup.',
+      confirmLabel: 'Akhiri Sesi',
+      confirmColor: 'red',
+      icon: 'warning'
+    })
+    
+    if (!confirmed) return;
+
+    setIsSaving(true)
+    const { error } = await supabase.from('sesi_presensi').delete().eq('tanggal', tanggal)
+    if (!error) {
+      setSesiAktif(false)
+    } else {
+      alert('Gagal mengakhiri sesi: ' + error.message)
+    }
+    setIsSaving(false)
+  }
+
+  const handleSaveSettings = async () => {
+    setIsSaving(true)
+    const { error } = await supabase
+      .from('pengaturan_sekolah')
+      .update({ setting_value: tempLinkGrup, updated_at: new Date().toISOString() })
+      .eq('setting_key', 'link_grup_guru')
+    if (!error) {
+      setLinkGrupGuru(tempLinkGrup)
+      setShowSettingsModal(false)
+    } else {
+      alert('Gagal menyimpan pengaturan: ' + error.message)
+    }
+    setIsSaving(false)
+  }
+
+  const generateWA = (semua = false) => {
+    let text = `*Laporan Presensi Siswa*\nTanggal: ${new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}\n\n`
+    
+    const targetClasses = semua ? semuaKelas : (selectedKelas ? [selectedKelas] : [])
+    
+    if (targetClasses.length === 0) {
+      alert('Pilih kelas terlebih dahulu atau pilih laporan seluruh kelas.')
+      return
+    }
+
+    targetClasses.forEach(kelas => {
+      text += `*Kelas ${kelas}*\n`
+      const students = semuaSiswa.filter(s => s.kelas === kelas)
+      let belumPresensi = 0
+      students.forEach(s => {
+        const pd = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
+        const uiData = selectedKelas === kelas ? presensiData[s.nisn] : null
+        if (!pd && !uiData) {
+          text += `- ${s.nama_lengkap} (Belum Presensi)\n`
+          belumPresensi++
+        }
+      })
+      if (belumPresensi === 0) {
+        text += `_Semua data sudah masuk_\n`
+      }
+      text += '\n'
+    })
+
+    navigator.clipboard.writeText(text).then(() => {
+      if (linkGrupGuru) {
+        window.open(linkGrupGuru, '_blank')
+      } else {
+        alert('Teks berhasil disalin ke clipboard! (Link Grup Guru belum diatur, silakan paste manual)')
+      }
+    }).catch(err => {
+      alert('Gagal menyalin teks otomatis, beri izin clipboard pada browser Anda.')
+      console.error(err)
+    })
+  }
+
   if (loading && semuaKelas.length === 0) {
     return <div className="flex justify-center items-center h-full"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
   }
@@ -250,6 +384,9 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           <p className="text-sm text-slate-500 font-medium mt-1">Input dan validasi kehadiran siswa per kelas secara mendetail.</p>
         </div>
         <div className="flex items-center gap-3">
+          <button onClick={() => setShowSettingsModal(true)} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-transparent hover:border-indigo-100" title="Pengaturan Laporan WA">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          </button>
           <input 
             type="date" 
             value={tanggal}
@@ -258,6 +395,31 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           />
         </div>
       </div>
+
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-bold text-lg text-slate-800">Pengaturan WhatsApp Grup</h3>
+              <p className="text-sm text-slate-500 mt-1">Atur link invite grup guru untuk laporan otomatis.</p>
+            </div>
+            <div className="p-6">
+              <label className="block text-sm font-bold text-slate-700 mb-2">Link Invite Grup WhatsApp</label>
+              <input 
+                type="text" 
+                placeholder="https://chat.whatsapp.com/..." 
+                value={tempLinkGrup}
+                onChange={e => setTempLinkGrup(e.target.value)}
+                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 font-medium"
+              />
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+              <button onClick={() => setShowSettingsModal(false)} className="px-4 py-2 font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors">Batal</button>
+              <button onClick={handleSaveSettings} disabled={isSaving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors shadow-sm">{isSaving ? 'Menyimpan...' : 'Simpan'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Class Selection Area */}
@@ -268,8 +430,9 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
             {semuaKelas.map(c => {
-              const classTotalStudents = semuaSiswa.filter(s => s.kelas === c).length;
-              const classReportedStudents = presensiHariIni.filter(p => p.kelas === c).length;
+              const isSemua = c === 'Semua Siswa';
+              const classTotalStudents = isSemua ? semuaSiswa.length : semuaSiswa.filter(s => s.kelas === c).length;
+              const classReportedStudents = isSemua ? presensiHariIni.length : presensiHariIni.filter(p => p.kelas === c).length;
               const percentage = classTotalStudents > 0 ? Math.round((classReportedStudents / classTotalStudents) * 100) : 0;
               const isSelected = selectedKelas === c;
               
@@ -294,7 +457,24 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         {/* Detail Area */}
         {selectedKelas ? (
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 sm:p-6 border-b border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            {!sesiAktif ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
+                <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
+                  <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Belum Dimulai</h3>
+                <p className="text-sm text-slate-500 mb-8 max-w-sm">Anda harus memulai sesi hari ini terlebih dahulu agar siswa dapat melakukan scan QR, dan Anda dapat menginput presensi.</p>
+                <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                  {isSaving ? (
+                    <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
+                  ) : (
+                    <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Hari Ini</>
+                  )}
+                </button>
+              </div>
+            ) : (
+            <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
+              <div className="p-4 sm:p-6 border-b border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <h3 className="font-bold text-lg text-slate-800">Presensi Kelas {selectedKelas}</h3>
                 <p className="text-xs text-slate-500 mt-0.5">Validasi kehadiran {studentsInClass.length} siswa hari ini.</p>
@@ -326,21 +506,37 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
               </div>
             </div>
             
-            {/* Aksi Massal Presensi */}
-            <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Set Semua:</span>
-                <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors">Hadir</button>
-                <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors">Terlambat</button>
-                <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit</button>
-                <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin</button>
-                <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpa</button>
-                <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition-colors">Pulang</button>
+            <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Set Semua:</span>
+                  <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors">Hadir</button>
+                  <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors">Terlambat</button>
+                  <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit</button>
+                  <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin</button>
+                  <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpa</button>
+                  <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition-colors">Pulang</button>
+                </div>
+                <button onClick={() => handleBulkPresensi('kosong')} className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition-colors flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  Kosongkan Presensi
+                </button>
               </div>
-              <button onClick={() => handleBulkPresensi('kosong')} className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition-colors flex items-center gap-1">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                Kosongkan Presensi
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => generateWA(false)} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 flex items-center gap-1.5 transition-colors shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  Lapor Kelas Ini
+                </button>
+                <button onClick={() => generateWA(true)} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5 transition-colors shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  Lapor Semua Kelas
+                </button>
+                <div className="w-px h-6 bg-slate-200 mx-1"></div>
+                <button onClick={handleAkhiriSesi} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 flex items-center gap-1.5 transition-colors shadow-sm">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  Selesaikan Presensi
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -380,7 +576,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                       <td className="px-6 py-4 text-slate-500 font-medium text-xs">{s.nisn}</td>
                       
                       <td className="px-6 py-3">
-                        <div className="flex justify-center">
+                        <div className="flex justify-center relative">
                           <div className="flex items-center gap-2 w-[360px]">
                             {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
                               const pd = presensiData[s.nisn]
@@ -428,6 +624,11 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                                 QR Scan
                               </div>
                             )}
+                            {!presensiData[s.nisn] && (
+                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 shrink-0">
+                                Belum Presensi
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -446,6 +647,8 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
               <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-rose-50 text-rose-600 flex items-center justify-center">A</span> Alpha</span>
               <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-slate-100 text-slate-600 flex items-center justify-center">P</span> Pulang</span>
             </div>
+            </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-10 text-slate-500">

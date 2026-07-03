@@ -1,16 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
+import { requestNotifPermission, showLocalNotif, isNotifGranted } from '../utils/pushNotif'
 import SiswaNilaiSection from '../components/SiswaNilaiSection'
 import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
 import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import SiswaPoinSection from '../components/SiswaPoinSection'
-import { requestNotifPermission, showLocalNotif, subscribeToPushNotification } from '../utils/pushNotif'
+import SiswaRiwayatPresensi from '../components/SiswaRiwayatPresensi'
 
-function Dashboard() {
+function DashboardOrangTua() {
   const navigate = useNavigate()
   const [studentData, setStudentData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -37,14 +38,22 @@ function Dashboard() {
   const [passwordError, setPasswordError] = useState('')
   const [passwordSuccess, setPasswordSuccess] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
+  const [showPengaturanModal, setShowPengaturanModal] = useState(false)
+
+  // Edit Biodata Modal for Orang Tua
+  const [showEditBiodataModal, setShowEditBiodataModal] = useState(false)
+  const [editBiodataForm, setEditBiodataForm] = useState({ nama_ortu: '', no_hp_ortu: '', email_ortu: '' })
+  const [isSavingBiodata, setIsSavingBiodata] = useState(false)
+  const [biodataError, setBiodataError] = useState('')
+  const [biodataSuccess, setBiodataSuccess] = useState(false)
+
   const [pengumuman, setPengumuman] = useState('')
+  const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
   const [loggedTypes, setLoggedTypes] = useState([])
-  const [showFeatureConfig, setShowFeatureConfig] = useState({
-    presensi: true,
-    nilai: true,
-    poin: true
-  })
-  const [recentNotifications, setRecentNotifications] = useState([])
+
+  // Notifikasi presensi anak (realtime)
+  const [presensiToast, setPresensiToast] = useState(null) // { namaLengkap, status, statusLabel, waktu, tipe, tipeLabel, tanggal, selfieUrl }
+  const [notifOrtuGranted, setNotifOrtuGranted] = useState(isNotifGranted())
 
   const [currentFont, setCurrentFont] = useState(() => {
     return localStorage.getItem('app_font') || 'jakarta'
@@ -79,9 +88,15 @@ function Dashboard() {
     tahun_ajaran: true
   })
 
+  const [showFeatureConfig, setShowFeatureConfig] = useState({
+    presensi: true,
+    nilai: true,
+    poin: true
+  })
+
   useEffect(() => {
     const init = async () => {
-      const raw = localStorage.getItem('siswa_session')
+      const raw = localStorage.getItem('orangtua_session')
       if (!raw) {
         navigate('/')
         return
@@ -92,10 +107,16 @@ function Dashboard() {
       const { data: enrollments } = await supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn)
       if (enrollments) data.enrollments = enrollments
       
+      const { data: latestStudentData } = await supabase.from('siswa_permanent').select('*').eq('nisn', data.nisn).single()
+      if (latestStudentData) {
+        Object.assign(data, latestStudentData)
+        localStorage.setItem('orangtua_session', JSON.stringify(data))
+      }
+
       setStudentData(data)
 
       const { data: types } = await supabase
-        .from('jenis_pengumuman').select('*').eq('visible', true).order('urutan')
+        .from('jenis_pengumuman').select('*').neq('visible_orangtua', false).order('urutan')
       
       const visible = types ?? []
       
@@ -121,6 +142,7 @@ function Dashboard() {
         const newShowFeature = { presensi: true, nilai: true, poin: true }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
+          if (p.setting_key === 'link_grup_ortu') setLinkGrupOrtu(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
           if (p.setting_key === 'show_profile_foto') newShowProfile.foto = p.setting_value === 'true'
           if (p.setting_key === 'show_profile_kelas') newShowProfile.kelas = p.setting_value === 'true'
@@ -164,33 +186,25 @@ function Dashboard() {
     init()
   }, [navigate])
 
-  const fetchNotifCount = async () => {
-    if (!studentData) return
-    const { data: allNotif } = await supabase.from('notifikasi')
-      .select('id, judul, pesan, tipe, created_at, target_kelas')
-      .or(`target_nisn.is.null,target_nisn.eq.${studentData.nisn}`)
-      .order('created_at', { ascending: false })
-    
-    if (!allNotif) return
-    const valid = allNotif.filter(n => !n.target_kelas || n.target_kelas === studentData.kelas)
-    
-    const { data: readNotif } = await supabase.from('notifikasi_read')
-      .select('notifikasi_id')
-      .eq('nisn', studentData.nisn)
-      
-    const readIds = new Set((readNotif || []).map(r => r.notifikasi_id))
-    const unreadCount = valid.filter(n => !readIds.has(n.id)).length
-    setUnreadNotifCount(unreadCount)
-
-    const mapped = valid.map(n => ({
-      ...n,
-      isRead: readIds.has(n.id)
-    })).slice(0, 3)
-    setRecentNotifications(mapped)
-  }
-
   useEffect(() => {
     if (!studentData) return
+    const fetchNotifCount = async () => {
+      const { data: allNotif } = await supabase.from('notifikasi')
+        .select('id, target_kelas')
+        .or(`target_nisn.is.null,target_nisn.eq.${studentData.nisn}`)
+      
+      if (!allNotif) return
+      const valid = allNotif.filter(n => !n.target_kelas || n.target_kelas === studentData.kelas)
+      
+      const { data: readNotif } = await supabase.from('notifikasi_read')
+        .select('notifikasi_id')
+        .eq('nisn', studentData.nisn)
+        
+      const readIds = new Set((readNotif || []).map(r => r.notifikasi_id))
+      const unreadCount = valid.filter(n => !readIds.has(n.id)).length
+      setUnreadNotifCount(unreadCount)
+    }
+    
     fetchNotifCount()
     
     const channel = supabase.channel(`siswa-notif-${studentData.nisn}`)
@@ -201,17 +215,27 @@ function Dashboard() {
     return () => supabase.removeChannel(channel)
   }, [studentData])
 
-  const handleRequestPushNotif = async () => {
-    const permission = await requestNotifPermission()
-    if (permission) {
-      await subscribeToPushNotification()
-      showLocalNotif('✅ Notifikasi Aktif', 'Perangkat ini berhasil terdaftar untuk menerima notifikasi.', { tag: 'siswa-notif-aktif' })
-    }
-  }
+  // Realtime listener notifikasi presensi dari anak ke orangtua
+  useEffect(() => {
+    if (!studentData?.nisn) return
+    const channel = supabase.channel(`notif-ortu-${studentData.nisn}`)
+      .on('broadcast', { event: 'presensi_update' }, ({ payload }) => {
+        setPresensiToast(payload)
+        // Tampilkan push notification jika browser notif diizinkan
+        if (isNotifGranted()) {
+          const body = `${payload.namaLengkap} — ${payload.tipeLabel} pukul ${payload.waktu} WIB (${payload.statusLabel})`
+          showLocalNotif('🏫 Presensi Anak', body, { tag: `presensi-${payload.tipe}` })
+        }
+        // Auto dismiss toast setelah 15 detik
+        setTimeout(() => setPresensiToast(null), 15000)
+      })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [studentData?.nisn])
 
   useEffect(() => {
     const checkFileExists = async () => {
-      if (!selectedType || !studentData) {
+      if (!selectedType || !studentData || selectedType === 'PROFIL') {
         setPdfUrl(null)
         setError(null)
         setAccessBlocked(false)
@@ -304,7 +328,7 @@ function Dashboard() {
 
     const handleMenuUpdate = async () => {
       const { data: types } = await supabase
-        .from('jenis_pengumuman').select('*').eq('visible', true).order('urutan')
+        .from('jenis_pengumuman').select('*').neq('visible_orangtua', false).order('urutan')
       const visible = types ?? []
       const applicableTypes = visible.filter(t => {
         const target = t.target_kelas || []
@@ -339,6 +363,7 @@ function Dashboard() {
         const newShowFeature = { presensi: true, nilai: true, poin: true }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
+          if (p.setting_key === 'link_grup_ortu') setLinkGrupOrtu(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
           if (p.setting_key === 'show_profile_foto') newShowProfile.foto = p.setting_value === 'true'
           if (p.setting_key === 'show_profile_kelas') newShowProfile.kelas = p.setting_value === 'true'
@@ -467,6 +492,57 @@ function Dashboard() {
     }
   }
 
+  const handleOpenEditBiodata = () => {
+    setEditBiodataForm({
+      nama_ortu: studentData?.nama_ortu || '',
+      no_hp_ortu: studentData?.no_hp_ortu || '',
+      email_ortu: studentData?.email_ortu || ''
+    })
+    setBiodataError('')
+    setBiodataSuccess(false)
+    setShowEditBiodataModal(true)
+  }
+
+  const handleSaveBiodata = async (e) => {
+    e.preventDefault()
+    setBiodataError('')
+    setBiodataSuccess(false)
+    setIsSavingBiodata(true)
+
+    try {
+      const { error } = await supabase
+        .from('siswa_permanent')
+        .update({
+          nama_ortu: editBiodataForm.nama_ortu.trim() || null,
+          no_hp_ortu: editBiodataForm.no_hp_ortu.trim() || null,
+          email_ortu: editBiodataForm.email_ortu.trim() || null
+        })
+        .eq('nisn', studentData.nisn)
+
+      if (error) throw error
+
+      setBiodataSuccess(true)
+      const updatedData = { ...studentData, ...editBiodataForm }
+      setStudentData(updatedData)
+      localStorage.setItem('siswa_session', JSON.stringify(updatedData))
+      
+      logActivity({
+        userRole: 'Siswa',
+        action: 'Update Biodata Orang Tua',
+        details: `Orang tua dari siswa dengan NISN ${studentData.nisn} berhasil memperbarui biodata.`
+      })
+
+      setTimeout(() => {
+        setShowEditBiodataModal(false)
+        setBiodataSuccess(false)
+      }, 1500)
+    } catch (err) {
+      setBiodataError('Terjadi kesalahan saat menyimpan biodata.')
+    } finally {
+      setIsSavingBiodata(false)
+    }
+  }
+
   // Tampilan Menu Siswa (Opsional / Per Pengumuman)
   const showNisnMenu = selectedType ? selectedType.show_nisn : false
   const showNipdMenu = selectedType ? selectedType.show_nipd : false
@@ -475,8 +551,20 @@ function Dashboard() {
   // Either global profile wants it shown OR the current menu type specifically wants it shown
   const isNisnVisible = showProfileConfig.nisn || showNisnMenu
   const isNipdVisible = showProfileConfig.nipd || showNipdMenu
+
+  const sapaanHeader = studentData?.nama_ortu 
+    ? `Selamat datang, ${studentData.nama_ortu} orangtua dari ${studentData.nama_lengkap || studentData?.nama}` 
+    : `Selamat datang, Bapak/Ibu orangtua dari ${studentData?.nama_lengkap || studentData?.nama}`;
+
   const studentInfoCard = studentData && (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8 relative">
+      {linkGrupOrtu && (
+        <a href={linkGrupOrtu} target="_blank" rel="noopener noreferrer" className="absolute top-6 right-6 inline-flex items-center gap-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors border border-emerald-200 shadow-sm">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span className="hidden sm:inline">Grup Wali Kelas</span>
+          <span className="sm:hidden">Grup</span>
+        </a>
+      )}
       <div className="flex items-center gap-5 mb-6">
         {showProfileConfig.foto && (
           <img src={photoUrls[photoIndex] || DEFAULT_AVATAR} alt={studentData.nama_lengkap}
@@ -489,11 +577,11 @@ function Dashboard() {
               }
             }} />
         )}
-        <div>
-          <p className="text-xs text-indigo-500 font-semibold uppercase tracking-wider mb-0.5">Beranda Profil</p>
-          <h2 className="text-2xl font-bold text-slate-800 leading-tight">{studentData.nama_lengkap}</h2>
+        <div className={linkGrupOrtu ? "pr-24 sm:pr-32" : ""}>
+          <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">Beranda Profil</p>
+          <h2 className="text-xl md:text-2xl font-bold text-slate-800 leading-tight">{sapaanHeader}</h2>
           {showProfileConfig.kelas && (
-            <p className="text-sm text-slate-500 mt-1">Kelas: <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">{studentData.kelas}</span></p>
+            <p className="text-sm text-slate-500 mt-2">Kelas: <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">{studentData.kelas}</span></p>
           )}
         </div>
       </div>
@@ -580,37 +668,28 @@ function Dashboard() {
                 <svg className={`w-6 h-6 shrink-0 ${!selectedType ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
               </button>
-              {showFeatureConfig.presensi && (
-                <button 
-                  onClick={() => { setSelectedType('PRESENSI'); setSidebarOpen(false) }}
-                  title="Presensi Hari Ini"
-                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'PRESENSI' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
-                >
-                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PRESENSI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi Hari Ini</span>}
-                </button>
-              )}
+              
               {showFeatureConfig.nilai && (
                 <button 
                   onClick={() => { setSelectedType('NILAI'); setSidebarOpen(false) }}
-                  title="Nilai Saya"
+                  title="Nilai Anak"
                   className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'NILAI' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
                 >
                   <svg className={`w-6 h-6 shrink-0 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Saya</span>}
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Anak</span>}
                 </button>
               )}
-              {showFeatureConfig.poin && (
+              
+              {showFeatureConfig.presensi && (
                 <button 
-                  onClick={() => { setSelectedType('POIN'); setSidebarOpen(false) }}
-                  title="Poin Siswa"
-                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'POIN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                  onClick={() => { setSelectedType('PRESENSI'); setSidebarOpen(false) }}
+                  title="Riwayat Presensi"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'PRESENSI' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
                 >
-                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'POIN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Poin Siswa</span>}
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PRESENSI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Riwayat Presensi</span>}
                 </button>
               )}
-
             </div>
           </div>
 
@@ -638,10 +717,10 @@ function Dashboard() {
         {/* Sidebar Footer Actions */}
         <div className="p-4 space-y-3 shrink-0">
            
-           <button onClick={() => { setSelectedType('PENGATURAN'); setSidebarOpen(false); }}
+           <button onClick={() => setShowPengaturanModal(true)}
              title="Pengaturan"
-             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative ${selectedType === 'PENGATURAN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
-             <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PENGATURAN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all relative ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
+             <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
              {!sidebarCollapsed && <span className="animate-fade-in">Pengaturan</span>}
              {unreadNotifCount > 0 && (
                <span className={`absolute bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ${sidebarCollapsed ? 'top-1 right-1' : 'right-4'}`}>
@@ -669,185 +748,49 @@ function Dashboard() {
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <span className="font-bold text-slate-800 text-lg">
-              {selectedType === 'NILAI' ? 'Nilai Saya' : selectedType ? selectedType.nama : 'Beranda'}
+              {selectedType === 'NILAI' ? 'Laporan Nilai Anak' : selectedType ? selectedType.nama : 'Beranda'}
             </span>
           </div>
-          <img src={photoUrls[photoIndex] || DEFAULT_AVATAR} className="w-8 h-8 rounded-full border border-slate-200 object-cover" />
         </div>
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
           <div className="w-full space-y-6">
-            
+
+            {/* Banner izin notifikasi */}
+            {!notifOrtuGranted && 'Notification' in window && !selectedType && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-amber-800">Aktifkan Notifikasi Presensi</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Dapatkan notifikasi push saat anak Anda presensi masuk atau pulang sekolah.</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    const result = await requestNotifPermission()
+                    if (result === 'granted') {
+                      setNotifOrtuGranted(true)
+                      showLocalNotif('✅ Notifikasi Aktif', 'Anda akan mendapat notifikasi saat anak presensi.', { tag: 'notif-aktif-ortu' })
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-2xl transition-colors shrink-0"
+                >
+                  Aktifkan
+                </button>
+              </div>
+            )}
+
             {/* Kartu Profil selalu muncul di atas */}
             {studentInfoCard}
 
             {/* Konten Spesifik per Menu */}
-            {selectedType === 'NILAI' ? (
+            {!selectedType ? (
+              <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} isOrangTua={true} />
+            ) : selectedType === 'NILAI' ? (
               <SiswaNilaiSection studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
-              <SiswaPresensiSection studentData={studentData} />
-            ) : selectedType === 'POIN' ? (
-              <SiswaPoinSection siswaNisn={studentData?.nisn} activeTa={{ id: studentData?.tahun_ajaran_id }} />
-            ) : selectedType === 'PROFIL' ? (
-              <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
-            ) : selectedType === 'PENGATURAN' ? (
-              <div className="space-y-6 max-w-4xl mx-auto">
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
-                  <h2 className="text-xl font-bold text-slate-800">Pengaturan Portal</h2>
-                  <p className="text-xs text-slate-500 mt-1">Sesuaikan preferensi tampilan, kode akses, dan notifikasi Anda di sini.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Card 1: Ganti Font */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between animate-fade-in">
-                    <div>
-                      <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-2">
-                        <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-                        Preferensi Font
-                      </h3>
-                      <p className="text-xs text-slate-500 mb-4">Pilih jenis font yang nyaman untuk membaca isi portal.</p>
-                      
-                      <div className="space-y-2">
-                        {[
-                          { id: 'jakarta', label: 'Plus Jakarta Sans (Default)' },
-                          { id: 'ubuntu', label: 'Ubuntu' },
-                          { id: 'bricolage', label: 'Bricolage Grotesque' }
-                        ].map(f => (
-                          <label key={f.id} className={`flex items-center justify-between p-3 border rounded-xl cursor-pointer transition-colors ${currentFont === f.id ? 'bg-indigo-50 border-indigo-300 font-semibold text-indigo-900' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
-                            <span className="text-xs">{f.label}</span>
-                            <input 
-                              type="radio" 
-                              name="app-font-setting" 
-                              checked={currentFont === f.id} 
-                              onChange={() => setCurrentFont(f.id)} 
-                              className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 border-slate-300"
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Card 2: Ubah Kode Akses */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-fade-in">
-                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-2">
-                      <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                      Ubah Kode Akses
-                    </h3>
-                    <p className="text-xs text-slate-500 mb-4">Ganti kode akses (password) masuk Anda untuk meningkatkan keamanan akun.</p>
-                    
-                    <form onSubmit={handleChangePassword} className="space-y-4">
-                      {passwordSuccess ? (
-                        <div className="bg-green-50 text-green-700 p-4 rounded-xl text-xs text-center font-bold border border-green-200">
-                          ✅ Kode Akses berhasil diubah!
-                        </div>
-                      ) : (
-                        <>
-                          {passwordError && (
-                            <div className="bg-red-50 text-red-700 p-3 rounded-xl text-xs font-bold border border-red-200">
-                              {passwordError}
-                            </div>
-                          )}
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Kode Akses Lama</label>
-                            <input type="password" required value={oldPassword} onChange={e => setOldPassword(e.target.value)}
-                              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
-                          </div>
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Kode Akses Baru</label>
-                            <input type="password" required value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
-                          </div>
-                          <button type="submit" disabled={isChangingPassword}
-                            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-xs font-bold transition-all shadow-sm">
-                            {isChangingPassword ? 'Menyimpan...' : 'Simpan Perubahan'}
-                          </button>
-                        </>
-                      )}
-                    </form>
-                  </div>
-                </div>
-
-                {/* Card 3: Notifikasi Push & Riwayat */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm md:col-span-1 flex flex-col justify-between animate-fade-in">
-                    <div>
-                      <h3 className="text-base font-bold text-slate-800 flex items-center gap-2 mb-2">
-                        <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-                        Notifikasi Push
-                      </h3>
-                      <p className="text-xs text-slate-500 mb-4">Aktifkan untuk menerima notifikasi secara real-time di browser ini.</p>
-                      
-                      <button 
-                        type="button"
-                        onClick={handleRequestPushNotif}
-                        className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-all"
-                      >
-                        Aktifkan Notifikasi Push
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm md:col-span-2 animate-fade-in">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                        <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                        Pemberitahuan Terbaru
-                      </h3>
-                      <button 
-                        type="button"
-                        onClick={() => setShowNotifPanel(true)}
-                        className="text-xs font-bold text-indigo-500 hover:text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg"
-                      >
-                        Buka Riwayat Lengkap &rarr;
-                      </button>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      {recentNotifications.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic py-4 text-center">Belum ada notifikasi.</p>
-                      ) : (
-                        recentNotifications.map(n => {
-                          const dateObj = new Date(n.created_at)
-                          let bgClass = n.isRead ? 'bg-slate-50 border-slate-200 opacity-75' : 'bg-blue-50/50 border-blue-100 font-semibold'
-                          let icon = <span className="text-blue-500">ℹ️</span>
-                          if (n.tipe === 'success') icon = <span className="text-emerald-500">✅</span>
-                          if (n.tipe === 'warning') icon = <span className="text-amber-500">⚠️</span>
-                          
-                          return (
-                            <div 
-                              key={n.id} 
-                              onClick={async () => {
-                                if (!n.isRead) {
-                                  await supabase.from('notifikasi_read').insert({
-                                    notifikasi_id: n.id,
-                                    nisn: studentData.nisn
-                                  })
-                                  fetchNotifCount()
-                                }
-                              }}
-                              className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex gap-3 items-start ${bgClass}`}
-                            >
-                              <div className="shrink-0 mt-0.5">{icon}</div>
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-bold text-slate-800 text-xs truncate">{n.judul}</h4>
-                                <p className="text-slate-600 mt-0.5 line-clamp-1">{n.pesan}</p>
-                                <span className="text-[9px] text-slate-400 mt-1 block">
-                                  {dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} WIB
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : selectedType === 'PROFIL' ? (
-              <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
-            ) : selectedType ? (
+              <SiswaRiwayatPresensi studentData={studentData} />
+            ) : (
               <div className="space-y-6">
                 
                 {/* Status Dokumen & Prasyarat Card */}
@@ -1014,13 +957,14 @@ function Dashboard() {
                   </div>
                 )}
               </div>
-            ) : null}
+            )}
 
             {!selectedType && (
               <SiswaDashboardWidgets 
                 studentData={studentData} 
                 menuTypes={menuTypes} 
                 onNavigate={setSelectedType} 
+                isOrangTua={true}
                 showFeatureConfig={showFeatureConfig}
               />
             )}
@@ -1029,16 +973,204 @@ function Dashboard() {
         </div>
       </div>
 
+      {/* Edit Biodata Modal */}
+      {showEditBiodataModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                Edit Biodata Orang Tua
+              </h3>
+              <button onClick={() => setShowEditBiodataModal(false)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveBiodata} className="p-6">
+              {biodataSuccess ? (
+                <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-4 rounded-xl text-sm font-bold text-center mb-0">
+                  ✅ Biodata berhasil diperbarui!
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {biodataError && (
+                    <div className="bg-rose-50 border border-rose-100 text-rose-600 p-3 rounded-xl text-sm font-medium">
+                      {biodataError}
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Nama Orang Tua</label>
+                    <input 
+                      type="text" 
+                      value={editBiodataForm.nama_ortu}
+                      onChange={(e) => setEditBiodataForm({...editBiodataForm, nama_ortu: e.target.value})}
+                      placeholder="Contoh: Budi Santoso"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all outline-none"
+                    />
+                  </div>
 
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Nomor WhatsApp / HP</label>
+                    <input 
+                      type="text" 
+                      value={editBiodataForm.no_hp_ortu}
+                      onChange={(e) => setEditBiodataForm({...editBiodataForm, no_hp_ortu: e.target.value})}
+                      placeholder="Contoh: 081234567890"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Email</label>
+                    <input 
+                      type="email" 
+                      value={editBiodataForm.email_ortu}
+                      onChange={(e) => setEditBiodataForm({...editBiodataForm, email_ortu: e.target.value})}
+                      placeholder="Contoh: budi@email.com"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all outline-none"
+                    />
+                  </div>
+
+                  <div className="pt-4 flex justify-end gap-3">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowEditBiodataModal(false)}
+                      className="px-5 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">
+                      Batal
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={isSavingBiodata}
+                      className="px-5 py-2.5 text-sm font-bold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-70 transition-colors shadow-sm flex items-center gap-2">
+                      {isSavingBiodata ? (
+                        <>
+                          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          Menyimpan...
+                        </>
+                      ) : 'Simpan Biodata'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ubah Kode Akses Modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-lg">Ubah Kode Akses</h3>
+              <button onClick={() => { setShowPasswordModal(false); setPasswordError(''); setPasswordSuccess(false); setOldPassword(''); setNewPassword(''); }} className="text-slate-500 hover:text-slate-600 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-lg">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <form onSubmit={handleChangePassword} className="p-6 space-y-5">
+              {passwordSuccess ? (
+                <div className="bg-green-50 text-green-700 p-4 rounded-xl text-sm text-center font-bold border border-green-200">
+                  ✅ Kode Akses berhasil diubah!
+                </div>
+              ) : (
+                <>
+                  {passwordError && (
+                    <div className="bg-red-50 text-red-600 p-3.5 rounded-xl text-sm border border-red-100 font-medium">
+                      {passwordError}
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Kode Akses Lama</label>
+                    <input type="password" required value={oldPassword} onChange={e => setOldPassword(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition-all font-medium"
+                      placeholder="Masukkan kode akses saat ini" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Kode Akses Baru</label>
+                    <input type="text" required value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition-all font-medium"
+                      placeholder="Masukkan kode akses baru" />
+                  </div>
+                  <div className="pt-2">
+                    <button type="submit" disabled={isChangingPassword}
+                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl text-sm font-bold transition-all shadow-sm">
+                      {isChangingPassword ? 'Menyimpan...' : 'Simpan Perubahan'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Pengaturan Modal */}
+      {showPengaturanModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                Pengaturan
+              </h3>
+              <button onClick={() => setShowPengaturanModal(false)} className="text-slate-500 hover:text-slate-600 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-lg">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              <button onClick={() => { setShowPengaturanModal(false); handleOpenEditBiodata(); }} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                Edit Biodata
+              </button>
+              <button onClick={() => { setShowPengaturanModal(false); setShowPasswordModal(true); }} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                Ubah Kode Akses
+              </button>
+              <button onClick={() => { setShowPengaturanModal(false); setShowNotifPanel(true); }} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                Setting Notifikasi
+              </button>
+              <button onClick={() => { setShowPengaturanModal(false); cycleFont(); }} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                Ganti Font
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Panel Notifikasi Slide-in */}
-      <SiswaNotificationPanel 
-        isOpen={showNotifPanel} 
-        onClose={() => setShowNotifPanel(false)} 
-        studentData={studentData} 
-      />
+      {showNotifPanel && (
+        <SiswaNotificationPanel
+          onClose={() => setShowNotifPanel(false)}
+          nisn={studentData?.nisn}
+        />
+      )}
+
+      {/* Toast Notifikasi Presensi Anak (Realtime) */}
+      {presensiToast && (
+        <div className="fixed bottom-4 right-4 md:bottom-8 md:right-8 z-[100] bg-white rounded-2xl shadow-2xl border border-indigo-100 p-4 max-w-sm flex items-start gap-4 animate-fade-in-up">
+          {presensiToast.selfieUrl ? (
+            <img src={presensiToast.selfieUrl} alt="Selfie" className="w-12 h-12 rounded-full object-cover border-2 border-indigo-100 shrink-0 shadow-sm" />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center shrink-0 border-2 border-indigo-100 shadow-sm">
+              <span className="text-xl">📸</span>
+            </div>
+          )}
+          <div className="flex-1">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-wider mb-1">Presensi {presensiToast.tipeLabel}</h4>
+            <p className="text-sm font-bold text-slate-800 leading-snug">{presensiToast.namaLengkap}</p>
+            <p className="text-xs text-slate-500 mt-1">Pukul {presensiToast.waktu} WIB • <span className="font-semibold text-slate-700">{presensiToast.statusLabel}</span></p>
+          </div>
+          <button onClick={() => setPresensiToast(null)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors shrink-0 -mt-1 -mr-1">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-export default Dashboard
+export default DashboardOrangTua

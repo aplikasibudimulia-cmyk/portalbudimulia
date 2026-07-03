@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export default function SiswaProfilSection({ studentData, menuTypes }) {
+export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua = false }) {
   const [enrollments, setEnrollments] = useState([])
   const [rekapKehadiran, setRekapKehadiran] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
   const [dokumenStatus, setDokumenStatus] = useState([])
   const [loading, setLoading] = useState(true)
   const [photoUrl, setPhotoUrl] = useState('')
+  const [presensiRiwayat, setPresensiRiwayat] = useState([])
 
   useEffect(() => {
     fetchProfileData()
@@ -15,12 +16,8 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
   const fetchProfileData = async () => {
     setLoading(true)
     try {
-      // 1. Fetch Foto (Fallback)
-      const { data: fotos } = await supabase.from('foto_siswa').select('cloudinary_url').eq('nisn', studentData.nisn).limit(1)
-      let photo = fotos?.[0]?.cloudinary_url
-      if (!photo) {
-        photo = `https://res.cloudinary.com/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload/SKL-BM/FOTO_${studentData.nisn}_${studentData.tahun_ajaran_id}`
-      }
+      // 1. Fetch Foto
+      let photo = `https://res.cloudinary.com/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload/SKL-BM/FOTO_${studentData.nisn}_${studentData.tahun_ajaran_id}`
       setPhotoUrl(photo)
 
       // 2. Fetch Enrollments
@@ -28,10 +25,9 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
         .from('enrollment')
         .select(`
           kelas,
-          is_active,
-          tahun_ajaran (nama, semester)
+          tahun_ajaran (nama, is_aktif)
         `)
-        .eq('siswa_nisn', studentData.nisn)
+        .eq('nisn', studentData.nisn)
         .order('created_at', { ascending: false })
       setEnrollments(enrolData || [])
 
@@ -46,6 +42,15 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
         if (rekap[p.status] !== undefined) rekap[p.status]++
       })
       setRekapKehadiran(rekap)
+
+      // 3b. Fetch Riwayat Presensi Terbaru (untuk orangtua)
+      const { data: riwayatData } = await supabase
+        .from('presensi_harian')
+        .select('status, waktu, tanggal, tipe, selfie_url')
+        .eq('siswa_nisn', studentData.nisn)
+        .order('tanggal', { ascending: false })
+        .limit(20)
+      setPresensiRiwayat(riwayatData || [])
 
       // 4. Fetch Dokumen Status
       if (menuTypes && menuTypes.length > 0) {
@@ -92,46 +97,48 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
     <div className="animate-slide-up space-y-6">
       
       {/* IDENTITAS UTAMA */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
-        <div className="h-32 bg-gradient-to-r from-indigo-500 to-purple-600"></div>
-        <div className="px-6 pb-8 md:px-10 flex flex-col md:flex-row gap-6 items-center md:items-end -mt-16 relative z-10 text-center md:text-left">
-          <img 
-            src={photoUrl} 
-            onError={handlePhotoError}
-            alt={studentData.nama_lengkap} 
-            className="w-32 h-32 rounded-full border-4 border-white shadow-md object-cover bg-slate-50"
-          />
-          <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-black text-slate-800">{studentData.nama_lengkap}</h2>
-            <p className="text-slate-500 font-medium">Kelas {studentData.kelas} • NISN: {studentData.nisn}</p>
+      {!isOrangTua && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
+          <div className="h-32 bg-gradient-to-r from-indigo-500 to-purple-600"></div>
+          <div className="px-6 pb-8 md:px-10 flex flex-col md:flex-row gap-6 items-center md:items-end -mt-16 relative z-10 text-center md:text-left">
+            <img 
+              src={photoUrl} 
+              onError={handlePhotoError}
+              alt={studentData.nama_lengkap} 
+              className="w-32 h-32 rounded-full border-4 border-white shadow-md object-cover bg-slate-50"
+            />
+            <div className="flex-1">
+              <h2 className="text-2xl md:text-3xl font-black text-slate-800">{studentData.nama_lengkap}</h2>
+              <p className="text-slate-500 font-medium">Kelas {studentData.kelas} • NISN: {studentData.nisn}</p>
+            </div>
+            <div className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-xl border border-indigo-100 hidden md:block">
+              <p className="text-[10px] font-bold uppercase tracking-wider">Status</p>
+              <p className="font-bold">Siswa Aktif</p>
+            </div>
           </div>
-          <div className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-xl border border-indigo-100 hidden md:block">
-            <p className="text-[10px] font-bold uppercase tracking-wider">Status</p>
-            <p className="font-bold">Siswa Aktif</p>
-          </div>
-        </div>
 
-        <div className="px-6 md:px-10 pb-8 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
-          <div>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">NIPD</p>
-            <p className="font-semibold text-slate-800">{studentData.nipd || '-'}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Tempat, Tgl Lahir</p>
-            <p className="font-semibold text-slate-800">
-              {studentData.tempat_lahir || '-'}, {studentData.tanggal_lahir ? new Date(studentData.tanggal_lahir).toLocaleDateString('id-ID') : '-'}
-            </p>
-          </div>
-          <div>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Kode Akses</p>
-            <p className="font-semibold text-slate-800 font-mono bg-slate-100 px-2 py-0.5 rounded inline-block">{studentData.kode}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Tahun Ajaran Aktif</p>
-            <p className="font-semibold text-slate-800">{studentData.tahun_ajaran || '-'}</p>
+          <div className="px-6 md:px-10 pb-8 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+            <div>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">NIPD</p>
+              <p className="font-semibold text-slate-800">{studentData.nipd || '-'}</p>
+            </div>
+            <div>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Tempat, Tgl Lahir</p>
+              <p className="font-semibold text-slate-800">
+                {studentData.tempat_lahir || '-'}, {studentData.tanggal_lahir ? new Date(studentData.tanggal_lahir).toLocaleDateString('id-ID') : '-'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Kode Akses</p>
+              <p className="font-semibold text-slate-800 font-mono bg-slate-100 px-2 py-0.5 rounded inline-block">{studentData.kode}</p>
+            </div>
+            <div>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Tahun Ajaran Aktif</p>
+              <p className="font-semibold text-slate-800">{studentData.tahun_ajaran || '-'}</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         
@@ -164,7 +171,66 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
           </div>
         </div>
 
-        {/* RIWAYAT KELAS */}
+        {/* RIWAYAT KELAS (siswa) / RIWAYAT PRESENSI (orangtua) */}
+        {isOrangTua ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
+            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              Riwayat Presensi
+            </h3>
+            {(() => {
+              const groupedPresensi = Object.entries(
+                presensiRiwayat.reduce((acc, curr) => {
+                  if (!acc[curr.tanggal]) acc[curr.tanggal] = []
+                  acc[curr.tanggal].push(curr)
+                  return acc
+                }, {})
+              ).sort((a, b) => new Date(b[0]) - new Date(a[0]))
+
+              return groupedPresensi.length === 0 ? (
+                <p className="text-sm text-slate-500 text-center py-4">Belum ada data presensi.</p>
+              ) : (
+                <div className="flex-1 overflow-y-auto max-h-[400px] space-y-4 pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                  {groupedPresensi.map(([tanggal, records], idx) => {
+                    const tglStr = new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                    
+                    return (
+                      <div key={idx} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex flex-col gap-3">
+                        <p className="text-xs font-bold text-slate-500 border-b border-slate-200 pb-1.5">{tglStr}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          {['masuk', 'pulang'].map(tipe => {
+                            const p = records.find(r => r.tipe === tipe || (!r.tipe && tipe === 'masuk'))
+                            const statusMap = { H: { label: 'Hadir', cls: 'bg-emerald-100 text-emerald-700' }, T: { label: 'Terlambat', cls: 'bg-amber-100 text-amber-700' }, S: { label: 'Sakit', cls: 'bg-blue-100 text-blue-700' }, I: { label: 'Izin', cls: 'bg-purple-100 text-purple-700' }, A: { label: 'Alpha', cls: 'bg-rose-100 text-rose-700' } }
+                            
+                            if (!p) return (
+                              <div key={tipe} className="flex flex-col items-center p-2.5 rounded-lg bg-white border border-slate-100">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{tipe}</span>
+                                <span className="text-xs font-semibold text-slate-300 mt-2">Belum ada</span>
+                              </div>
+                            )
+
+                            const s = statusMap[p.status] || { label: p.status, cls: 'bg-slate-100 text-slate-700' }
+                            
+                            return (
+                              <div key={tipe} className="flex flex-col items-center p-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">{tipe}</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${s.cls}`}>{s.label}</span>
+                                <span className="text-xs font-bold text-slate-600 mt-1.5">{p.waktu} WIB</span>
+                                {p.selfie_url && (
+                                  <img src={p.selfie_url} alt="selfie" className="w-12 h-12 rounded-full object-cover mt-2 border-2 border-slate-100 shadow-sm" />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </div>
+        ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
             <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -172,27 +238,30 @@ export default function SiswaProfilSection({ studentData, menuTypes }) {
           </h3>
           <div className="flex-1 overflow-y-auto pr-2 max-h-64 space-y-3 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
             {enrollments.length > 0 ? (
-              enrollments.map((enrol, idx) => (
-                <div key={idx} className={`p-3 rounded-xl border flex justify-between items-center ${enrol.is_active ? 'bg-indigo-50 border-indigo-100' : 'bg-slate-50 border-slate-100'}`}>
+              enrollments.map((enrol, idx) => {
+                const isActive = enrol.tahun_ajaran?.is_aktif;
+                return (
+                <div key={idx} className={`p-3 rounded-xl border flex justify-between items-center ${isActive ? 'bg-indigo-50 border-indigo-100' : 'bg-slate-50 border-slate-100'}`}>
                   <div>
-                    <p className={`font-bold ${enrol.is_active ? 'text-indigo-800' : 'text-slate-700'}`}>Kelas {enrol.kelas}</p>
-                    <p className="text-xs text-slate-500">{enrol.tahun_ajaran?.nama} — {enrol.tahun_ajaran?.semester}</p>
+                    <p className={`font-bold ${isActive ? 'text-indigo-800' : 'text-slate-700'}`}>Kelas {enrol.kelas}</p>
+                    <p className="text-xs text-slate-500">{enrol.tahun_ajaran?.nama}</p>
                   </div>
-                  {enrol.is_active && (
-                    <span className="bg-indigo-100 text-indigo-600 text-[10px] font-bold uppercase px-2 py-1 rounded-md">Saat Ini</span>
+                  {isActive && (
+                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md">Saat Ini</span>
                   )}
                 </div>
-              ))
+              )})
             ) : (
               <p className="text-sm text-slate-500 text-center py-4">Belum ada riwayat kelas.</p>
             )}
           </div>
         </div>
+        )}
 
       </div>
 
       {/* STATUS DOKUMEN CHECKLIST */}
-      {dokumenStatus.length > 0 && (
+      {!isOrangTua && dokumenStatus.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
             <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>

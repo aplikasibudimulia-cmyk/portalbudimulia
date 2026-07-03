@@ -12,9 +12,17 @@ export default function SiswaNilaiSection({ studentData }) {
   const [configs, setConfigs] = useState({})
   
   const [loading, setLoading] = useState(true)
+  const [expandedMapels, setExpandedMapels] = useState({})
   const [expandedBabs, setExpandedBabs] = useState({})
   const [expandedTps, setExpandedTps] = useState({})
   const [selectedMapelId, setSelectedMapelId] = useState('')
+
+  const toggleMapel = (mapelId) => {
+    setExpandedMapels(prev => ({
+      ...prev,
+      [mapelId]: !prev[mapelId]
+    }))
+  }
 
   const toggleTp = (tpId) => {
     setExpandedTps(prev => ({
@@ -73,10 +81,10 @@ export default function SiswaNilaiSection({ studentData }) {
       .eq('semester_id', selectedSemesterId)
       .order('urutan')
       
-    // Filter komponen valid for this student's class and visible
+    // Filter komponen for this student's class. Visibility (is_nilai_visible) is
+    // filtered at render time so that only visible TPs/Babs are shown to the student.
     const studentClassNum = studentData.kelas ? studentData.kelas.replace(/\D/g, '') : ''
     const validKomps = (kompData || []).filter(k => {
-      // Don't filter by is_nilai_visible here, so we can show the Bab headers even if TPs are hidden
       if (!k.target_kelas || k.target_kelas.length === 0) return true;
       return k.target_kelas.some(c => c.replace(/\D/g, '') === studentClassNum)
     })
@@ -133,7 +141,7 @@ export default function SiswaNilaiSection({ studentData }) {
             className="px-4 py-2 border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full sm:w-auto bg-white text-slate-800 shadow-sm"
           >
             <option value="">Semua Mapel</option>
-            {mapels.map(m => (
+            {mapels.filter(m => komponens.some(k => k.mata_pelajaran_id === m.id && k.is_nilai_visible)).map(m => (
               <option key={m.id} value={m.id}>{m.nama}</option>
             ))}
           </select>
@@ -167,8 +175,16 @@ export default function SiswaNilaiSection({ studentData }) {
           </div>
         ) : (
           <div className="space-y-4 w-full">
-            {mapels.filter(m => !selectedMapelId || m.id === selectedMapelId).map(mapel => {
-              const mKomps = komponens.filter(k => k.mata_pelajaran_id === mapel.id)
+            {mapels.filter(m => {
+                // Apply dropdown filter if selected
+                if (selectedMapelId && m.id !== selectedMapelId) return false
+                // Only show mapel if it has at least one visible komponen for this student's class
+                return komponens.some(k => k.mata_pelajaran_id === m.id && k.is_nilai_visible)
+              }).map(mapel => {
+              // Only show komponen that are visible to students
+              const mKomps = komponens.filter(k => k.mata_pelajaran_id === mapel.id && k.is_nilai_visible)
+              
+              // Only show Babs that have at least one visible TP
               const uniqueBabs = [...new Set(mKomps.map(k => k.bab_nama || 'Tanpa Bab'))].sort((a,b) => {
                 const isPstsA = a.toUpperCase().includes('PSTS');
                 const isPstsB = b.toUpperCase().includes('PSTS');
@@ -190,7 +206,7 @@ export default function SiswaNilaiSection({ studentData }) {
               const hasKomponen = mKomps.length > 0
               // Mapel is now always expanded
               
-              // Group by Bab
+              // Group by Bab (only visible TPs)
               const babs = {}
               mKomps.forEach(k => {
                 const bName = k.bab_nama || 'Tanpa Bab'
@@ -250,10 +266,18 @@ export default function SiswaNilaiSection({ studentData }) {
                 }
               }
               
+              const isMapelExpanded = !!expandedMapels[mapel.id];
+
               return (
                 <div key={mapel.id} className="border border-slate-200 bg-white rounded-2xl overflow-hidden shadow-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50 gap-4">
+                  <button 
+                    onClick={() => toggleMapel(mapel.id)}
+                    className="w-full flex flex-col sm:flex-row sm:items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50 hover:bg-slate-100/70 transition-colors gap-4 text-left"
+                  >
                     <div className="flex items-center gap-4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-transform duration-300 ${isMapelExpanded ? 'bg-indigo-100 text-indigo-600 rotate-180' : 'bg-white text-slate-400 border border-slate-200 shadow-sm'}`}>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                      </div>
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg bg-indigo-100 text-indigo-700 shrink-0">
                         {mapel.nama.charAt(0)}
                       </div>
@@ -278,9 +302,10 @@ export default function SiswaNilaiSection({ studentData }) {
                         </div>
                       </div>
                     )}
-                  </div>
+                  </button>
                   
-                  <div className="p-5 sm:p-6 bg-white">
+                  {isMapelExpanded && (
+                    <div className="p-5 sm:p-6 bg-white animate-fade-in">
                     {!hasKomponen ? (
                       <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
                         <p className="text-slate-500 font-medium">Mata pelajaran ini belum memiliki materi/bab untuk semester ini.</p>
@@ -436,8 +461,9 @@ export default function SiswaNilaiSection({ studentData }) {
                           )
                           })}
                         </div>
-                      )}
-                  </div>
+                    )}
+                    </div>
+                  )}
                 </div>
               )
             })}

@@ -82,32 +82,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [showKelolaSemester, setShowKelolaSemester] = useState(false)
   const [kelolaSemesterRombel, setKelolaSemesterRombel] = useState('')
   const [maxNamaWidth, setMaxNamaWidth] = useState(260)
-  
-  useEffect(() => {
-    if (!targetKelasList || targetKelasList.length === 0) return
-    const fetchMaxName = async () => {
-       const { data } = await supabase.from('siswa_lengkap').select('nama_lengkap').in('kelas', targetKelasList)
-       if (data && data.length > 0) {
-          const maxLen = Math.max(...data.map(d => (d.nama_lengkap || '').length))
-          // 1 char ~ 7.5px in standard fonts. Add 40px for padding
-          const calculatedWidth = Math.max(200, Math.ceil(maxLen * 7.5 + 40))
-          setMaxNamaWidth(calculatedWidth)
-       }
-    }
-    fetchMaxName()
-  }, [targetKelasList])
-  const [showConfigAkhirModal, setShowConfigAkhirModal] = useState(false)
-  const [configAkhir, setConfigAkhir] = useState({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false })
-
-  const [showAddTp, setShowAddTp] = useState(false)
-
-  const uploadRef = useRef(null)
-  const tableRef = useRef(null)
-  const { requestConfirm, ConfirmModalComponent } = useConfirm()
-
   // Session data
-  const waliKelas  = session?.kelas?.filter(k => !activeTa || k.tahun_ajaran_id === activeTa?.id).map(k => k.kelas) || []
-  const mapelRaw   = session?.guru_mapel_raw?.filter(m => !activeTa || m.tahun_ajaran_id === activeTa?.id) || []
+  const waliKelas  = session?.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa?.id).map(k => k.kelas) || []
+  const mapelRaw   = session?.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa?.id) || []
   const uniqueMapels = mapelRaw.reduce((acc, m) => {
     const id = m.mata_pelajaran_id
     const nama = m.mata_pelajaran?.nama
@@ -118,8 +95,32 @@ export default function NilaiGuruSection({ session, activeTa }) {
     ...waliKelas,
     ...mapelRaw.filter(m => m.mata_pelajaran_id === selectedMapelId).map(m => m.kelas)
   ])].sort()
+  const activeTargetKelas = targetKelasList.filter(c => uniqueClassesForMapel.includes(c))
   // Extract unique rombel numbers (7, 8, 9) from class names like "7A", "7B"
   const uniqueRombels = [...new Set(uniqueClassesForMapel.map(c => c.replace(/\D/g, '')))].sort()
+
+  useEffect(() => {
+    if (!activeTargetKelas || activeTargetKelas.length === 0) return
+    const fetchMaxName = async () => {
+       const { data } = await supabase.from('siswa_lengkap').select('nama_lengkap').in('kelas', activeTargetKelas)
+       if (data && data.length > 0) {
+          const maxLen = Math.max(...data.map(d => (d.nama_lengkap || '').length))
+          // 1 char ~ 7.5px in standard fonts. Add 40px for padding
+          const calculatedWidth = Math.max(200, Math.ceil(maxLen * 7.5 + 40))
+          setMaxNamaWidth(calculatedWidth)
+       }
+    }
+    fetchMaxName()
+  }, [activeTargetKelas])
+
+  const [showConfigAkhirModal, setShowConfigAkhirModal] = useState(false)
+  const [configAkhir, setConfigAkhir] = useState({ metode_hitung: 'rata_rata', bobot_detail: {}, is_visible: false })
+
+  const [showAddTp, setShowAddTp] = useState(false)
+
+  const uploadRef = useRef(null)
+  const tableRef = useRef(null)
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   // Current semester komponen filtered by active tab kelas
   const classKomponen = komponen.filter(k =>
@@ -486,6 +487,33 @@ export default function NilaiGuruSection({ session, activeTa }) {
       .update({ is_nilai_visible: willShow }).eq('id', komp.id)
     if (error) alert('Gagal: ' + error.message)
     else setKomponen(prev => prev.map(k => k.id === komp.id ? { ...k, is_nilai_visible: willShow } : k))
+  }
+
+  // Toggle visibility for an entire BAB (all TPs at once)
+  const handleToggleBabVisible = async (babNama) => {
+    const babKomps = komponen.filter(k => k.bab_nama === babNama)
+    const allVisible = babKomps.every(k => k.is_nilai_visible)
+    const willShow = !allVisible
+
+    if (willShow) {
+      const confirmed = await requestConfirm({
+        title: 'Tampilkan Seluruh BAB ke Siswa?',
+        message: `Semua TP dalam "${babNama}" akan ditampilkan di akun siswa. Apakah Anda yakin?`,
+        confirmLabel: 'Ya, Tampilkan',
+        confirmColor: 'indigo',
+        icon: 'info',
+      })
+      if (!confirmed) return
+    }
+
+    const ids = babKomps.map(k => k.id)
+    const { error } = await supabase.from('nilai_komponen')
+      .update({ is_nilai_visible: willShow }).in('id', ids)
+    if (error) {
+      alert('Gagal: ' + error.message)
+    } else {
+      setKomponen(prev => prev.map(k => ids.includes(k.id) ? { ...k, is_nilai_visible: willShow } : k))
+    }
   }
 
   const handleSaveEditTp = async () => {
@@ -1456,7 +1484,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       for (const sheetName of wb.SheetNames) {
           let kelas = activeTabKelas;
           // Try to guess class from sheetName (e.g. "Nilai 8A Sem1")
-          const matchedClass = targetKelasList.find(c => sheetName.includes(c));
+          const matchedClass = activeTargetKelas.find(c => sheetName.includes(c));
           if (matchedClass) {
               kelas = matchedClass;
           }
@@ -1736,7 +1764,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               
               <div className="flex items-center justify-between mb-2">
                 <button 
-                  onClick={() => setSelectedExportClasses(targetKelasList)}
+                  onClick={() => setSelectedExportClasses(activeTargetKelas)}
                   className="text-xs text-indigo-600 font-medium hover:text-indigo-700"
                 >Pilih Semua</button>
                 <button 
@@ -1746,7 +1774,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               </div>
 
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                {targetKelasList.map(kelas => (
+                {activeTargetKelas.map(kelas => (
                   <label key={kelas} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-100 cursor-pointer border border-transparent hover:border-slate-200 transition-colors">
                     <input 
                       type="checkbox" 
@@ -1811,11 +1839,11 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
         {/* Action Header */}
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 shrink-0 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 w-full overflow-hidden">
           <div className="flex flex-col md:flex-row md:items-center gap-3 w-full xl:w-auto overflow-hidden">
-            {targetKelasList.length === 0 ? (
+            {activeTargetKelas.length === 0 ? (
               <div className="text-sm font-bold text-slate-400 italic">Belum ada kelas target</div>
             ) : (
               <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-2 md:pb-0 w-full md:w-auto">
-                {targetKelasList.map(c => {
+                {activeTargetKelas.map(c => {
                   const isActive = activeTabKelas === c
                   return (
                     <button key={c} onClick={() => setActiveTabKelas(c)} 
@@ -1862,11 +1890,11 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 className="w-14 px-2 py-1 text-sm font-bold text-slate-800 bg-white border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
               />
             </div>
-            <button onClick={() => { setSelectedExportClasses([activeTabKelas]); setShowExportModal(true); }} disabled={isExporting || targetKelasList.length === 0}
+            <button onClick={() => { setSelectedExportClasses([activeTabKelas]); setShowExportModal(true); }} disabled={isExporting || activeTargetKelas.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-xl transition-colors shadow-sm disabled:opacity-50">
               {isExporting ? <><div className="w-4 h-4 border-2 border-emerald-300 border-t-emerald-600 rounded-full animate-spin"/> Mengekspor...</> : <><IconDownload /> Export</>}
             </button>
-            <button onClick={() => uploadRef.current?.click()} disabled={targetKelasList.length === 0}
+            <button onClick={() => uploadRef.current?.click()} disabled={activeTargetKelas.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm disabled:opacity-50">
               <IconUpload /> Upload
             </button>
@@ -1901,7 +1929,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               <h3 className="font-bold text-slate-700 text-lg">Pilih Mapel dan Semester</h3>
               <p className="text-slate-500 text-sm mt-1 mb-5">Anda perlu mengatur konteks terlebih dahulu.</p>
             </div>
-          ) : targetKelasList.length === 0 ? (
+          ) : activeTargetKelas.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-20">
               <div className="w-16 h-16 bg-indigo-50 border-2 border-indigo-200 rounded-full flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
                 <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
@@ -1946,18 +1974,28 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     </th>
                     {uniqueBabsClass.map((bab, bIdx) => {
                       const babCount = classKomponen.filter(k => (k.bab_nama || 'Lainnya') === bab).length
+                      const babKomps = komponen.filter(k => k.bab_nama === bab)
+                      const isBabVisible = babKomps.length > 0 && babKomps.some(k => k.is_nilai_visible)
+                      const isAllBabHidden = babKomps.length > 0 && babKomps.every(k => !k.is_nilai_visible)
                       return (
-                        <th key={bab} colSpan={babCount} 
+                        <th key={bab} colSpan={babCount}
                           onClick={() => {
                               setEditBabName(bab)
                               setSelectedBabToManage(bab)
                           }}
-                          className={`text-center px-3 py-2 border-r border-slate-200 cursor-pointer transition-colors whitespace-normal break-words ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]}`}
+                          className={`text-center px-3 py-2 border-r border-slate-200 cursor-pointer transition-colors whitespace-normal break-words ${BAB_BG[bIdx % BAB_BG.length]} ${BAB_TEXT[bIdx % BAB_TEXT.length]} ${BAB_HOVER[bIdx % BAB_HOVER.length]} ${isAllBabHidden ? 'opacity-50' : ''}`}
                           title="Klik untuk kelola BAB (Ubah nama, Metode Hitung, Tambah TP)">
                           <div className="flex items-center justify-center gap-1.5">
                             {bab}
                             <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                            <button onClick={(e) => handleClearBab(e, bab)} className="p-0.5 ml-1 text-slate-400 hover:text-rose-500 hover:bg-rose-100 rounded transition-colors" title="Kosongkan semua nilai di Bab ini">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleToggleBabVisible(bab) }}
+                              className={`p-0.5 rounded transition-colors ${isBabVisible ? 'opacity-70 hover:opacity-100' : 'opacity-40 hover:opacity-100'}`}
+                              title={isAllBabHidden ? 'Tampilkan BAB ke siswa' : 'Sembunyikan BAB dari siswa'}
+                            >
+                              <IconEye on={isBabVisible} />
+                            </button>
+                            <button onClick={(e) => handleClearBab(e, bab)} className="p-0.5 text-slate-400 hover:text-rose-500 hover:bg-rose-100 rounded transition-colors" title="Kosongkan semua nilai di Bab ini">
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
@@ -2440,7 +2478,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                      setNewTpNama('TP ' + (existingCount + 1));
                      setNewTpDeskripsi('');
                      setNewTpBobot('1');
-                     setNewTpTargetKelas(targetKelasList.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')));
+                     setNewTpTargetKelas(activeTargetKelas.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')));
                   }} className="px-4 py-2 bg-emerald-50 text-emerald-700 font-bold text-sm rounded-xl hover:bg-emerald-100 transition-colors flex items-center gap-1.5 shadow-sm"><IconPlus/> Tambah TP</button>
                 </div>
                 
@@ -2449,7 +2487,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     <div className="mb-4">
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Target Kelas</label>
                       <div className="flex flex-wrap gap-2">
-                        {targetKelasList.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')).map(c => {
+                        {activeTargetKelas.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')).map(c => {
                           const isSelected = newTpTargetKelas.includes(c)
                           return (
                             <button key={c} onClick={() => toggleNewTpTargetKelas(c)}
@@ -2532,7 +2570,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1.5">Target Kelas</label>
                 <div className="flex flex-wrap gap-2">
-                  {targetKelasList.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')).map(c => {
+                  {activeTargetKelas.filter(c => activeTabKelas && c.replace(/\D/g, '') === activeTabKelas.replace(/\D/g, '')).map(c => {
                     const isSelected = editTpData.target_kelas.includes(c)
                   
 

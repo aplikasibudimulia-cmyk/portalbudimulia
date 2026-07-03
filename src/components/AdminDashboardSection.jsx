@@ -12,7 +12,7 @@ const IconFile = () => <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" 
 
 const COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6']
 
-export default function AdminDashboardSection() {
+export default function AdminDashboardSection({ onNavigate }) {
   const [stats, setStats] = useState({
     totalSiswa: 0,
     totalGuru: 0,
@@ -28,6 +28,98 @@ export default function AdminDashboardSection() {
   })
   
   const [loading, setLoading] = useState(true)
+
+  const quickAccessItems = [
+    {
+      id: 'manajemen_akun',
+      title: 'Manajemen Akun',
+      desc: 'Kelola data murid, guru, wali kelas, & orang tua.',
+      icon: (
+        <svg className="w-5 h-5 text-blue-600 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      ),
+      bgColor: 'bg-blue-50/50 border-blue-100 hover:bg-blue-50 hover:border-blue-200 text-blue-900',
+    },
+    {
+      id: 'notifikasi',
+      title: 'Notifikasi Siswa',
+      desc: 'Kirim pengumuman langsung/notifikasi siaran ke murid.',
+      icon: (
+        <svg className="w-5 h-5 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+      ),
+      bgColor: 'bg-indigo-50/50 border-indigo-100 hover:bg-indigo-50 hover:border-indigo-200 text-indigo-900',
+    },
+    {
+      id: 'presensi_qr',
+      title: 'Presensi QR Code',
+      desc: 'Atur sesi presensi harian berbasis QR Code.',
+      icon: (
+        <svg className="w-5 h-5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7" height="7" />
+          <rect x="14" y="3" width="7" height="7" />
+          <rect x="14" y="14" width="7" height="7" />
+          <rect x="3" y="14" width="7" height="7" />
+        </svg>
+      ),
+      bgColor: 'bg-emerald-50/50 border-emerald-100 hover:bg-emerald-50 hover:border-emerald-200 text-emerald-900',
+    },
+    {
+      id: 'kumpulan_dokumen',
+      title: 'Kumpulan Dokumen',
+      desc: 'Akses cepat unggah berkas, rapor, & dokumen digital.',
+      icon: (
+        <svg className="w-5 h-5 text-purple-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+      ),
+      bgColor: 'bg-purple-50/50 border-purple-100 hover:bg-purple-50 hover:border-purple-200 text-purple-900',
+    },
+    {
+      id: 'tata_tertib',
+      title: 'Tata Tertib',
+      desc: 'Lihat, kelola, & perbarui aturan tata tertib siswa.',
+      icon: (
+        <svg className="w-5 h-5 text-rose-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+        </svg>
+      ),
+      bgColor: 'bg-rose-50/50 border-rose-100 hover:bg-rose-50 hover:border-rose-200 text-rose-900',
+    },
+    {
+      id: 'katalog_poin',
+      title: 'Katalog Poin',
+      desc: 'Daftar skor poin pelanggaran & pembinaan siswa.',
+      icon: (
+        <svg className="w-5 h-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="8" r="7" />
+          <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+        </svg>
+      ),
+      bgColor: 'bg-amber-50/50 border-amber-100 hover:bg-amber-50 hover:border-amber-200 text-amber-900',
+    },
+    {
+      id: 'konfigurasi',
+      title: 'Pengaturan Sistem',
+      desc: 'Konfigurasi Tahun Ajaran, Semester, & Mata Pelajaran.',
+      icon: (
+        <svg className="w-5 h-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      ),
+      bgColor: 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300 text-slate-900',
+    }
+  ]
 
   useEffect(() => {
     fetchStats()
@@ -200,39 +292,30 @@ export default function AdminDashboardSection() {
           </div>
         </div>
 
-        {/* CHART 3: Proporsi Berkas Pengumuman */}
+        {/* WIDGET: Akses Cepat Fitur Admin */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm lg:col-span-2">
-          <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
-            <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
-            Proporsi Dokumen Berdasarkan Jenis
+          <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
+            <svg className="w-5 h-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2" />
+              <polyline points="2 17 12 22 22 17" />
+              <polyline points="2 12 12 17 22 12" />
+            </svg>
+            Akses Cepat Fitur Admin
           </h3>
-          <div className="h-72 flex justify-center">
-            {chartData.berkasDist.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={chartData.berkasDist}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={5}
-                    dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}
-                  >
-                    {chartData.berkasDist.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-400 text-sm">
-                Belum ada berkas yang diunggah.
-              </div>
-            )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {quickAccessItems.map(item => (
+              <button
+                key={item.id}
+                onClick={() => onNavigate && onNavigate(item.id)}
+                className={`flex flex-col text-left p-4 rounded-xl border transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-md ${item.bgColor}`}
+              >
+                <div className="p-2 bg-white rounded-lg w-10 h-10 flex items-center justify-center shadow-sm mb-3">
+                  {item.icon}
+                </div>
+                <h4 className="font-bold text-sm text-slate-800 mb-1 leading-tight">{item.title}</h4>
+                <p className="text-[11px] text-slate-500 leading-normal">{item.desc}</p>
+              </button>
+            ))}
           </div>
         </div>
 

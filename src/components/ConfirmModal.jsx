@@ -19,6 +19,7 @@ function ConfirmModal({
   isOpen,
   title = 'Konfirmasi Tindakan',
   message = 'Apakah Anda yakin ingin melanjutkan tindakan ini?',
+  details = null, // Array of { label, from, to } for showing change list
   onConfirm,
   onCancel,
   confirmLabel = 'Ya, Lanjutkan',
@@ -103,7 +104,7 @@ function ConfirmModal({
       />
 
       {/* Modal Card */}
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-slide-up border border-slate-100">
+      <div className={`relative bg-white rounded-2xl shadow-xl w-full overflow-hidden animate-slide-up border border-slate-100 ${details && details.length > 0 ? 'max-w-lg' : 'max-w-sm'}`}>
         {/* Body */}
         <div className="p-6 flex flex-col items-center text-center">
           {/* Icon */}
@@ -124,6 +125,31 @@ function ConfirmModal({
             {message}
           </p>
         </div>
+
+        {/* Change Details List */}
+        {details && details.length > 0 && (
+          <div className="mx-5 mb-5 border border-slate-200 rounded-xl overflow-hidden text-left">
+            <div className="bg-slate-50 border-b border-slate-200 px-3 py-2">
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Rincian Perubahan ({details.length} item)</p>
+            </div>
+            <div className="max-h-52 overflow-y-auto divide-y divide-slate-100">
+              {details.map((item, idx) => (
+                <div key={idx} className="px-3 py-2.5">
+                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1">{item.label}</p>
+                  <div className="flex items-start gap-2 text-xs">
+                    <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded line-through shrink-0 max-w-[45%] truncate" title={item.from || '(kosong)'}>
+                      {item.from || '(kosong)'}
+                    </span>
+                    <span className="text-slate-400 mt-0.5">→</span>
+                    <span className="bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded shrink-0 max-w-[45%] truncate" title={item.to || '(kosong)'}>
+                      {item.to || '(kosong)'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Footer Buttons */}
         <div className="px-6 pb-6 flex gap-3">

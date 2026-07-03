@@ -10,6 +10,12 @@ export default function AdminBerandaConfigSection() {
     nipd: true,
     tahun_ajaran: true
   })
+  const [showFeature, setShowFeature] = useState({
+    presensi: true,
+    nilai: true,
+    poin: true
+  })
+  const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
   
@@ -21,14 +27,20 @@ export default function AdminBerandaConfigSection() {
     const { data } = await supabase.from('pengaturan_sekolah').select('*')
     if (data) {
       const newShowProfile = { ...showProfile }
+      const newShowFeature = { ...showFeature }
       data.forEach(item => {
         if (item.setting_key === 'show_profile_foto') newShowProfile.foto = item.setting_value === 'true'
         if (item.setting_key === 'show_profile_kelas') newShowProfile.kelas = item.setting_value === 'true'
         if (item.setting_key === 'show_profile_nisn') newShowProfile.nisn = item.setting_value === 'true'
         if (item.setting_key === 'show_profile_nipd') newShowProfile.nipd = item.setting_value === 'true'
         if (item.setting_key === 'show_profile_tahun_ajaran') newShowProfile.tahun_ajaran = item.setting_value === 'true'
+        if (item.setting_key === 'show_feature_presensi') newShowFeature.presensi = item.setting_value === 'true'
+        if (item.setting_key === 'show_feature_nilai') newShowFeature.nilai = item.setting_value === 'true'
+        if (item.setting_key === 'show_feature_poin') newShowFeature.poin = item.setting_value === 'true'
+        if (item.setting_key === 'link_grup_ortu') setLinkGrupOrtu(item.setting_value || '')
       })
       setShowProfile(newShowProfile)
+      setShowFeature(newShowFeature)
     }
   }
   
@@ -42,9 +54,13 @@ export default function AdminBerandaConfigSection() {
         { setting_key: 'show_profile_kelas', setting_value: showProfile.kelas.toString() },
         { setting_key: 'show_profile_nisn', setting_value: showProfile.nisn.toString() },
         { setting_key: 'show_profile_nipd', setting_value: showProfile.nipd.toString() },
-        { setting_key: 'show_profile_tahun_ajaran', setting_value: showProfile.tahun_ajaran.toString() }
+        { setting_key: 'show_profile_tahun_ajaran', setting_value: showProfile.tahun_ajaran.toString() },
+        { setting_key: 'show_feature_presensi', setting_value: showFeature.presensi.toString() },
+        { setting_key: 'show_feature_nilai', setting_value: showFeature.nilai.toString() },
+        { setting_key: 'show_feature_poin', setting_value: showFeature.poin.toString() },
+        { setting_key: 'link_grup_ortu', setting_value: linkGrupOrtu }
       ]
-
+ 
       for (const item of settingsToSave) {
         await supabase.from('pengaturan_sekolah').delete().eq('setting_key', item.setting_key)
         const { error } = await supabase.from('pengaturan_sekolah').insert([item])
@@ -60,11 +76,15 @@ export default function AdminBerandaConfigSection() {
       setTimeout(() => setMessage(null), 3000)
     }
   }
-
+ 
   const toggleProfile = (key) => {
     setShowProfile(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
+  const toggleFeature = (key) => {
+    setShowFeature(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+ 
   return (
     <div>
       <div className="flex items-start justify-between flex-wrap gap-4 mb-4">
@@ -86,7 +106,7 @@ export default function AdminBerandaConfigSection() {
           {message.text}
         </div>
       )}
-
+ 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
           <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showProfile.foto} onChange={() => toggleProfile('foto')} />
@@ -108,6 +128,37 @@ export default function AdminBerandaConfigSection() {
           <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showProfile.tahun_ajaran} onChange={() => toggleProfile('tahun_ajaran')} />
           <span className="text-xs font-medium text-slate-700">Tahun Ajaran</span>
         </label>
+      </div>
+
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800 mb-1">Fitur yang Ditampilkan</h3>
+        <p className="text-xs text-slate-500 mb-3">Pilih fitur apa saja yang akan aktif dan dapat diakses oleh siswa.</p>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.presensi} onChange={() => toggleFeature('presensi')} />
+            <span className="text-xs font-medium text-slate-700">Presensi Hari Ini</span>
+          </label>
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.nilai} onChange={() => toggleFeature('nilai')} />
+            <span className="text-xs font-medium text-slate-700">Nilai Saya</span>
+          </label>
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.poin} onChange={() => toggleFeature('poin')} />
+            <span className="text-xs font-medium text-slate-700">Poin Siswa</span>
+          </label>
+        </div>
+      </div>
+ 
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800 mb-2">Link Grup WhatsApp Wali Kelas (Untuk Orang Tua)</h3>
+        <p className="text-xs text-slate-500 mb-2">Masukkan link undangan grup WhatsApp yang akan ditampilkan di dashboard Orang Tua.</p>
+        <input 
+          type="url"
+          value={linkGrupOrtu}
+          onChange={(e) => setLinkGrupOrtu(e.target.value)}
+          placeholder="https://chat.whatsapp.com/..."
+          className="w-full max-w-lg px-3 py-2 border rounded-2xl text-sm"
+        />
       </div>
     </div>
   )

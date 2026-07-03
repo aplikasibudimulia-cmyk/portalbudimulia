@@ -6,8 +6,10 @@ import Dashboard from './pages/Dashboard'
 import Admin from './pages/Admin'
 import LoginAdmin from './pages/LoginAdmin'
 import DashboardGuru from './pages/DashboardGuru'
+import DashboardOrangTua from './pages/DashboardOrangTua'
 import Impersonate from './pages/Impersonate'
 import PresensiTV from './pages/PresensiTV'
+import LaporanPengumuman from './pages/LaporanPengumuman'
 
 function App() {
   useEffect(() => {
@@ -25,11 +27,13 @@ function App() {
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard-orang-tua" element={<DashboardOrangTua />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/login-admin" element={<LoginAdmin />} />
         <Route path="/dashboard-guru" element={<DashboardGuru />} />
         <Route path="/impersonate" element={<Impersonate />} />
         <Route path="/presensi-tv" element={<PresensiTV />} />
+        <Route path="/laporan-pengumuman/:typeId" element={<LaporanPengumuman />} />
       </Routes>
     </BrowserRouter>
   )

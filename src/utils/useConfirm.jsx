@@ -29,6 +29,7 @@ export function useConfirm() {
     isOpen: false,
     title: '',
     message: '',
+    details: null,
     confirmLabel: 'Ya, Lanjutkan',
     cancelLabel: 'Batal',
     confirmColor: 'red',
@@ -39,6 +40,7 @@ export function useConfirm() {
   const requestConfirm = useCallback(({
     title = 'Konfirmasi Tindakan',
     message = 'Apakah Anda yakin ingin melanjutkan?',
+    details = null,
     confirmLabel = 'Ya, Lanjutkan',
     cancelLabel = 'Batal',
     confirmColor = 'red',
@@ -49,6 +51,7 @@ export function useConfirm() {
         isOpen: true,
         title,
         message,
+        details,
         confirmLabel,
         cancelLabel,
         confirmColor,
@@ -77,6 +80,7 @@ export function useConfirm() {
       isOpen={confirmState.isOpen}
       title={confirmState.title}
       message={confirmState.message}
+      details={confirmState.details}
       confirmLabel={confirmState.confirmLabel}
       cancelLabel={confirmState.cancelLabel}
       confirmColor={confirmState.confirmColor}

@@ -54,6 +54,10 @@ function Impersonate() {
           localStorage.setItem('guru_session', JSON.stringify(sessionData))
           setStatus(`Login sebagai guru: ${sessionData.nama_guru || sessionData.nama || 'N/A'}`)
           setTimeout(() => navigate('/dashboard-guru'), 500)
+        } else if (role === 'orang_tua') {
+          localStorage.setItem('orangtua_session', JSON.stringify(sessionData))
+          setStatus(`Login sebagai orang tua: ${sessionData.nama_lengkap || sessionData.nama || 'N/A'}`)
+          setTimeout(() => navigate('/dashboard-orang-tua'), 500)
         } else {
           setStatus('Role tidak dikenali.')
         }
