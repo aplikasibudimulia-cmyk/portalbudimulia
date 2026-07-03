@@ -590,22 +590,13 @@ export default function DashboardGuru() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [session, setSession] = useState(null)
-  const [activeMenu, setActiveMenu] = useState('dashboard')
-
-  // Sync activeMenu with searchParams ?menu= (Back/Forward navigation)
-  useEffect(() => {
-    const menu = searchParams.get('menu')
-    if (menu && menu !== activeMenu) {
-      setActiveMenu(menu)
-    }
-  }, [searchParams, activeMenu])
-
-  // Sync searchParams when activeMenu changes (State-driven navigation)
-  useEffect(() => {
-    if (activeMenu && searchParams.get('menu') !== activeMenu) {
-      setSearchParams({ menu: activeMenu })
-    }
-  }, [activeMenu, setSearchParams, searchParams])
+  const activeMenu = searchParams.get('menu') || 'dashboard'
+  
+  const setActiveMenu = (nextVal) => {
+    const current = searchParams.get('menu') || 'dashboard'
+    const resolved = typeof nextVal === 'function' ? nextVal(current) : nextVal
+    setSearchParams({ menu: resolved })
+  }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [fitur, setFitur] = useState(new Set())
