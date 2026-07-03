@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
@@ -587,9 +587,25 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
 export default function DashboardGuru() {
   const clientId = useRef(Math.random().toString(36).substring(7)).current;
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [session, setSession] = useState(null)
   const [activeMenu, setActiveMenu] = useState('dashboard')
+
+  // Sync activeMenu with searchParams ?menu= (Back/Forward navigation)
+  useEffect(() => {
+    const menu = searchParams.get('menu')
+    if (menu && menu !== activeMenu) {
+      setActiveMenu(menu)
+    }
+  }, [searchParams, activeMenu])
+
+  // Sync searchParams when activeMenu changes (State-driven navigation)
+  useEffect(() => {
+    if (activeMenu && searchParams.get('menu') !== activeMenu) {
+      setSearchParams({ menu: activeMenu })
+    }
+  }, [activeMenu, setSearchParams, searchParams])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [fitur, setFitur] = useState(new Set())

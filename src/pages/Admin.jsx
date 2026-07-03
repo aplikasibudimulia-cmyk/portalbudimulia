@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import * as XLSX from 'xlsx'
@@ -1713,8 +1713,24 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
 
 function Admin() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [activeMenu, setActiveMenu] = useState('dashboard')
+
+  // Sync activeMenu with searchParams ?menu= (Back/Forward navigation)
+  useEffect(() => {
+    const menu = searchParams.get('menu')
+    if (menu && menu !== activeMenu) {
+      setActiveMenu(menu)
+    }
+  }, [searchParams, activeMenu])
+
+  // Sync searchParams when activeMenu changes (State-driven navigation)
+  useEffect(() => {
+    if (activeMenu && searchParams.get('menu') !== activeMenu) {
+      setSearchParams({ menu: activeMenu })
+    }
+  }, [activeMenu, setSearchParams, searchParams])
   const [authLoading, setAuthLoading] = useState(true)
   const [menuTypes, setMenuTypes] = useState([])
   const [students, setStudents] = useState([])
