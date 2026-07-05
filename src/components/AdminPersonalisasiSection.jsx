@@ -31,7 +31,7 @@ export default function AdminPersonalisasiSection() {
   const fetchSettings = async () => {
     const { data } = await supabase.from('pengaturan_sekolah').select('*')
     if (data) {
-      const newShowProfile = { ...showProfile }
+      const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
       data.forEach(item => {
         if (item.setting_key === 'tema_warna') setTema(item.setting_value)
         if (item.setting_key === 'pengumuman_teks') setPengumuman(item.setting_value)
@@ -59,7 +59,7 @@ export default function AdminPersonalisasiSection() {
         { setting_key: 'show_profile_nipd', setting_value: showProfile.nipd.toString() },
         { setting_key: 'show_profile_tahun_ajaran', setting_value: showProfile.tahun_ajaran.toString() }
       ]
-
+ 
       for (const item of settingsToSave) {
         // Delete existing setting to avoid duplicate errors
         await supabase.from('pengaturan_sekolah').delete().eq('setting_key', item.setting_key)
@@ -70,7 +70,7 @@ export default function AdminPersonalisasiSection() {
       }
       
       setMessage({ type: 'success', text: 'Pengaturan berhasil disimpan!' })
-      logActivity({ userRole: 'Administrator', action: 'Update Personalisasi', details: 'Mengubah tema, pengumuman, dan tampilan profil.' })
+      logActivity({ userRole: 'Administrator', action: 'Update Personalisasi', details: 'Mengubah tema, pengumuman, tampilan profil, dan visibilitas kalender.' })
       
       // Update global CSS variable or class locally so Admin sees it
       document.documentElement.setAttribute('data-theme', tema)

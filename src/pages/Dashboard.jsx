@@ -8,6 +8,7 @@ import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
 import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import SiswaPoinSection from '../components/SiswaPoinSection'
+import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import { requestNotifPermission, showLocalNotif, subscribeToPushNotification } from '../utils/pushNotif'
 
 function Dashboard() {
@@ -124,7 +125,7 @@ function Dashboard() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true }
+        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
@@ -136,6 +137,7 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_calendar_siswa') newShowFeature.kalender = p.setting_value === 'true'
         })
         setShowProfileConfig(newShowProfile)
         setShowFeatureConfig(newShowFeature)
@@ -349,7 +351,7 @@ function Dashboard() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true }
+        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
@@ -361,6 +363,7 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_calendar_siswa') newShowFeature.kalender = p.setting_value === 'true'
         })
         setShowProfileConfig(prev => {
           if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile
@@ -488,9 +491,27 @@ function Dashboard() {
   // Either global profile wants it shown OR the current menu type specifically wants it shown
   const isNisnVisible = showProfileConfig.nisn || showNisnMenu
   const isNipdVisible = showProfileConfig.nipd || showNipdMenu
+  const currentMenuLabel = 
+    selectedType === 'NILAI' ? 'Laporan Nilai Saya' : 
+    selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : 
+    selectedType === 'POIN' ? 'Poin Siswa' : 
+    selectedType === 'PENGATURAN' ? 'Pengaturan Portal' : 
+    selectedType === 'KALENDER' ? 'Kalender Akademik' : 
+    selectedType ? selectedType.nama : 
+    'Beranda Profil'
+
   const studentInfoCard = studentData && (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8 relative">
       <div className="flex items-center gap-5 mb-6">
+        
+        {/* Mobile Hamburger Button inside studentInfoCard */}
+        <button 
+          onClick={() => setSidebarOpen(true)} 
+          className="p-2.5 -ml-2 text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl md:hidden transition-colors shrink-0"
+        >
+          <svg className="w-5.5 h-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+
         {showProfileConfig.foto && (
           <img src={photoUrls[photoIndex] || DEFAULT_AVATAR} alt={studentData.nama_lengkap}
             className="w-16 h-16 rounded-full object-cover bg-blue-100 shrink-0 border-2 border-white shadow-sm"
@@ -503,7 +524,7 @@ function Dashboard() {
             }} />
         )}
         <div>
-          <p className="text-xs text-indigo-500 font-semibold uppercase tracking-wider mb-0.5">Beranda Profil</p>
+          <p className="text-xs text-indigo-500 font-bold uppercase tracking-wider mb-0.5">{currentMenuLabel}</p>
           <h2 className="text-2xl font-bold text-slate-800 leading-tight">{studentData.nama_lengkap}</h2>
           {showProfileConfig.kelas && (
             <p className="text-sm text-slate-500 mt-1">Kelas: <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">{studentData.kelas}</span></p>
@@ -624,6 +645,23 @@ function Dashboard() {
                 </button>
               )}
 
+              {/* Kalender Akademik */}
+              {showFeatureConfig.kalender && (
+                <button 
+                  onClick={() => { setSelectedType('KALENDER'); setSidebarOpen(false) }}
+                  title="Kalender Akademik"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'KALENDER' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'KALENDER' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Kalender Akademik</span>}
+                </button>
+              )}
+
             </div>
           </div>
 
@@ -649,19 +687,42 @@ function Dashboard() {
         </div>
 
         {/* Sidebar Footer Actions */}
-        <div className="p-4 space-y-3 shrink-0">
-           
-           <button onClick={() => { setSelectedType('PENGATURAN'); setSidebarOpen(false); }}
-             title="Pengaturan"
-             className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative ${selectedType === 'PENGATURAN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
-             <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PENGATURAN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-             {!sidebarCollapsed && <span className="animate-fade-in">Pengaturan</span>}
-             {unreadNotifCount > 0 && (
-               <span className={`absolute bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ${sidebarCollapsed ? 'top-1 right-1' : 'right-4'}`}>
-                 {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
-               </span>
-             )}
-           </button>
+        <div className="p-4 space-y-3 shrink-0">            {/* Tombol Notifikasi */}
+            <button 
+              onClick={() => { setShowNotifPanel(true); setSidebarOpen(false); }}
+              title="Notifikasi"
+              className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02] ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+            >
+              <div className="relative shrink-0">
+                <svg 
+                  className="w-6 h-6 transition-transform duration-300" 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor" 
+                  strokeWidth="2.5"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {unreadNotifCount > 0 && sidebarCollapsed && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[8px] font-black px-1 py-0.5 rounded-full ring-1 ring-white animate-pulse">
+                    {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
+                  </span>
+                )}
+              </div>
+              {!sidebarCollapsed && <span className="animate-fade-in">Notifikasi</span>}
+              {unreadNotifCount > 0 && !sidebarCollapsed && (
+                <span className="absolute bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full right-4">
+                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            <button onClick={() => { setSelectedType('PENGATURAN'); setSidebarOpen(false); }}
+              title="Pengaturan"
+              className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative ${selectedType === 'PENGATURAN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}>
+              <svg className={`w-6 h-6 shrink-0 ${selectedType === 'PENGATURAN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in">Pengaturan</span>}
+            </button>
 
            <button onClick={handleLogout}
              title="Keluar"
@@ -691,66 +752,7 @@ function Dashboard() {
           </div>
         )}
 
-        {/* Unified Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 shadow-sm">
-          <div className="flex items-center gap-3">
-            {/* Mobile Hamburger Button */}
-            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl md:hidden transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
-            </button>
-            <h1 className="font-bold text-slate-800 text-lg md:text-xl truncate">
-              {selectedType === 'NILAI' ? 'Nilai Saya' : selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : selectedType === 'POIN' ? 'Poin Siswa' : selectedType === 'PENGATURAN' ? 'Pengaturan Portal' : selectedType ? selectedType.nama : 'Beranda'}
-            </h1>
-          </div>
 
-          <div className="flex items-center gap-4">
-            {/* Notification Bell */}
-            <button 
-              onClick={() => setShowNotifPanel(true)}
-              className="relative p-2.5 text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all duration-300 group"
-              title="Notifikasi"
-            >
-              <svg 
-                className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-[12deg]" 
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor" 
-                strokeWidth="2.2"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              {unreadNotifCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-white animate-pulse">
-                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
-                </span>
-              )}
-            </button>
-
-            {/* Profile Avatar */}
-            <div className="flex items-center gap-3 pl-1 border-l border-slate-200">
-              <img 
-                src={photoUrls[photoIndex] || DEFAULT_AVATAR} 
-                alt="Profile" 
-                className="w-9 h-9 rounded-full object-cover border-2 border-indigo-100 shadow-sm cursor-pointer hover:border-indigo-400 transition-colors"
-                onClick={() => setSelectedType('PENGATURAN')}
-                title="Pengaturan Profil"
-                onError={() => {
-                  if (photoIndex < photoUrls.length - 1) {
-                    setPhotoIndex(prev => prev + 1)
-                  } else if (photoUrls[photoIndex] !== DEFAULT_AVATAR) {
-                    setPhotoUrls(prev => { const n = [...prev]; n[photoIndex] = DEFAULT_AVATAR; return n; })
-                  }
-                }}
-              />
-              {studentData && (
-                <div className="hidden lg:flex flex-col text-left">
-                  <span className="text-xs font-bold text-slate-800 leading-none truncate max-w-[120px]">{studentData.nama_lengkap}</span>
-                  <span className="text-[10px] font-semibold text-indigo-500 mt-1">{studentData.kelas}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
@@ -766,6 +768,8 @@ function Dashboard() {
               <SiswaPresensiSection studentData={studentData} />
             ) : selectedType === 'POIN' ? (
               <SiswaPoinSection siswaNisn={studentData?.nisn} activeTa={{ id: studentData?.tahun_ajaran_id }} />
+            ) : selectedType === 'KALENDER' ? (
+              <ProgramSekolahSection session={null} isAdmin={false} activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} />
             ) : selectedType === 'PROFIL' ? (
               <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
             ) : selectedType === 'PENGATURAN' ? (

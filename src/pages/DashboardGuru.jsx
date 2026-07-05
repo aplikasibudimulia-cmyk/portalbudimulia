@@ -12,6 +12,11 @@ import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
 import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection'
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
+import ProgramSekolahSection from '../components/ProgramSekolahSection'
+import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
+import DenahKehadiranSection from '../components/DenahKehadiranSection'
+import PengumumanResmiSection from '../components/PengumumanResmiSection'
+import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -598,6 +603,8 @@ export default function DashboardGuru() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [kepsekMenuOpen, setKepsekMenuOpen] = useState(false)
+  const [showCalendarGuru, setShowCalendarGuru] = useState(true)
   const [fitur, setFitur] = useState(new Set())
   const [loading, setLoading] = useState(true)
 
@@ -684,7 +691,7 @@ export default function DashboardGuru() {
 
   useEffect(() => {
     if (loading) return
-    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 'pengaturan_poin']
+    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 'pengaturan_poin', 'dashboard_eksekutif', 'program_sekolah', 'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek']
     if (!staticMenus.includes(activeMenu)) {
       const exists = menuTypes.find(t => t.id === activeMenu)
       if (!exists) {
@@ -764,6 +771,10 @@ export default function DashboardGuru() {
       setSession(activeSession)
       localStorage.setItem('guru_session', JSON.stringify(activeSession))
     }
+
+    // Fetch Kalender Akademik visibility settings for Guru
+    const { data: sch } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'show_calendar_guru').maybeSingle()
+    setShowCalendarGuru(sch ? sch.setting_value !== 'false' : true)
 
     // 1. Fetch features
     let currentFitur = new Set()
@@ -989,6 +1000,66 @@ export default function DashboardGuru() {
             <IconDashboard /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
           </button>
 
+          {/* Kalender Akademik */}
+          {showCalendarGuru && (
+            <button onClick={() => { setActiveMenu('program_sekolah'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Kalender Akademik</span>}
+            </button>
+          )}
+
+          {/* Collapsible Group: Kepala Sekolah */}
+          <div 
+            onClick={() => !sidebarCollapsed && setKepsekMenuOpen(!kepsekMenuOpen)}
+            className={`pt-4 pb-2 px-3 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}
+          >
+            {!sidebarCollapsed ? (
+              <>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">KEPALA SEKOLAH</p>
+                <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${kepsekMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </>
+            ) : (
+              <div className="w-full border-t border-slate-100 my-2" />
+            )}
+          </div>
+
+          {(kepsekMenuOpen || sidebarCollapsed) && (
+            <div className="space-y-1">
+              <button onClick={() => { setActiveMenu('dashboard_eksekutif'); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'dashboard_eksekutif' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Eksekutif</span>}
+              </button>
+
+              <button onClick={() => { setActiveMenu('program_sekolah'); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Program Sekolah</span>}
+              </button>
+
+              <button onClick={() => { setActiveMenu('denah_kehadiran'); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Denah Kehadiran</span>}
+              </button>
+
+              <button onClick={() => { setActiveMenu('rekap_poin'); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'rekap_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
+              </button>
+
+              <button onClick={() => { setActiveMenu('pengumuman_resmi_kepsek'); setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'pengumuman_resmi_kepsek' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengumuman Resmi</span>}
+              </button>
+            </div>
+          )}
+
           {(fitur.has('lihat_data_siswa') || fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman') || fitur.has('kelola_presensi_sekolah')) && (
             <>
               {!sidebarCollapsed && (
@@ -1182,7 +1253,9 @@ export default function DashboardGuru() {
           <div className="w-full flex-1 flex flex-col min-h-0">
             {activeMenu === 'dashboard' && (
               <>
-                {session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
+                {session.roles.some(r => r.nama.toLowerCase().includes('kepala sekolah')) ? (
+                  <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
+                ) : session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
                   <PiketDashboardSection session={session} activeTa={activeTa} />
                 ) : (
                   <div className="animate-slide-up flex flex-col gap-8">
@@ -1479,6 +1552,26 @@ export default function DashboardGuru() {
 
             {activeMenu === 'input_nilai' && session.guru_mapel_raw?.length > 0 && (
               <NilaiGuruSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'program_sekolah' && (
+              <ProgramSekolahSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'rekap_poin' && (
+              <RekapPoinSiswaSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'denah_kehadiran' && (
+              <DenahKehadiranSection session={session} activeTa={activeTa} isAdmin={false} />
+            )}
+
+            {activeMenu === 'pengumuman_resmi_kepsek' && (
+              <PengumumanResmiSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'dashboard_eksekutif' && (
+              <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
             )}
 
             {activeMenu === 'password' && (

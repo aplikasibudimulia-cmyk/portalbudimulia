@@ -15,6 +15,11 @@ export default function AdminBerandaConfigSection() {
     nilai: true,
     poin: true
   })
+  const [showCalendar, setShowCalendar] = useState({
+    siswa: true,
+    guru: true,
+    ortu: true
+  })
   const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -28,6 +33,7 @@ export default function AdminBerandaConfigSection() {
     if (data) {
       const newShowProfile = { ...showProfile }
       const newShowFeature = { ...showFeature }
+      const newShowCalendar = { siswa: true, guru: true, ortu: true }
       data.forEach(item => {
         if (item.setting_key === 'show_profile_foto') newShowProfile.foto = item.setting_value === 'true'
         if (item.setting_key === 'show_profile_kelas') newShowProfile.kelas = item.setting_value === 'true'
@@ -37,10 +43,14 @@ export default function AdminBerandaConfigSection() {
         if (item.setting_key === 'show_feature_presensi') newShowFeature.presensi = item.setting_value === 'true'
         if (item.setting_key === 'show_feature_nilai') newShowFeature.nilai = item.setting_value === 'true'
         if (item.setting_key === 'show_feature_poin') newShowFeature.poin = item.setting_value === 'true'
+        if (item.setting_key === 'show_calendar_siswa') newShowCalendar.siswa = item.setting_value === 'true'
+        if (item.setting_key === 'show_calendar_guru') newShowCalendar.guru = item.setting_value === 'true'
+        if (item.setting_key === 'show_calendar_ortu') newShowCalendar.ortu = item.setting_value === 'true'
         if (item.setting_key === 'link_grup_ortu') setLinkGrupOrtu(item.setting_value || '')
       })
       setShowProfile(newShowProfile)
       setShowFeature(newShowFeature)
+      setShowCalendar(newShowCalendar)
     }
   }
   
@@ -58,6 +68,9 @@ export default function AdminBerandaConfigSection() {
         { setting_key: 'show_feature_presensi', setting_value: showFeature.presensi.toString() },
         { setting_key: 'show_feature_nilai', setting_value: showFeature.nilai.toString() },
         { setting_key: 'show_feature_poin', setting_value: showFeature.poin.toString() },
+        { setting_key: 'show_calendar_siswa', setting_value: showCalendar.siswa.toString() },
+        { setting_key: 'show_calendar_guru', setting_value: showCalendar.guru.toString() },
+        { setting_key: 'show_calendar_ortu', setting_value: showCalendar.ortu.toString() },
         { setting_key: 'link_grup_ortu', setting_value: linkGrupOrtu }
       ]
  
@@ -68,7 +81,7 @@ export default function AdminBerandaConfigSection() {
       }
       
       setMessage({ type: 'success', text: 'Pengaturan beranda berhasil disimpan!' })
-      logActivity({ userRole: 'Administrator', action: 'Update Beranda', details: 'Mengubah pengaturan tampilan beranda siswa.' })
+      logActivity({ userRole: 'Administrator', action: 'Update Beranda', details: 'Mengubah pengaturan tampilan beranda, fitur, dan visibilitas kalender.' })
     } catch (err) {
       setMessage({ type: 'error', text: err.message })
     } finally {
@@ -83,6 +96,10 @@ export default function AdminBerandaConfigSection() {
 
   const toggleFeature = (key) => {
     setShowFeature(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const toggleCalendar = (key) => {
+    setShowCalendar(prev => ({ ...prev, [key]: !prev[key] }))
   }
  
   return (
@@ -145,6 +162,25 @@ export default function AdminBerandaConfigSection() {
           <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
             <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.poin} onChange={() => toggleFeature('poin')} />
             <span className="text-xs font-medium text-slate-700">Poin Siswa</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800 mb-1">Akses Menu Kalender Akademik</h3>
+        <p className="text-xs text-slate-500 mb-3">Pilih peran (role) mana saja yang diizinkan untuk melihat menu Kalender Akademik di portal mereka.</p>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showCalendar.siswa} onChange={() => toggleCalendar('siswa')} />
+            <span className="text-xs font-medium text-slate-700">Siswa</span>
+          </label>
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showCalendar.guru} onChange={() => toggleCalendar('guru')} />
+            <span className="text-xs font-medium text-slate-700">Guru</span>
+          </label>
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showCalendar.ortu} onChange={() => toggleCalendar('ortu')} />
+            <span className="text-xs font-medium text-slate-700">Wali / Orang Tua</span>
           </label>
         </div>
       </div>
