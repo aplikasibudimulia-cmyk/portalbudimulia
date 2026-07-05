@@ -776,6 +776,10 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
                   <span className="text-xs text-slate-600 font-medium">Tampil (Orangtua)</span>
                   <Toggle value={type.visible_orangtua ?? true} onChange={v => handleToggle('visible_orangtua', v)} disabled={toggling !== null} colorOn="bg-indigo-500" />
                 </div>
+                <div className="flex items-center justify-between sm:justify-start gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg">
+                  <span className="text-xs text-slate-600 font-medium">Tampilkan Unduhan</span>
+                  <Toggle value={type.show_download_stats ?? true} onChange={v => handleToggle('show_download_stats', v)} disabled={toggling !== null} colorOn="bg-emerald-500" />
+                </div>
               </div>
 
               {/* Action Buttons Grid */}
@@ -1061,7 +1065,25 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
           {/* Sidebar Progress Per Kelas */}
           {showProgressSidebar && (
             <div className="w-full lg:w-72 shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm p-5 flex flex-col h-auto lg:h-full lg:max-h-full overflow-y-auto">
-              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-5">Progress Per Kelas (Akses Dokumen)</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Progress Per Kelas (Akses Dokumen)</h3>
+                <button
+                  onClick={() => handleToggle('show_download_stats', !(type.show_download_stats ?? true))}
+                  disabled={toggling !== null}
+                  title={(type.show_download_stats ?? true) ? 'Sembunyikan data unduhan' : 'Tampilkan data unduhan'}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all shrink-0
+                    ${(type.show_download_stats ?? true)
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                      : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200 hover:text-slate-600'}`}
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    {(type.show_download_stats ?? true)
+                      ? <><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></>
+                      : <><path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></>}
+                  </svg>
+                  {(type.show_download_stats ?? true) ? 'Unduhan' : 'Unduhan'}
+                </button>
+              </div>
               <div className="space-y-4">
                 {uniqueClasses.map(c => {
                   const classStudents = students.filter(s => s.kelas === c)
@@ -1093,15 +1115,17 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
                           <div className={`h-full rounded-full transition-all duration-500 ${grantedPercent >= 100 ? 'bg-indigo-600' : 'bg-indigo-400'}`} style={{ width: `${grantedPercent}%` }}></div>
                         </div>
                       </div>
-                      <div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                          <span>Telah Mengunduh</span>
-                          <span>{accessedCount}/{total}</span>
+                      {(type.show_download_stats ?? true) && (
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
+                            <span>Telah Mengunduh</span>
+                            <span>{accessedCount}/{total}</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
+                            <div className={`h-full rounded-full transition-all duration-500 ${accessedPercent >= 100 ? 'bg-emerald-500' : 'bg-emerald-400'}`} style={{ width: `${accessedPercent}%` }}></div>
+                          </div>
                         </div>
-                        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden mt-1.5">
-                          <div className={`h-full rounded-full transition-all duration-500 ${accessedPercent >= 100 ? 'bg-emerald-500' : 'bg-emerald-400'}`} style={{ width: `${accessedPercent}%` }}></div>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   )
                 })}
@@ -2913,27 +2937,27 @@ function Admin() {
                           placeholder="Misal: SKL" className="w-full px-3 py-2 border rounded-xl text-sm uppercase" />
                       </div>
                       <div>
-                          
-                            <div className="mb-4">
-                              <label className="block text-xs font-medium text-slate-700 mb-1">Sumber File Dokumen (Opsional)</label>
-                              <select 
-                                value={editingType.dokumen_kode_jenis || ''} 
-                                onChange={e => setEditingType({ ...editingType, dokumen_kode_jenis: e.target.value || null })}
-                                className="w-full px-3 py-2 border rounded-xl text-sm bg-indigo-50"
-                              >
-                                <option value="">-- Gunakan Folder Pengumuman Ini Sendiri --</option>
-                                {kumpulanDokumenList?.map(kd => (
-                                  <option key={kd.id} value={kd.kode_jenis}>{kd.nama} ({kd.kode_jenis})</option>
-                                ))}
-                              </select>
-                              <p className="text-[10px] text-slate-500 mt-1">Jika dipilih, pengumuman ini akan meminjam file dari wadah dokumen lain.</p>
-                            </div>
-  \n<label className="block text-xs font-medium text-slate-700 mb-1">Tahun Ajaran Referensi Dokumen (Opsional)</label>
+                        <div className="mb-4">
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Sumber File Dokumen (Opsional)</label>
                           <select 
-                            value={newType.ta_referensi_id || ''} 
-                            onChange={e => setNewType({ ...newType, ta_referensi_id: e.target.value || null })}
-                            className="w-full px-3 py-2 border rounded-xl text-sm mb-4"
+                            value={newType.dokumen_kode_jenis || ''} 
+                            onChange={e => setNewType({ ...newType, dokumen_kode_jenis: e.target.value || null })}
+                            className="w-full px-3 py-2 border rounded-xl text-sm bg-indigo-50"
                           >
+                            <option value="">-- Gunakan Folder Pengumuman Ini Sendiri --</option>
+                            {kumpulanDokumenList?.map(kd => (
+                              <option key={kd.id} value={kd.kode_jenis}>{kd.nama} ({kd.kode_jenis})</option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-slate-500 mt-1">Jika dipilih, pengumuman ini akan meminjam file dari wadah dokumen lain.</p>
+                        </div>
+                        
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Tahun Ajaran Referensi Dokumen (Opsional)</label>
+                        <select 
+                          value={newType.ta_referensi_id || ''} 
+                          onChange={e => setNewType({ ...newType, ta_referensi_id: e.target.value || null })}
+                          className="w-full px-3 py-2 border rounded-xl text-sm mb-4"
+                        >
                             <option value="">-- Gunakan Tahun Ajaran Aktif --</option>
                             {tahunAjarans.map(ta => (
                               <option key={ta.id} value={ta.id}>{ta.nama} {ta.is_aktif ? '(Aktif)' : ''}</option>

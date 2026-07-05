@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
-import bcrypt from 'bcryptjs'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import { useConfirm } from '../utils/useConfirm'
@@ -60,6 +59,22 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [isEditingWali, setIsEditingWali] = useState(false)
   const [isEditingBK, setIsEditingBK] = useState(false)
   const [isEditingMapel, setIsEditingMapel] = useState(false)
+  const [primaryMapelId, setPrimaryMapelId] = useState('')
+
+  const setSortedGuruWaliKelas = (newWk) => {
+    const sorted = [...newWk].sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
+    setGuruWaliKelas(sorted)
+  }
+
+  const setSortedGuruBK = (newBk) => {
+    const sorted = [...newBk].sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
+    setGuruBK(sorted)
+  }
+
+  const setSortedGuruMapel = (newGm) => {
+    const sorted = [...newGm].sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
+    setGuruMapel(sorted)
+  }
 
   const fetchStudentEnrollments = async (nisn) => {
     const { data } = await supabase.from('enrollment').select('*, tahun_ajaran:tahun_ajaran_id(nama)').eq('nisn', nisn).order('created_at', { ascending: false })
@@ -167,6 +182,9 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         const fmtEnrols = (arr) => arr.map(e => `${taNames[e.tahun_ajaran_id] || e.tahun_ajaran_id}: ${e.kelas}`).join(' | ');
         changes.push({ label: 'Riwayat Kelas', from: fmtEnrols(initEnrols) || '(tidak ada)', to: fmtEnrols(currEnrols) || '(tidak ada)' });
       }
+    }
+
+    if (activeTab === 'guru') {
       const currWali = _cleanWali(guruWaliKelas);
       const initWali = _cleanWali(initialFormSnapshot.guruWaliKelas);
       if (JSON.stringify(currWali) !== JSON.stringify(initWali)) {
@@ -242,10 +260,18 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     fetchData()
   }, [activeTab, activeTa])
 
+  // Sinkronkan filter tahun ajaran dengan tahun ajaran aktif saat pertama kali dimuat
+  useEffect(() => {
+    if (activeTa?.nama) {
+      setSelectedTaFilter(activeTa.nama)
+    }
+  }, [activeTa])
+
   const fetchData = async () => {
     setLoading(true)
     // 1. Fetch Akun Pengguna for current tab
-    const { data: akunData } = await supabase.from('akun_pengguna').select('*').eq('role', activeTab)
+    const { data: akunData, error: akunError } = await supabase.from('akun_pengguna').select('id, username, role, status, foreign_id, created_at, updated_at').eq('role', activeTab)
+    if (akunError) console.error('fetchData akunError:', akunError)
     setAkunList(akunData || [])
 
     // 2. If Guru tab, fetch Guru specific data
@@ -435,11 +461,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     const { row, generatedPass } = resetData
     
     setIsProcessing(true)
-    const salt = bcrypt.genSaltSync(10)
-    const hash = bcrypt.hashSync(generatedPass, salt)
     
-    // Update Supabase akun_pengguna
-    const { error } = await supabase.from('akun_pengguna').update({ password: hash }).eq('id', row.akun_id)
+    // Update Supabase akun_pengguna via secure database function
+    const { error } = await supabase.rpc('admin_reset_password', {
+      p_akun_id: row.akun_id,
+      p_new_password: generatedPass
+    })
     
     // Update plain text kode_akses for display purposes
     if (!error) {
@@ -470,12 +497,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
 
         let message = ""
+        const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}`
         if (activeTab === 'murid') {
-          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\nUsername: ${row.username}\nKode Akses: ${generatedPass}\n\nHarap simpan baik-baik informasi ini.`
+          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Kode Akses:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         } else if (activeTab === 'orang_tua') {
-          message = `Halo Orang Tua ${row.nama},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\nUsername: ${row.username}\nPassword: ${generatedPass}\n\nHarap simpan baik-baik informasi ini.`
+          message = `Halo Orang Tua ${row.nama},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         } else {
-          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\nUsername: ${row.username}\nPassword: ${generatedPass}\n\nHarap simpan baik-baik informasi ini.`
+          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         }
         
         const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
@@ -561,6 +589,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         email_ortu: rawStudent?.email_ortu || '',
         nama_ortu: rawStudent?.nama_ortu || ''
       }
+      setPrimaryMapelId('')
       setBiodataForm(formState)
       setInitialFormSnapshot({
         biodataForm: JSON.parse(JSON.stringify(formState)),
@@ -579,7 +608,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         if (acc[taId].kelas_list.length === 0) acc[taId].kelas_list.push(gk.kelas)
         return acc
       }, {})
-      const waliList = Object.values(waliKelasGrouped)
+      const waliList = Object.values(waliKelasGrouped).sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
       setGuruWaliKelas(waliList)
 
       // Init guruBK
@@ -590,7 +619,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         if (!acc[taId].kelas_list.includes(gk.kelas)) acc[taId].kelas_list.push(gk.kelas)
         return acc
       }, {})
-      const bkList = Object.values(bkGrouped)
+      const bkList = Object.values(bkGrouped).sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
       setGuruBK(bkList)
 
       // Init guruMapel from ALL TAs (not just activeTa)
@@ -606,8 +635,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         if (!mapelEntry.kelas_list.includes(gm.kelas)) mapelEntry.kelas_list.push(gm.kelas)
         return acc
       }, {})
-      const mapelList = Object.values(mapelGrouped)
+      const mapelList = Object.values(mapelGrouped).sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
       setGuruMapel(mapelList)
+
+      // Init primaryMapelId from existing assignments
+      const defaultPrimaryMapelId = g?.guru_mapel?.[0]?.mata_pelajaran_id || ''
+      setPrimaryMapelId(defaultPrimaryMapelId)
 
       const formState = {
         isNew: !row,
@@ -811,40 +844,76 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       // 2. Save Akun Pengguna
       if (biodataForm.username) { // Only create/update akun if username is provided
         let uName = biodataForm.username;
-        const akunPayload = {
-          foreign_id: f_id,
-          role: activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'murid' : activeTab),
-          username: uName,
-          status: biodataForm.akun_status
-        }
-        if (biodataForm.password) {
-          akunPayload.password = bcrypt.hashSync(biodataForm.password, bcrypt.genSaltSync(10))
-        } else if (biodataForm.isNew && !biodataForm.hasAkun) {
-          akunPayload.password = bcrypt.hashSync('123456', bcrypt.genSaltSync(10)) // default password
-        }
-
+        const roleName = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'murid' : activeTab)
+        
         if (biodataForm.hasAkun && biodataForm.akun_id) {
-          await supabase.from('akun_pengguna').update(akunPayload).eq('id', biodataForm.akun_id)
+          // Update data akun non-password langsung ke tabel (trigger sinkronisasi otomatis)
+          const { error: updateErr } = await supabase.from('akun_pengguna').update({
+            username: uName,
+            status: biodataForm.akun_status
+          }).eq('id', biodataForm.akun_id)
+          if (updateErr) throw updateErr
+
+          // Jika ada password baru, panggil RPC reset password
+          if (biodataForm.password) {
+            const { data: resetResult, error: resetErr } = await supabase.rpc('admin_reset_password', {
+              p_akun_id: biodataForm.akun_id,
+              p_new_password: biodataForm.password
+            })
+            if (resetErr || !resetResult?.ok) throw new Error(resetResult?.msg || resetErr?.message || "Gagal mereset password")
+          }
         } else {
-          await supabase.from('akun_pengguna').upsert([akunPayload], { onConflict: 'username' })
+          // Buat akun baru via secure RPC admin_create_user
+          const pWord = biodataForm.password || '123456'
+          const { data: createResult, error: createErr } = await supabase.rpc('admin_create_user', {
+            p_username: uName,
+            p_password: pWord,
+            p_role: roleName,
+            p_foreign_id: f_id,
+            p_status: biodataForm.akun_status
+          })
+          if (createErr || !createResult?.ok) throw new Error(createResult?.msg || createErr?.message || "Gagal membuat akun")
         }
 
-        // Auto-generate Akun Orang Tua if Murid
+        // Auto-generate Akun Orang Tua jika tipenya Murid
         if (activeTab === 'murid') {
           const firstName = (biodataForm.nama || '').split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
           const nisnLast3 = biodataForm.foreign_id.slice(-3)
           const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
-          const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
+          const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 karakter acak
           
-          const akunOrtuPayload = {
-            foreign_id: f_id,
-            role: 'orang_tua',
-            username: ortuUsername,
-            status: biodataForm.akun_status,
-            password: bcrypt.hashSync(ortuPassword, bcrypt.genSaltSync(10))
+          // Cek apakah akun ortu untuk foreign_id ini sudah ada
+          const { data: existingOrtu } = await supabase
+            .from('akun_pengguna')
+            .select('id')
+            .eq('foreign_id', f_id)
+            .eq('role', 'orang_tua')
+            .maybeSingle()
+
+          if (existingOrtu) {
+            // Update username dan status ortu
+            await supabase.from('akun_pengguna').update({
+              username: ortuUsername,
+              status: biodataForm.akun_status
+            }).eq('id', existingOrtu.id)
+
+            // Reset password ortu
+            await supabase.rpc('admin_reset_password', {
+              p_akun_id: existingOrtu.id,
+              p_new_password: ortuPassword
+            })
+          } else {
+            // Buat akun ortu baru
+            const { data: ortuResult, error: ortuErr } = await supabase.rpc('admin_create_user', {
+              p_username: ortuUsername,
+              p_password: ortuPassword,
+              p_role: 'orang_tua',
+              p_foreign_id: f_id,
+              p_status: biodataForm.akun_status
+            })
+            if (ortuErr || !ortuResult?.ok) throw new Error(ortuResult?.msg || ortuErr?.message || "Gagal membuat akun orang tua")
           }
           
-          await supabase.from('akun_pengguna').upsert([akunOrtuPayload], { onConflict: 'foreign_id,role' })
           await supabase.from('siswa_permanent').update({ ortu_username: ortuUsername, ortu_password: ortuPassword }).eq('nisn', f_id)
         }
       }
@@ -1159,14 +1228,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           if (akunExist) {
              await supabase.from('akun_pengguna').update({ username: uName }).eq('id', akunExist.id)
           } else {
-             const akunPayload = {
-               foreign_id: gId.toString(),
-               role: 'guru',
-               username: uName,
-               status: 'aktif',
-               password: bcrypt.hashSync('123456', bcrypt.genSaltSync(10))
-             }
-             await supabase.from('akun_pengguna').upsert([akunPayload], { onConflict: 'username' })
+             await supabase.rpc('admin_create_user', {
+               p_username: uName,
+               p_password: '123456',
+               p_role: 'guru',
+               p_foreign_id: gId.toString(),
+               p_status: 'aktif'
+             })
           }
         }
 
@@ -1249,15 +1317,29 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
         const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
         
-        const akunOrtuPayload = {
-          foreign_id: nisn,
-          role: 'orang_tua',
-          username: ortuUsername,
-          status: 'aktif',
-          password: bcrypt.hashSync(ortuPassword, bcrypt.genSaltSync(10))
+        // Cek apakah akun ortu untuk foreign_id ini sudah ada
+        const { data: existingOrtu } = await supabase
+          .from('akun_pengguna')
+          .select('id')
+          .eq('foreign_id', nisn)
+          .eq('role', 'orang_tua')
+          .maybeSingle()
+
+        if (existingOrtu) {
+          await supabase.from('akun_pengguna').update({ username: ortuUsername }).eq('id', existingOrtu.id)
+          await supabase.rpc('admin_reset_password', {
+            p_akun_id: existingOrtu.id,
+            p_new_password: ortuPassword
+          })
+        } else {
+          await supabase.rpc('admin_create_user', {
+            p_username: ortuUsername,
+            p_password: ortuPassword,
+            p_role: 'orang_tua',
+            p_foreign_id: nisn,
+            p_status: 'aktif'
+          })
         }
-        
-        await supabase.from('akun_pengguna').upsert([akunOrtuPayload], { onConflict: 'foreign_id,role' })
         await supabase.from('siswa_permanent').update({ ortu_username: ortuUsername, ortu_password: ortuPassword }).eq('nisn', nisn)
 
         successCount++
@@ -1362,16 +1444,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
         const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
 
-        const akunOrtuPayload = {
-          foreign_id: siswa.nisn,
-          role: 'orang_tua',
-          username: ortuUsername,
-          password: bcrypt.hashSync(ortuPassword, bcrypt.genSaltSync(10)),
-          status: 'aktif'
-        }
-
-        const { error: errAkun } = await supabase.from('akun_pengguna').insert([akunOrtuPayload])
-        if (errAkun) {
+        const { data: createResult, error: errAkun } = await supabase.rpc('admin_create_user', {
+          p_username: ortuUsername,
+          p_password: ortuPassword,
+          p_role: 'orang_tua',
+          p_foreign_id: siswa.nisn,
+          p_status: 'aktif'
+        })
+        
+        if (errAkun || !createResult?.ok) {
           errorCount++
           continue
         }
@@ -1921,6 +2002,39 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                     </div>
                   </div>
 
+                  {biodataForm.role_ids.includes(roles.find(r => r.nama?.toLowerCase() === 'guru')?.id) && (
+                    <div className="mb-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">Mata Pelajaran Guru (Spesialisasi)</label>
+                      <select
+                        value={primaryMapelId}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setPrimaryMapelId(val)
+                          // Automatically update empty mapel_id entries in guruMapel
+                          const updatedMapel = guruMapel.map(gm => {
+                            return {
+                              ...gm,
+                              mapel_list: gm.mapel_list.map(ml => {
+                                if (!ml.mapel_id) {
+                                  return { ...ml, mapel_id: val }
+                                }
+                                return ml
+                              })
+                            }
+                          })
+                          setGuruMapel(updatedMapel)
+                        }}
+                        className="w-full max-w-md px-3.5 py-2.5 border rounded-xl text-xs bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                      >
+                        <option value="">-- Pilih Mata Pelajaran Utama --</option>
+                        {mapels.map(m => (
+                          <option key={m.id} value={m.id}>{m.nama}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-500 mt-1.5">Mengatur mata pelajaran default yang diajar oleh guru ini saat menambah penugasan baru.</p>
+                    </div>
+                  )}
+
                                     <div className="space-y-4 mt-6 border-t border-slate-200 pt-6">
                     <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2"><svg className="w-4 h-4 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg> Penugasan Akademik Guru</h4>
                     
@@ -1958,11 +2072,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                               <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">Hanya 1 Kelas per TA</span>
                             </div>
 
-                            {guruWaliKelas.map((wk, wkIdx) => {
+                            {[...guruWaliKelas].sort((a,b) => b.tahun_ajaran.localeCompare(a.tahun_ajaran)).map((wk, wkIdx) => {
                                const classesInThisTa = getAvailableClasses(wk.tahun_ajaran_id);
                                const selectedKelas = wk.kelas_list[0] || null;
                                return (
-                                 <div key={wkIdx} className="bg-white p-3 rounded-xl border border-emerald-200 shadow-sm space-y-2">
+                                 <div key={wkIdx} className={`p-4 rounded-xl shadow-sm space-y-2 transition-all duration-200 ${
+                                   wk.tahun_ajaran_id === activeTa?.id 
+                                     ? 'bg-gradient-to-br from-emerald-50/50 to-white border-2 border-emerald-500/80 shadow-emerald-100/50' 
+                                     : 'bg-white border border-slate-200'
+                                 }`}>
                                    <div className="flex justify-between items-center mb-1">
                                      <span className="text-xs font-bold text-slate-700">TA: {wk.tahun_ajaran} {wk.tahun_ajaran_id === activeTa?.id && <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-bold">Aktif</span>}</span>
                                      <button type="button" onClick={() => {
@@ -1999,7 +2117,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                                } else {
                                                  newWk[wkIdx].kelas_list = [c];
                                                }
-                                               setGuruWaliKelas(newWk);
+                                               setSortedGuruWaliKelas(newWk);
                                              }}
                                              className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-2xl text-xs font-medium transition-all ${isSelected ? 'border-emerald-500 bg-emerald-100 text-emerald-800 shadow-sm ring-2 ring-emerald-300' : 'border-emerald-200 hover:bg-emerald-50 bg-white text-emerald-700'}`}
                                            >
@@ -2021,10 +2139,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                 <select
                                   value={biodataForm.temp_ta_id || ''}
                                   onChange={e => setBiodataForm({...biodataForm, temp_ta_id: e.target.value})}
-                                  className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                                  className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-slate-700"
                                 >
                                   <option value="">-- Tambah Tahun Ajaran Wali Kelas --</option>
-                                  {tahunAjarans?.filter(ta => !guruWaliKelas.find(w => w.tahun_ajaran_id === ta.id)).map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                                  {[...tahunAjarans].sort((a, b) => b.nama.localeCompare(a.nama)).filter(ta => !guruWaliKelas.find(w => w.tahun_ajaran_id === ta.id)).map(ta => (
+                                    <option key={ta.id} value={ta.id}>
+                                      {ta.nama} {ta.is_aktif ? '(Aktif)' : ''}
+                                    </option>
+                                  ))}
                                 </select>
                               </div>
                               <button
@@ -2032,7 +2154,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                 onClick={() => {
                                   if(!biodataForm.temp_ta_id) return;
                                   const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id);
-                                  setGuruWaliKelas([...guruWaliKelas, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, kelas_list: [] }]);
+                                  setSortedGuruWaliKelas([...guruWaliKelas, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, kelas_list: [] }]);
                                   setBiodataForm({...biodataForm, temp_ta_id: ''});
                                 }}
                                 className="bg-emerald-100 text-emerald-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-colors"
@@ -2116,7 +2238,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                                } else {
                                                  newBK[bkIdx].kelas_list = [...newBK[bkIdx].kelas_list, c];
                                                }
-                                               setGuruBK(newBK);
+                                               setSortedGuruBK(newBK);
                                              }}
                                              className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-2xl text-xs font-medium transition-all ${isSelected ? 'border-purple-500 bg-purple-100 text-purple-800 shadow-sm ring-2 ring-purple-200' : 'border-purple-200 hover:bg-purple-50 bg-white text-purple-700'}`}
                                            >
@@ -2138,10 +2260,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                 <select
                                   value={biodataForm.temp_ta_id_bk || ''}
                                   onChange={e => setBiodataForm({...biodataForm, temp_ta_id_bk: e.target.value})}
-                                  className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-purple-500 outline-none"
+                                  className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-purple-500 outline-none font-medium text-slate-700"
                                 >
                                   <option value="">-- Tambah Tahun Ajaran BK --</option>
-                                  {tahunAjarans?.filter(ta => !guruBK.find(b => b.tahun_ajaran_id === ta.id)).map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                                  {[...tahunAjarans].sort((a, b) => b.nama.localeCompare(a.nama)).filter(ta => !guruBK.find(b => b.tahun_ajaran_id === ta.id)).map(ta => (
+                                    <option key={ta.id} value={ta.id}>
+                                      {ta.nama} {ta.is_aktif ? '(Aktif)' : ''}
+                                    </option>
+                                  ))}
                                 </select>
                               </div>
                               <button
@@ -2149,7 +2275,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                 onClick={() => {
                                   if(!biodataForm.temp_ta_id_bk) return;
                                   const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id_bk);
-                                  setGuruBK([...guruBK, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, kelas_list: [] }]);
+                                  setSortedGuruBK([...guruBK, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, kelas_list: [] }]);
                                   setBiodataForm({...biodataForm, temp_ta_id_bk: ''});
                                 }}
                                 className="bg-purple-100 text-purple-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-purple-200 transition-colors"
@@ -2218,22 +2344,26 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                             <label className="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Edit Tugas Mengajar Mapel</label>
                           </div>
 
-                          {guruMapel.map((gm, gmIdx) => {
+                          {[...guruMapel].sort((a,b) => b.tahun_ajaran.localeCompare(a.tahun_ajaran)).map((gm, gmIdx) => {
                              const classesInThisTa = getAvailableClasses(gm.tahun_ajaran_id);
                              return (
-                               <div key={gmIdx} className="bg-white p-3 rounded-xl border border-indigo-200 shadow-sm">
+                               <div key={gmIdx} className={`p-4 rounded-xl shadow-sm space-y-3 transition-all duration-200 mb-3 ${
+                                 gm.tahun_ajaran_id === activeTa?.id 
+                                   ? 'bg-gradient-to-br from-indigo-50/50 to-white border-2 border-indigo-500/80 shadow-indigo-100/50' 
+                                   : 'bg-white border border-slate-200'
+                               }`}>
                                  <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
                                    <span className="text-xs font-bold text-slate-700">TA: {gm.tahun_ajaran} {gm.tahun_ajaran_id === activeTa?.id && <span className="text-[9px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold">Aktif</span>}</span>
                                    <div className="flex items-center gap-2">
                                      <button type="button" onClick={() => {
                                        const newGm = [...guruMapel];
-                                       newGm[gmIdx].mapel_list.push({ mapel_id: '', kelas_list: [] });
-                                       setGuruMapel(newGm);
+                                       newGm[gmIdx].mapel_list.push({ mapel_id: primaryMapelId || '', kelas_list: [] });
+                                       setSortedGuruMapel(newGm);
                                      }} className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200 font-bold">+ Mapel</button>
                                      <button type="button" onClick={() => {
                                        const newGm = [...guruMapel];
                                        newGm.splice(gmIdx, 1);
-                                       setGuruMapel(newGm);
+                                       setSortedGuruMapel(newGm);
                                      }} className="text-rose-500 hover:bg-rose-50 p-1 rounded"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
                                    </div>
                                  </div>
@@ -2245,7 +2375,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                         <select value={ma.mapel_id} onChange={(e) => {
                                             const newGm = [...guruMapel];
                                             newGm[gmIdx].mapel_list[idx].mapel_id = e.target.value;
-                                            setGuruMapel(newGm)
+                                            setSortedGuruMapel(newGm)
                                           }} className="flex-1 text-xs border border-slate-300 rounded-md py-1.5 px-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white">
                                           <option value="">-- Pilih Mata Pelajaran --</option>
                                           {mapels.map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
@@ -2253,7 +2383,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                         <button type="button" onClick={() => {
                                           const newGm = [...guruMapel];
                                           newGm[gmIdx].mapel_list.splice(idx, 1);
-                                          setGuruMapel(newGm);
+                                          setSortedGuruMapel(newGm);
                                         }} className="p-1 text-rose-500 hover:bg-rose-100 rounded-md"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
                                       </div>
 
@@ -2263,13 +2393,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                           <button type="button" onClick={() => {
                                             const newGm = [...guruMapel];
                                             newGm[gmIdx].mapel_list[idx].kelas_list = [...classesInThisTa];
-                                            setGuruMapel(newGm);
+                                            setSortedGuruMapel(newGm);
                                           }} className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium">Semua</button>
                                           <span className="text-[10px] text-slate-300">|</span>
                                           <button type="button" onClick={() => {
                                             const newGm = [...guruMapel];
                                             newGm[gmIdx].mapel_list[idx].kelas_list = [];
-                                            setGuruMapel(newGm);
+                                            setSortedGuruMapel(newGm);
                                           }} className="text-[10px] text-slate-500 hover:text-slate-700 font-medium">Kosongkan</button>
                                         </div>
                                       </div>
@@ -2324,10 +2454,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                               <select
                                 value={biodataForm.temp_ta_id_mapel || ''}
                                 onChange={e => setBiodataForm({...biodataForm, temp_ta_id_mapel: e.target.value})}
-                                className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none font-medium text-slate-700"
                               >
                                 <option value="">-- Tambah Tahun Ajaran Mapel --</option>
-                                {tahunAjarans?.filter(ta => !guruMapel.find(m => m.tahun_ajaran_id === ta.id)).map(ta => <option key={ta.id} value={ta.id}>{ta.nama}</option>)}
+                                {[...tahunAjarans].sort((a, b) => b.nama.localeCompare(a.nama)).filter(ta => !guruMapel.find(m => m.tahun_ajaran_id === ta.id)).map(ta => (
+                                  <option key={ta.id} value={ta.id}>
+                                    {ta.nama} {ta.is_aktif ? '(Aktif)' : ''}
+                                  </option>
+                                ))}
                               </select>
                             </div>
                             <button
@@ -2335,7 +2469,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                               onClick={() => {
                                 if(!biodataForm.temp_ta_id_mapel) return;
                                 const ta = tahunAjarans.find(t => t.id === biodataForm.temp_ta_id_mapel);
-                                setGuruMapel([...guruMapel, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, mapel_list: [] }]);
+                                const defaultMapelList = primaryMapelId ? [{ mapel_id: primaryMapelId, kelas_list: [] }] : [];
+                                setSortedGuruMapel([...guruMapel, { tahun_ajaran_id: ta.id, tahun_ajaran: ta.nama, mapel_list: defaultMapelList }]);
                                 setBiodataForm({...biodataForm, temp_ta_id_mapel: ''});
                               }}
                               className="bg-indigo-100 text-indigo-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-indigo-200 transition-colors"
@@ -2467,14 +2602,63 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             </div>
             
             {/* Body */}
-            <div className="p-6 text-center">
-              <p className="text-sm text-slate-600 mb-4">Sistem telah membuatkan kombinasi acak baru untuk keamanan akun:</p>
+            <div className="p-6 text-left space-y-4">
+              <p className="text-sm text-slate-600 text-center mb-4">Sistem telah membuatkan kombinasi login baru untuk keamanan akun:</p>
               
-              <div className="bg-slate-100 rounded-xl p-4 border border-slate-200 mb-2">
-                <p className="text-3xl font-mono font-bold tracking-[0.2em] text-indigo-700">{resetData.generatedPass}</p>
+              <div className="space-y-3">
+                {/* Username Row */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Username</span>
+                    <span className="text-xs font-semibold text-slate-700 font-mono break-all pr-2">{resetData.row.username}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(resetData.row.username)
+                      alert("Username berhasil disalin!")
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                    Salin
+                  </button>
+                </div>
+
+                {/* Password Row */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">{activeTab === 'murid' ? 'Kode Akses' : 'Password'}</span>
+                    <span className="text-xs font-bold text-indigo-700 font-mono tracking-wider">{resetData.generatedPass}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(resetData.generatedPass)
+                      alert(`${activeTab === 'murid' ? 'Kode Akses' : 'Password'} berhasil disalin!`)
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                    Salin
+                  </button>
+                </div>
               </div>
+
+              {/* Fast Auto-login Copy Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${resetData.row.username}|${resetData.generatedPass}`)
+                  alert("Format Auto-Login berhasil disalin! Tempelkan (paste) langsung ke kolom Username di halaman login untuk langsung mengisi kedua kolom.")
+                }}
+                className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs shadow-sm"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                Salin Cepat (Format Auto-Login)
+              </button>
               
-              <div className="mt-5 text-left bg-slate-50 border border-slate-200 p-3 rounded-xl">
+              <div className="mt-4 text-left bg-slate-50 border border-slate-200 p-3 rounded-xl">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Nomor WhatsApp Tujuan</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">

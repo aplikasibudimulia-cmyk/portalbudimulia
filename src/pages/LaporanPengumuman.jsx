@@ -122,6 +122,7 @@ export default function LaporanPengumuman() {
   const [modalFilters, setModalFilters] = useState({ class: 'all', stat: null })
   const [modalSearchQ, setModalSearchQ] = useState('')
   const printDate = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+  const showDownloadStats = type?.show_download_stats ?? true
 
   // ── Fetch berkas (dipanggil ulang saat realtime event) ─────────────────
   const fetchBerkas = useRef(null)
@@ -484,14 +485,16 @@ export default function LaporanPengumuman() {
                 subtext={`${totalSiswa > 0 ? Math.round((allReqMet/totalSiswa)*100) : 0}% dari total`}
               />
             )}
-            <StatCard
-              icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
-              label="Sudah Mengunduh" value={sudahUnduh}
-              color="#0ea5e9" bgColor="#f0f9ff"
-              isActive={modalOpen && modalFilters.stat === 'sudahUnduh'}
-              onClick={() => handleStatClick('sudahUnduh', 'Daftar Siswa - Sudah Mengunduh')}
-              subtext={`${totalSiswa > 0 ? Math.round((sudahUnduh/totalSiswa)*100) : 0}% dari total`}
-            />
+            {showDownloadStats && (
+              <StatCard
+                icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
+                label="Sudah Mengunduh" value={sudahUnduh}
+                color="#0ea5e9" bgColor="#f0f9ff"
+                isActive={modalOpen && modalFilters.stat === 'sudahUnduh'}
+                onClick={() => handleStatClick('sudahUnduh', 'Daftar Siswa - Sudah Mengunduh')}
+                subtext={`${totalSiswa > 0 ? Math.round((sudahUnduh/totalSiswa)*100) : 0}% dari total`}
+              />
+            )}
             <StatCard
               icon={<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>}
               label="Belum Ada Berkas" value={belumFile}
@@ -592,25 +595,27 @@ export default function LaporanPengumuman() {
                   <p className="text-[10px] text-slate-500">{allReqMet} / {totalSiswa} siswa</p>
                 </div>
               )}
-              <div className="flex flex-col items-center">
-                <div className="relative" style={{ width: 120, height: 120 }}>
-                  <svg width={120} height={120} viewBox="0 0 120 120" className="-rotate-90">
-                    <circle cx={60} cy={60} r={48} fill="none" stroke="#e2e8f0" strokeWidth={12} />
-                    <circle cx={60} cy={60} r={48} fill="none" stroke="#0ea5e9"
-                      strokeWidth={12}
-                      strokeDasharray={2 * Math.PI * 48}
-                      strokeDashoffset={2 * Math.PI * 48 - (totalSiswa > 0 ? sudahUnduh / totalSiswa : 0) * 2 * Math.PI * 48}
-                      strokeLinecap="round"
-                      style={{ transition: 'stroke-dashoffset 1.2s ease' }}
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-xl font-black text-sky-600">{totalSiswa > 0 ? Math.round((sudahUnduh/totalSiswa)*100) : 0}%</span>
+              {showDownloadStats && (
+                <div className="flex flex-col items-center">
+                  <div className="relative" style={{ width: 120, height: 120 }}>
+                    <svg width={120} height={120} viewBox="0 0 120 120" className="-rotate-90">
+                      <circle cx={60} cy={60} r={48} fill="none" stroke="#e2e8f0" strokeWidth={12} />
+                      <circle cx={60} cy={60} r={48} fill="none" stroke="#0ea5e9"
+                        strokeWidth={12}
+                        strokeDasharray={2 * Math.PI * 48}
+                        strokeDashoffset={2 * Math.PI * 48 - (totalSiswa > 0 ? sudahUnduh / totalSiswa : 0) * 2 * Math.PI * 48}
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dashoffset 1.2s ease' }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-xl font-black text-sky-600">{totalSiswa > 0 ? Math.round((sudahUnduh/totalSiswa)*100) : 0}%</span>
+                    </div>
                   </div>
+                  <p className="text-xs font-bold text-slate-700 mt-2 text-center">Sudah Mengunduh</p>
+                  <p className="text-[10px] text-slate-500">{sudahUnduh} / {totalSiswa} siswa</p>
                 </div>
-                <p className="text-xs font-bold text-slate-700 mt-2 text-center">Sudah Mengunduh</p>
-                <p className="text-[10px] text-slate-500">{sudahUnduh} / {totalSiswa} siswa</p>
-              </div>
+              )}
             </div>
           </div>
 
@@ -651,7 +656,7 @@ export default function LaporanPengumuman() {
                     </th>
                   ))}
                   <th className="text-center px-3 py-3">Syarat Lengkap</th>
-                  <th className="text-center px-3 py-3">Sudah Unduh</th>
+                  {showDownloadStats && <th className="text-center px-3 py-3">Sudah Unduh</th>}
                   <th className="px-4 py-3 min-w-[120px]">Progress</th>
                 </tr>
               </thead>
@@ -679,10 +684,12 @@ export default function LaporanPengumuman() {
                       <span className={`font-bold ${c.allMet === c.total ? 'text-green-600' : 'text-indigo-600'}`}>{c.allMet}</span>
                       <span className="text-slate-400 text-[10px]">/{c.total}</span>
                     </td>
-                    <td className="text-center px-3 py-3">
-                      <span className="text-sky-600 font-bold">{c.unduh}</span>
-                      <span className="text-slate-400 text-[10px]">/{c.total}</span>
-                    </td>
+                    {showDownloadStats && (
+                        <td className="text-center px-3 py-3">
+                          <span className="text-sky-600 font-bold">{c.unduh}</span>
+                          <span className="text-slate-400 text-[10px]">/{c.total}</span>
+                        </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -780,7 +787,7 @@ export default function LaporanPengumuman() {
                           <span className="truncate block max-w-[80px] mx-auto" title={req.nama}>{req.nama}</span>
                         </th>
                       ))}
-                      <th className="text-center px-3 py-2 w-24">Status Unduh</th>
+                      {showDownloadStats && <th className="text-center px-3 py-2 w-24">Status Unduh</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -826,15 +833,17 @@ export default function LaporanPengumuman() {
                               </td>
                             )
                           })}
-                          <td className="text-center px-3 py-2.5">
-                            {hasUnduh
-                              ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
-                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                                  Diakses
-                                </span>
-                              : <span className="text-slate-300 text-[10px]">—</span>
-                            }
-                          </td>
+                           {showDownloadStats && (
+                            <td className="text-center px-3 py-2.5">
+                              {hasUnduh
+                                ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                                    Diakses
+                                  </span>
+                                : <span className="text-slate-300 text-[10px]">—</span>
+                              }
+                            </td>
+                          )}
                         </tr>
                       )
                     })}

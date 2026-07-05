@@ -10,6 +10,7 @@ import DashboardOrangTua from './pages/DashboardOrangTua'
 import Impersonate from './pages/Impersonate'
 import PresensiTV from './pages/PresensiTV'
 import LaporanPengumuman from './pages/LaporanPengumuman'
+import PresensiManualSiswa from './pages/PresensiManualSiswa'
 
 function App() {
   useEffect(() => {
@@ -26,6 +27,7 @@ function App() {
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/dashboard-orang-tua" element={<DashboardOrangTua />} />
         <Route path="/admin" element={<Admin />} />
@@ -34,6 +36,7 @@ function App() {
         <Route path="/impersonate" element={<Impersonate />} />
         <Route path="/presensi-tv" element={<PresensiTV />} />
         <Route path="/laporan-pengumuman/:typeId" element={<LaporanPengumuman />} />
+        <Route path="/presensi-manual-siswa" element={<PresensiManualSiswa />} />
       </Routes>
     </BrowserRouter>
   )

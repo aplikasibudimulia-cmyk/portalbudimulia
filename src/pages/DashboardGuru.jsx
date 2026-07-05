@@ -12,7 +12,6 @@ import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
 import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection'
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
-import bcrypt from 'bcryptjs'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -602,6 +601,47 @@ export default function DashboardGuru() {
   const [fitur, setFitur] = useState(new Set())
   const [loading, setLoading] = useState(true)
 
+  // Notification States
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0)
+  const [showNotifPanel, setShowNotifPanel] = useState(false)
+  const [notifications, setNotifications] = useState([])
+
+  const fetchNotifCount = async () => {
+    try {
+      const { data: allNotif } = await supabase
+        .from('notifikasi')
+        .select('*')
+        .is('target_nisn', null)
+        .is('target_kelas', null)
+        .order('created_at', { ascending: false })
+
+      if (!allNotif) return
+      
+      const readIds = new Set(JSON.parse(localStorage.getItem('read_notif_ids_guru') || '[]'))
+      const unreadCount = allNotif.filter(n => !readIds.has(n.id)).length
+      setUnreadNotifCount(unreadCount)
+      
+      const mapped = allNotif.map(n => ({
+        ...n,
+        isRead: readIds.has(n.id)
+      }))
+      setNotifications(mapped)
+    } catch (err) {
+      console.error("Error fetching notifications for guru:", err)
+    }
+  }
+
+  useEffect(() => {
+    if (loading) return
+    fetchNotifCount()
+    
+    const channel = supabase.channel(`guru-notif-all`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifikasi' }, fetchNotifCount)
+      .subscribe()
+      
+    return () => supabase.removeChannel(channel)
+  }, [loading])
+
   // Password Change States
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -674,6 +714,31 @@ export default function DashboardGuru() {
       supabase.removeChannel(broadcastChannel)
     }
   }, [navigate])
+
+  // Sync/Refetch session data when menu tab changes or app resumes to prevent stale cache in Input Nilai
+  useEffect(() => {
+    const rawSession = localStorage.getItem('guru_session')
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession)
+      fetchData(parsed)
+    }
+  }, [activeMenu])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const rawSession = localStorage.getItem('guru_session')
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession)
+          fetchData(parsed)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   const fetchData = async (userData) => {
     // 0. Refresh Guru Session Data
@@ -776,20 +841,25 @@ export default function DashboardGuru() {
 
     setPassLoading(true)
     try {
-      // 1. Fetch current password hash
-      const { data: akun, error: fetchErr } = await supabase.from('akun_pengguna').select('password').eq('id', session.akun_id).single()
-      if (fetchErr) throw new Error("Gagal mengambil data akun.")
-
-      // 2. Verify old password
-      const isMatch = bcrypt.compareSync(oldPassword, akun.password)
+      // 1. Verifikasi sandi lama menggunakan secure database RPC
+      const { data: isMatch, error: checkErr } = await supabase.rpc('verify_my_password', {
+        p_old_password: oldPassword
+      })
+      if (checkErr) throw checkErr
       if (!isMatch) throw new Error("Sandi lama salah!")
 
-      // 3. Update new password
-      const salt = bcrypt.genSaltSync(10)
-      const newHash = bcrypt.hashSync(newPassword, salt)
+      // 2. Perbarui sandi di Supabase Auth (Mengamankan Session Login)
+      const { error: authErr } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+      if (authErr) throw authErr
 
-      const { error: updateErr } = await supabase.from('akun_pengguna').update({ password: newHash }).eq('id', session.akun_id)
-      if (updateErr) throw new Error("Gagal menyimpan sandi baru.")
+      // 3. Simpan sandi baru terenkripsi di public.akun_pengguna via RPC
+      const { data: resetResult, error: resetErr } = await supabase.rpc('admin_reset_password', {
+        p_akun_id: session.akun_id,
+        p_new_password: newPassword
+      })
+      if (resetErr || !resetResult?.ok) throw new Error(resetResult?.msg || resetErr?.message || "Gagal menyimpan sandi baru di database.")
 
       setPassMessage({ type: 'success', text: 'Sandi berhasil diubah!' })
       setOldPassword('')
@@ -1062,7 +1132,7 @@ export default function DashboardGuru() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
-        <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-20">
+        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
               <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -1070,13 +1140,37 @@ export default function DashboardGuru() {
             <h1 className="font-semibold text-slate-800 text-sm md:hidden">eBudiMulia Guru</h1>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden md:block text-right">
-              <p className="text-sm font-bold text-slate-800 leading-tight">{session.nama_guru}</p>
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{session.roles.map(r => r.nama).join(', ')}</p>
-            </div>
-            <div className="w-9 h-9 rounded-full border border-slate-200 bg-slate-50 shadow-sm overflow-hidden flex items-center justify-center font-bold text-slate-500 shrink-0">
-              {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.charAt(0)}
+          <div className="flex items-center gap-4">
+            {/* Notification Bell */}
+            <button 
+              onClick={() => setShowNotifPanel(true)}
+              className="relative p-2.5 text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all duration-300 group"
+              title="Notifikasi"
+            >
+              <svg 
+                className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-[12deg]" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor" 
+                strokeWidth="2.2"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-white animate-pulse">
+                  {unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            <div className="flex items-center gap-3 pl-1 border-l border-slate-200">
+              <div className="hidden md:block text-right">
+                <p className="text-sm font-bold text-slate-800 leading-tight">{session.nama_guru}</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{session.roles.map(r => r.nama).join(', ')}</p>
+              </div>
+              <div onClick={() => setActiveMenu('profil')} className="w-9 h-9 rounded-full border border-slate-200 bg-slate-50 shadow-sm overflow-hidden flex items-center justify-center font-bold text-slate-500 shrink-0 cursor-pointer hover:border-indigo-400 transition-colors">
+                {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.charAt(0)}
+              </div>
             </div>
           </div>
         </header>
@@ -1576,6 +1670,101 @@ export default function DashboardGuru() {
       </main>
 
       {ConfirmModalComponent}
+
+      {/* Panel Notifikasi Slide-in untuk Guru */}
+      {showNotifPanel && (
+        <>
+          <div 
+            className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-[100] animate-fade-in"
+            onClick={() => setShowNotifPanel(false)}
+          />
+          <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-[101] flex flex-col transform transition-transform duration-300 ease-in-out translate-x-0">
+            
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                </div>
+                <h3 className="font-bold text-slate-800 text-lg">Notifikasi Guru</h3>
+              </div>
+              <button onClick={() => setShowNotifPanel(false)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto bg-slate-50">
+              {notifications.length === 0 ? (
+                <div className="p-10 text-center flex flex-col items-center justify-center h-full text-slate-400">
+                  <svg className="w-16 h-16 mb-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+                  <p>Belum ada notifikasi.</p>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3">
+                  {notifications.map(n => {
+                    const dateObj = new Date(n.created_at)
+                    let icon = <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    let bgClass = n.isRead ? 'bg-white border-slate-200 opacity-70' : 'bg-blue-50 border-blue-100 shadow-sm font-semibold'
+                    
+                    if (n.tipe === 'success') {
+                      icon = <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      if (!n.isRead) bgClass = 'bg-emerald-50 border-emerald-100 shadow-sm font-semibold'
+                    } else if (n.tipe === 'warning') {
+                      icon = <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                      if (!n.isRead) bgClass = 'bg-amber-50 border-amber-100 shadow-sm font-semibold'
+                    }
+
+                    const handleMarkRead = () => {
+                      if (n.isRead) return
+                      const readIds = JSON.parse(localStorage.getItem('read_notif_ids_guru') || '[]')
+                      readIds.push(n.id)
+                      localStorage.setItem('read_notif_ids_guru', JSON.stringify(readIds))
+                      fetchNotifCount()
+                    }
+
+                    return (
+                      <div 
+                        key={n.id} 
+                        onClick={handleMarkRead}
+                        className={`p-4 rounded-2xl border cursor-pointer transition-all ${bgClass}`}
+                      >
+                        <div className="flex gap-3">
+                          <div className="shrink-0 mt-0.5">{icon}</div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className={`font-bold text-sm ${n.isRead ? 'text-slate-600' : 'text-slate-800'} truncate`}>{n.judul}</h4>
+                            <p className={`text-xs mt-1 leading-relaxed ${n.isRead ? 'text-slate-500' : 'text-slate-700'}`}>{n.pesan}</p>
+                            <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">
+                              {dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} WIB
+                            </p>
+                          </div>
+                          {!n.isRead && <div className="shrink-0 w-2 h-2 rounded-full bg-blue-500 mt-1.5 ml-auto"></div>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {notifications.some(n => !n.isRead) && (
+              <div className="p-4 border-t border-slate-100 bg-white shrink-0">
+                <button 
+                  onClick={() => {
+                    const readIds = notifications.map(n => n.id)
+                    localStorage.setItem('read_notif_ids_guru', JSON.stringify(readIds))
+                    fetchNotifCount()
+                  }}
+                  className="w-full py-2.5 text-sm font-bold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors"
+                >
+                  Tandai semua dibaca
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

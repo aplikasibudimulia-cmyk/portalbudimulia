@@ -11,35 +11,94 @@ const STATUS_COLORS = {
 }
 
 export default function SiswaRiwayatPresensi({ studentData }) {
-  const todayStr = new Date().toISOString().split('T')[0]
-  const [startDate, setStartDate] = useState(todayStr)
-  const [endDate, setEndDate] = useState(todayStr)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [presensiList, setPresensiList] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedDate, setExpandedDate] = useState(null)
 
   const [effectiveDates, setEffectiveDates] = useState([])
 
+  // Fetch rentang tanggal semester aktif dari admin
   useEffect(() => {
-    fetchPresensi()
+    const fetchSemesterRange = async () => {
+      if (!studentData?.tahun_ajaran_id) {
+        const todayStr = new Date().toISOString().split('T')[0]
+        setStartDate(todayStr)
+        setEndDate(todayStr)
+        return
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('semester')
+          .select('nomor, tanggal_mulai, tanggal_selesai')
+          .eq('tahun_ajaran_id', studentData.tahun_ajaran_id)
+
+        if (!error && data && data.length > 0) {
+          const today = new Date()
+          today.setHours(0, 0, 0, 0)
+
+          // Cari semester yang menaungi tanggal hari ini
+          let activeSem = data.find(s => {
+            const start = new Date(s.tanggal_mulai)
+            const end = new Date(s.tanggal_selesai)
+            start.setHours(0, 0, 0, 0)
+            end.setHours(23, 59, 59, 999)
+            return today >= start && today <= end
+          })
+
+          // Jika tidak ada yang cocok, default ke Semester 1 atau record pertama
+          if (!activeSem) {
+            activeSem = data.find(s => s.nomor === 1) || data[0]
+          }
+
+          if (activeSem && activeSem.tanggal_mulai && activeSem.tanggal_selesai) {
+            setStartDate(activeSem.tanggal_mulai)
+            setEndDate(activeSem.tanggal_selesai)
+          } else {
+            const todayStr = new Date().toISOString().split('T')[0]
+            setStartDate(todayStr)
+            setEndDate(todayStr)
+          }
+        } else {
+          const todayStr = new Date().toISOString().split('T')[0]
+          setStartDate(todayStr)
+          setEndDate(todayStr)
+        }
+      } catch (err) {
+        console.error('Gagal memuat rentang tanggal semester:', err)
+        const todayStr = new Date().toISOString().split('T')[0]
+        setStartDate(todayStr)
+        setEndDate(todayStr)
+      }
+    }
+
+    fetchSemesterRange()
+  }, [studentData?.tahun_ajaran_id])
+
+  useEffect(() => {
+    if (startDate && endDate) {
+      fetchPresensi()
+    }
   }, [startDate, endDate])
 
   const fetchPresensi = async () => {
     setLoading(true)
     
+    // 1. Ambil tanggal dari sesi_presensi yang aktif/dibuka
     let sesiQuery = supabase.from('sesi_presensi').select('tanggal').order('tanggal', { ascending: false })
     if (startDate) sesiQuery = sesiQuery.gte('tanggal', startDate)
     if (endDate) sesiQuery = sesiQuery.lte('tanggal', endDate)
     else if (startDate && !endDate) sesiQuery = sesiQuery.lte('tanggal', startDate)
     
     const { data: sesiData } = await sesiQuery
-    if (sesiData) {
-      setEffectiveDates(sesiData.map(s => s.tanggal))
-    }
+    const activeDates = sesiData ? sesiData.map(s => s.tanggal) : []
 
+    // 2. Ambil data presensi harian milik siswa
     let query = supabase
       .from('presensi_harian')
-      .select('status, waktu, tanggal, tipe, selfie_url')
+      .select('status, waktu, tanggal, tipe, selfie_url, keterangan')
       .eq('siswa_nisn', studentData.nisn)
       .order('tanggal', { ascending: false })
 
@@ -48,10 +107,17 @@ export default function SiswaRiwayatPresensi({ studentData }) {
     else if (startDate && !endDate) query = query.lte('tanggal', startDate)
 
     const { data, error } = await query
-
+    let dbRecords = []
     if (!error && data) {
+      dbRecords = data
       setPresensiList(data)
     }
+
+    // 3. Gabungkan tanggal dari sesi aktif DAN tanggal di mana siswa memiliki catatan presensi
+    const recordDates = dbRecords.map(r => r.tanggal)
+    const allDates = [...new Set([...activeDates, ...recordDates])].sort((a, b) => b.localeCompare(a))
+    
+    setEffectiveDates(allDates)
     setLoading(false)
   }
 
@@ -166,6 +232,25 @@ export default function SiswaRiwayatPresensi({ studentData }) {
                                 ) : (
                                   <div className="mt-4 w-32 h-32 sm:w-40 sm:h-40 bg-slate-100 rounded-xl flex items-center justify-center border-2 border-dashed border-slate-300">
                                     <span className="text-xs font-medium text-slate-400">Tidak ada foto</span>
+                                  </div>
+                                )}
+
+                                {p.keterangan && (
+                                  <div className="mt-3 text-center">
+                                    {/^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/.test(p.keterangan) ? (
+                                      <a 
+                                        href={`https://www.google.com/maps?q=${p.keterangan}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors underline"
+                                      >
+                                        📍 Lihat Lokasi (Peta)
+                                      </a>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-200 shadow-sm">
+                                        📍 {p.keterangan}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                               </div>

@@ -14,6 +14,7 @@ const getPoinMeta = (p, max = 100) => {
 
 export default function SiswaDashboardWidgets({ studentData, menuTypes, onNavigate, isOrangTua = false, showFeatureConfig = { presensi: true, nilai: true, poin: true } }) {
   const [presensiHariIni, setPresensiHariIni] = useState(null)
+  const [sesiPresensiAktif, setSesiPresensiAktif] = useState(false)
   const [rekapBulan, setRekapBulan] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
   const [nilaiTerbaru, setNilaiTerbaru] = useState([])
   const [dokumenStatus, setDokumenStatus] = useState([])
@@ -39,9 +40,12 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   useEffect(() => {
     fetchAllWidgets()
     
-    // Setup realtime untuk presensi hari ini (jika piket update)
+    // Setup realtime untuk presensi hari ini & sesi_presensi
     const channel = supabase.channel(`siswa-dashboard-widgets-${studentData.nisn}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, () => {
+        fetchPresensi()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
         fetchPresensi()
       })
       .subscribe()
@@ -55,9 +59,12 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
 
   const fetchPresensi = async () => {
     const today = new Date().toLocaleDateString('en-CA')
-    const { data } = await supabase.from('presensi_harian')
-      .select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn).maybeSingle()
-    setPresensiHariIni(data)
+    const [{ data: prData }, { data: sesi }] = await Promise.all([
+      supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn).maybeSingle(),
+      supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
+    ])
+    setPresensiHariIni(prData)
+    setSesiPresensiAktif(!!sesi)
   }
 
   const fetchAllWidgets = async () => {
@@ -101,9 +108,15 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       // 6. Fetch Poin
       const reqPoin = supabase.from('student_points').select('total_poin, poin_default').eq('nisn', studentData.nisn).eq('tahun_ajaran_id', studentData.tahun_ajaran_id).order('semester', { ascending: false }).limit(1).maybeSingle()
 
-      const [resHariIni, resRekap, resNilai, resBerita, resSettings, resPoin] = await Promise.all([
-        reqPresensiHariIni, reqRekapBulan, reqNilai, reqBerita, reqSettings, reqPoin
+      // 7. Fetch Sesi Presensi
+      const reqSesi = supabase.from('sesi_presensi').select('*').eq('tanggal', todayStr).maybeSingle()
+
+      const [resHariIni, resRekap, resNilai, resBerita, resSettings, resPoin, resSesi] = await Promise.all([
+        reqPresensiHariIni, reqRekapBulan, reqNilai, reqBerita, reqSettings, reqPoin, reqSesi
       ])
+
+      // Set Sesi Presensi
+      setSesiPresensiAktif(!!resSesi.data)
 
       // Set Presensi Hari ini
       if (resHariIni.data) setPresensiHariIni(resHariIni.data)
@@ -204,7 +217,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     <div className="animate-slide-up space-y-6">
       
       {/* WIDGET 1: Status Presensi Hari Ini */}
-      {!isOrangTua && showFeatureConfig.presensi && (
+      {!isOrangTua && showFeatureConfig.presensi && (presensiHariIni || sesiPresensiAktif) && (
         <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
           <div className="flex items-center justify-between">
             <div>

@@ -20,6 +20,20 @@ const TIPE = { MASUK: 'masuk', PULANG: 'pulang' }
 // Step IDs
 const STEP = { IDLE: 'idle', SCANNING: 'scanning', SELFIE: 'selfie', SUBMITTING: 'submitting', SUCCESS: 'success', ERROR: 'error' }
 
+// ===== Haversine Distance Calculator =====
+function hitungJarak(lat1, lon1, lat2, lon2) {
+  const R = 6371000 // Radius bumi dalam meter
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLon = ((lon2 - lon1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 export default function SiswaPresensiSection({ studentData }) {
   const [step, setStep] = useState(STEP.IDLE)
   const [presensiMasuk, setPresensiMasuk] = useState(null)
@@ -37,6 +51,12 @@ export default function SiswaPresensiSection({ studentData }) {
   const [sesiAktif, setSesiAktif] = useState(false)
   const [notifGranted, setNotifGranted] = useState(isNotifGranted())
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
+  const [geofenceConfig, setGeofenceConfig] = useState({
+    aktif: false,
+    lat: null,
+    lng: null,
+    radius: 200
+  })
 
   const scannerRef = useRef(null)
   const selfieInputRef = useRef(null)
@@ -74,6 +94,18 @@ export default function SiswaPresensiSection({ studentData }) {
       setQrAktif(qrStatus !== 'false')
       const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
       setSelfieRequired(selfieReq !== 'false')
+
+      // Geofence config
+      const geoAktif = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
+      const geoLat = parseFloat(settings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
+      const geoLng = parseFloat(settings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
+      const geoRadius = parseInt(settings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
+      setGeofenceConfig({
+        aktif: geoAktif,
+        lat: isNaN(geoLat) ? null : geoLat,
+        lng: isNaN(geoLng) ? null : geoLng,
+        radius: isNaN(geoRadius) ? 200 : geoRadius
+      })
     }
     setLoadingStatus(false)
   }, [studentData.nisn, today])
@@ -87,6 +119,14 @@ export default function SiswaPresensiSection({ studentData }) {
       try {
         const subscription = await subscribeToPushNotification()
         if (subscription) {
+          // Hapus subscription dari user lain yang menggunakan browser/perangkat ini
+          const endpointUrl = subscription.endpoint
+          if (endpointUrl) {
+            await supabase.from('push_subscriptions')
+              .delete()
+              .filter('subscription->>endpoint', 'eq', endpointUrl)
+          }
+
           await supabase.from('push_subscriptions').upsert({
             nisn: studentData.nisn,
             subscription: subscription.toJSON()
@@ -111,46 +151,6 @@ export default function SiswaPresensiSection({ studentData }) {
     return () => supabase.removeChannel(channel)
   }, [studentData.nisn, loadStatus])
 
-  // Notifikasi peringatan belum presensi (setiap 5 menit mulai jam 06:40)
-  useEffect(() => {
-    if (!notifGranted) return
-
-    const checkAndNotify = async () => {
-      const now = new Date()
-      const { data: settings } = await supabase
-        .from('pengaturan_sekolah')
-        .select('setting_key, setting_value')
-        .in('setting_key', ['notif_peringatan_aktif', 'jam_mulai_notif_belum_presensi'])
-
-      const notifAktif = settings?.find(s => s.setting_key === 'notif_peringatan_aktif')?.setting_value
-      if (notifAktif === 'false') return
-
-      const jamMulai = settings?.find(s => s.setting_key === 'jam_mulai_notif_belum_presensi')?.setting_value || '06:40'
-      const [mulaiH, mulaiM] = jamMulai.split(':').map(Number)
-      const nowMinutes = now.getHours() * 60 + now.getMinutes()
-      const mulaiMinutes = mulaiH * 60 + mulaiM
-
-      if (nowMinutes < mulaiMinutes) return // belum waktunya
-
-      // Cek apakah sudah presensi hari ini
-      const { data: pr } = await supabase
-        .from('presensi_harian')
-        .select('id').eq('tanggal', today).eq('siswa_nisn', studentData.nisn).limit(1)
-
-      if (!pr || pr.length === 0) {
-        showLocalNotif(
-          '⏰ Belum Presensi!',
-          `${studentData.nama_lengkap}, jangan lupa presensi masuk hari ini!`,
-          { tag: 'presensi-reminder' }
-        )
-      }
-    }
-
-    // Jalankan setiap 5 menit
-    checkAndNotify()
-    const interval = setInterval(checkAndNotify, 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [notifGranted, studentData.nisn, studentData.nama_lengkap, today])
 
   // === QR Scanner ===
   const startScanner = () => {
@@ -293,7 +293,7 @@ export default function SiswaPresensiSection({ studentData }) {
     }
   }
 
-  // === Kirim Notifikasi Web ke Orangtua via Supabase realtime broadcast ===
+  // === Kirim Notifikasi Web ke Orangtua via Supabase realtime broadcast + Web Push ===
   const notifyOrangTua = async (nisn, namaLengkap, kelas, status, waktu, tipe, selfieUrl) => {
     try {
       const tglFormatted = new Date(today).toLocaleDateString('id-ID', {
@@ -302,15 +302,31 @@ export default function SiswaPresensiSection({ studentData }) {
       const tipeLabel = tipe === TIPE.PULANG ? 'Pulang' : 'Masuk'
       const statusLabel = STATUS_LABELS[status] || status
 
-      // Broadcast ke channel orangtua via Supabase Realtime
+      const payload = {
+        nisn, namaLengkap, kelas, status, statusLabel, waktu,
+        tipe, tipeLabel, tanggal: tglFormatted, selfieUrl
+      }
+
+      // 1. Broadcast ke channel orangtua via Supabase Realtime (saat app terbuka)
       await supabase.channel(`notif-ortu-${nisn}`).send({
         type: 'broadcast',
         event: 'presensi_update',
-        payload: {
-          nisn, namaLengkap, kelas, status, statusLabel, waktu,
-          tipe, tipeLabel, tanggal: tglFormatted, selfieUrl
-        }
+        payload,
       })
+
+      // 2. Kirim Web Push server-side (bekerja meski app tertutup)
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      fetch(`${supabaseUrl}/functions/v1/notify-ortu`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify(payload),
+      }).catch(err => console.warn('[notify-ortu] Fetch error:', err))
+
     } catch (err) {
       console.warn('Gagal kirim notif ke orangtua:', err)
     }
@@ -320,6 +336,37 @@ export default function SiswaPresensiSection({ studentData }) {
   const doSubmit = async (selfieB, selfieSrcLocal, token) => {
     setStep(STEP.SUBMITTING)
     try {
+      // 1. Minta izin lokasi & dapatkan koordinat
+      if (!("geolocation" in navigator)) {
+        throw new Error('Fitur Geolocation tidak didukung di browser ini.');
+      }
+
+      const coords = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            // Anti-Fake GPS / Mock location detection
+            if (pos.mocked || pos.coords.accuracy === 0) {
+              reject(new Error('Peringatan Keamanan: Terdeteksi penggunaan Fake GPS / Lokasi Palsu! Silakan nonaktifkan aplikasi pemalsu lokasi Anda.'))
+              return
+            }
+            resolve(`${pos.coords.latitude},${pos.coords.longitude}`)
+          },
+          (err) => reject(new Error('Izin lokasi ditolak. Anda wajib memberikan izin lokasi di browser Anda untuk melakukan presensi.')),
+          { enableHighAccuracy: true, timeout: 8000 }
+        )
+      })
+
+      // ===== GEOFENCING CHECK =====
+      if (geofenceConfig.aktif && geofenceConfig.lat !== null && geofenceConfig.lng !== null) {
+        const [userLat, userLng] = coords.split(',').map(Number)
+        const jarak = hitungJarak(userLat, userLng, geofenceConfig.lat, geofenceConfig.lng)
+        if (jarak > geofenceConfig.radius) {
+          setStep(STEP.ERROR)
+          setErrorMsg(`Presensi ditolak. Lokasi Anda berada di luar area sekolah. Jarak Anda: ${Math.round(jarak)} meter dari sekolah (Batas toleransi: ${geofenceConfig.radius} meter).`)
+          return
+        }
+      }
+
       const now = new Date()
       const jamSekarang = now.toTimeString().slice(0, 5)
       const [bH, bM] = jamBatasHadir.split(':').map(Number)
@@ -355,11 +402,12 @@ export default function SiswaPresensiSection({ studentData }) {
         metode: 'qr_scan',
         tipe: tipeAktif,
         selfie_url: selfieUrl,
+        keterangan: coords,
         updated_at: now.toISOString()
       })
       if (insertErr) throw insertErr
 
-      // Kirim notifikasi ke orangtua via realtime
+      // Kirim notifikasi ke orangtua via realtime & Web Push
       await notifyOrangTua(
         studentData.nisn,
         studentData.nama_lengkap,
@@ -367,18 +415,29 @@ export default function SiswaPresensiSection({ studentData }) {
         statusOtomatis,
         jamSekarang,
         tipeAktif,
-        selfieUrl
+        selfieUrl,
+        coords
       )
 
       // Update state lokal
       if (tipeAktif === TIPE.MASUK) {
-        setPresensiMasuk({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.MASUK, selfie_url: selfieUrl })
+        setPresensiMasuk({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.MASUK, selfie_url: selfieUrl, keterangan: coords })
         setTipeAktif(TIPE.PULANG)
       } else {
-        setPresensiPulang({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.PULANG, selfie_url: selfieUrl })
+        setPresensiPulang({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.PULANG, selfie_url: selfieUrl, keterangan: coords })
       }
 
       setStep(STEP.SUCCESS)
+
+      // Tampilkan local notification ke siswa
+      if (isNotifGranted()) {
+        const tipeLabelSiswa = tipeAktif === TIPE.PULANG ? 'Pulang' : 'Masuk'
+        const statusLabelSiswa = STATUS_LABELS[statusOtomatis] || statusOtomatis
+        showLocalNotif('✅ Presensi Berhasil', `Presensi ${tipeLabelSiswa} berhasil dikonfirmasi (${statusLabelSiswa}) pada ${jamSekarang} WIB. Lokasi: ${coords}`, {
+          tag: `presensi-siswa-${tipeAktif}`,
+          data: { url: `https://www.google.com/maps?q=${coords}` }
+        })
+      }
     } catch (err) {
       setStep(STEP.ERROR)
       setErrorMsg(`Gagal menyimpan presensi: ${err.message}`)
@@ -428,6 +487,13 @@ export default function SiswaPresensiSection({ studentData }) {
       const subscription = await subscribeToPushNotification()
       if (subscription) {
         try {
+          const endpointUrl = subscription.endpoint
+          if (endpointUrl) {
+            await supabase.from('push_subscriptions')
+              .delete()
+              .filter('subscription->>endpoint', 'eq', endpointUrl)
+          }
+
           await supabase.from('push_subscriptions').upsert({
             nisn: studentData.nisn,
             subscription: subscription.toJSON()
@@ -448,6 +514,38 @@ export default function SiswaPresensiSection({ studentData }) {
     </div>
   )
 
+  const isNotificationSupported = 'Notification' in window;
+  if (isNotificationSupported && !notifGranted) {
+    return (
+      <div className="flex flex-col items-center justify-center p-6 bg-slate-50 min-h-[60vh] text-center">
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-lg max-w-md w-full animate-fade-in flex flex-col items-center">
+          <div className="w-16 h-16 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center mb-6 text-amber-500 shadow-sm animate-bounce">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+          </div>
+          <h3 className="text-xl font-black text-slate-800 mb-2">Izin Notifikasi Diperlukan</h3>
+          <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+            Aplikasi eBudiMulia mewajibkan fitur Notifikasi Browser diaktifkan untuk menerima pengingat presensi dan laporan kehadiran secara real-time.
+          </p>
+          <button 
+            onClick={handleMintaIzinNotif} 
+            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-200 flex items-center justify-center gap-2"
+          >
+            Aktifkan Notifikasi Sekarang
+          </button>
+          <button 
+            onClick={() => setNotifGranted(true)} 
+            className="w-full mt-2 py-2 text-slate-500 hover:text-slate-700 font-bold text-xs transition-colors"
+          >
+            Nanti Saja / Lanjutkan Presensi
+          </button>
+          <p className="text-[10px] text-slate-400 mt-4 italic">
+            *Untuk iOS: Pastikan Anda telah menggunakan menu "Add to Home Screen" di Safari sebelum mengizinkan notifikasi.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const sudahMasuk = !!presensiMasuk
   const sudahPulang = !!presensiPulang
   const isDone = sudahMasuk && sudahPulang
@@ -455,6 +553,22 @@ export default function SiswaPresensiSection({ studentData }) {
   return (
     <div className="animate-fade-in w-full max-w-4xl mx-auto">
       {ConfirmModalComponent}
+
+      {/* Sticky Orange Notification Banner */}
+      {!notifGranted && 'Notification' in window && (
+        <div className="bg-amber-500 text-white text-xs font-bold py-2.5 px-4 flex items-center justify-between gap-3 rounded-xl mb-6 shadow-md shrink-0">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-white shrink-0 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+            <span>Aktifkan pengingat presensi harian di HP Anda</span>
+          </div>
+          <button
+            onClick={handleMintaIzinNotif}
+            className="bg-white text-amber-600 hover:bg-amber-50 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors shadow-sm shrink-0"
+          >
+            Tampilkan / Allow
+          </button>
+        </div>
+      )}
 
       {/* TABS NAVIGATION */}
       <div className="flex gap-4 border-b border-slate-200 mb-8 overflow-x-auto no-scrollbar">
@@ -481,51 +595,41 @@ export default function SiswaPresensiSection({ studentData }) {
             <p className="text-sm text-slate-500 mt-1">Scan QR Code dari layar TV sekolah untuk mencatat kehadiran Anda.</p>
           </div>
 
-          {/* Banner minta izin notifikasi */}
-          {!notifGranted && 'Notification' in window && (
-            <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-              <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-amber-800">Aktifkan Pengingat Presensi</p>
-                <p className="text-xs text-amber-700 mt-0.5">Dapatkan notifikasi jika belum presensi di pagi hari.</p>
-              </div>
-              <button onClick={handleMintaIzinNotif} className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-2xl transition-colors shrink-0">
-                Aktifkan
-              </button>
-            </div>
-          )}
+
 
           {/* Status Masuk & Pulang */}
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <div className={`rounded-xl border p-4 text-center ${sudahMasuk ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Masuk</p>
-              {sudahMasuk ? (
-                <>
-                  <p className={`text-sm font-black ${STATUS_COLORS[presensiMasuk.status]?.split(' ')[0] || 'text-emerald-600'}`}>{STATUS_LABELS[presensiMasuk.status]}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{presensiMasuk.waktu} WIB</p>
-                  {presensiMasuk.selfie_url && (
-                    <img src={presensiMasuk.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-emerald-200" />
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-slate-400 mt-1">Belum</p>
-              )}
+          {sesiAktif && (
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              <div className={`rounded-xl border p-4 text-center ${sudahMasuk ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Masuk</p>
+                {sudahMasuk ? (
+                  <>
+                    <p className={`text-sm font-black ${STATUS_COLORS[presensiMasuk.status]?.split(' ')[0] || 'text-emerald-600'}`}>{STATUS_LABELS[presensiMasuk.status]}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{presensiMasuk.waktu} WIB</p>
+                    {presensiMasuk.selfie_url && (
+                      <img src={presensiMasuk.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-emerald-200" />
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-400 mt-1">Belum</p>
+                )}
+              </div>
+              <div className={`rounded-xl border p-4 text-center ${sudahPulang ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Pulang</p>
+                {sudahPulang ? (
+                  <>
+                    <p className="text-sm font-black text-blue-600">Pulang</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{presensiPulang.waktu} WIB</p>
+                    {presensiPulang.selfie_url && (
+                      <img src={presensiPulang.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-blue-200" />
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-400 mt-1">Belum</p>
+                )}
+              </div>
             </div>
-            <div className={`rounded-xl border p-4 text-center ${sudahPulang ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Pulang</p>
-              {sudahPulang ? (
-                <>
-                  <p className="text-sm font-black text-blue-600">Pulang</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{presensiPulang.waktu} WIB</p>
-                  {presensiPulang.selfie_url && (
-                    <img src={presensiPulang.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-blue-200" />
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-slate-400 mt-1">Belum</p>
-              )}
-            </div>
-          </div>
+          )}
 
           {/* Semua sudah selesai */}
           {isDone && step !== STEP.SUCCESS ? (

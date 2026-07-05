@@ -45,6 +45,12 @@ function Dashboard() {
     poin: true
   })
   const [recentNotifications, setRecentNotifications] = useState([])
+  
+  // State untuk perizinan notifikasi siswa
+  const [notifGranted, setNotifGranted] = useState(() => {
+    if (!('Notification' in window)) return false
+    return Notification.permission === 'granted'
+  })
 
   const [currentFont, setCurrentFont] = useState(() => {
     return localStorage.getItem('app_font') || 'jakarta'
@@ -203,9 +209,16 @@ function Dashboard() {
 
   const handleRequestPushNotif = async () => {
     const permission = await requestNotifPermission()
-    if (permission) {
-      await subscribeToPushNotification()
-      showLocalNotif('✅ Notifikasi Aktif', 'Perangkat ini berhasil terdaftar untuk menerima notifikasi.', { tag: 'siswa-notif-aktif' })
+    if (permission === 'granted') {
+      setNotifGranted(true)
+      const sub = await subscribeToPushNotification()
+      if (sub && studentData) {
+        await supabase.from('push_subscriptions').upsert({
+          nisn: studentData.nisn,
+          subscription: sub.toJSON()
+        }, { onConflict: 'nisn' })
+        showLocalNotif('✅ Pengingat Aktif', 'Sistem akan mengingatkan Anda jika belum presensi.', { tag: 'notif-aktif' })
+      }
     }
   }
 
@@ -662,18 +675,82 @@ function Dashboard() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50">
         
-        {/* Mobile Header */}
-        <div className="md:hidden flex items-center justify-between px-4 py-3 bg-transparent border-none shrink-0">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-slate-500 hover:text-slate-700 bg-slate-50 rounded-lg">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        {/* Sticky Orange Notification Banner */}
+        {!notifGranted && 'Notification' in window && (
+          <div className="bg-amber-500 text-white text-xs font-bold py-2.5 px-4 flex items-center justify-between gap-3 sticky top-0 z-50 animate-slide-down shadow-md shrink-0">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-white shrink-0 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+              <span>Aktifkan pengingat presensi langsung di HP Anda</span>
+            </div>
+            <button
+              onClick={handleRequestPushNotif}
+              className="bg-white text-amber-600 hover:bg-amber-50 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors shadow-sm shrink-0"
+            >
+              Tampilkan / Allow
             </button>
-            <span className="font-bold text-slate-800 text-lg">
-              {selectedType === 'NILAI' ? 'Nilai Saya' : selectedType ? selectedType.nama : 'Beranda'}
-            </span>
           </div>
-          <img src={photoUrls[photoIndex] || DEFAULT_AVATAR} className="w-8 h-8 rounded-full border border-slate-200 object-cover" />
-        </div>
+        )}
+
+        {/* Unified Header */}
+        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 shadow-sm">
+          <div className="flex items-center gap-3">
+            {/* Mobile Hamburger Button */}
+            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl md:hidden transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <h1 className="font-bold text-slate-800 text-lg md:text-xl truncate">
+              {selectedType === 'NILAI' ? 'Nilai Saya' : selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : selectedType === 'POIN' ? 'Poin Siswa' : selectedType === 'PENGATURAN' ? 'Pengaturan Portal' : selectedType ? selectedType.nama : 'Beranda'}
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {/* Notification Bell */}
+            <button 
+              onClick={() => setShowNotifPanel(true)}
+              className="relative p-2.5 text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all duration-300 group"
+              title="Notifikasi"
+            >
+              <svg 
+                className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-[12deg]" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor" 
+                strokeWidth="2.2"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-white animate-pulse">
+                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            {/* Profile Avatar */}
+            <div className="flex items-center gap-3 pl-1 border-l border-slate-200">
+              <img 
+                src={photoUrls[photoIndex] || DEFAULT_AVATAR} 
+                alt="Profile" 
+                className="w-9 h-9 rounded-full object-cover border-2 border-indigo-100 shadow-sm cursor-pointer hover:border-indigo-400 transition-colors"
+                onClick={() => setSelectedType('PENGATURAN')}
+                title="Pengaturan Profil"
+                onError={() => {
+                  if (photoIndex < photoUrls.length - 1) {
+                    setPhotoIndex(prev => prev + 1)
+                  } else if (photoUrls[photoIndex] !== DEFAULT_AVATAR) {
+                    setPhotoUrls(prev => { const n = [...prev]; n[photoIndex] = DEFAULT_AVATAR; return n; })
+                  }
+                }}
+              />
+              {studentData && (
+                <div className="hidden lg:flex flex-col text-left">
+                  <span className="text-xs font-bold text-slate-800 leading-none truncate max-w-[120px]">{studentData.nama_lengkap}</span>
+                  <span className="text-[10px] font-semibold text-indigo-500 mt-1">{studentData.kelas}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">

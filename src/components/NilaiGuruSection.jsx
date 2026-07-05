@@ -82,6 +82,201 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [showKelolaSemester, setShowKelolaSemester] = useState(false)
   const [kelolaSemesterRombel, setKelolaSemesterRombel] = useState('')
   const [maxNamaWidth, setMaxNamaWidth] = useState(260)
+
+  // --- Synchronization between teachers of same subject ---
+  const [syncAvailable, setSyncAvailable] = useState(null)
+  const [showSyncModal, setShowSyncModal] = useState(false)
+  const [syncSelections, setSyncSelections] = useState({})
+  const [syncProcessing, setSyncProcessing] = useState(false)
+  const [syncFilterRombel, setSyncFilterRombel] = useState('')
+
+  const checkForSync = async () => {
+    if (!selectedMapelId || !selectedSemesterId || !activeTa) {
+      setSyncAvailable(null)
+      return
+    }
+
+    try {
+      // Get all components for this mapel, TA, semester across ALL teachers
+      const { data: allKomp, error: kompErr } = await supabase.from('nilai_komponen')
+        .select('*')
+        .eq('tahun_ajaran_id', activeTa.id)
+        .eq('mata_pelajaran_id', selectedMapelId)
+        .eq('semester_id', selectedSemesterId)
+      
+      if (kompErr || !allKomp) return
+
+      // My components
+      const mine = allKomp.filter(k => k.guru_id === session.id)
+      const myKelas = [...new Set(mine.flatMap(k => k.target_kelas || []))]
+      const myRombels = [...new Set(myKelas.map(c => c.replace(/\D/g, '')))].filter(Boolean).sort()
+
+      if (myRombels.length === 0) { setSyncAvailable(null); return }
+
+      // Other teachers sharing at least one rombel with me
+      const otherTeachersKomp = allKomp.filter(k =>
+        k.guru_id !== session.id &&
+        k.target_kelas?.some(c => myRombels.includes(c.replace(/\D/g, '')))
+      )
+
+      if (otherTeachersKomp.length === 0) { setSyncAvailable(null); return }
+
+      // Pick first other teacher
+      const groupedByGuru = otherTeachersKomp.reduce((acc, k) => {
+        if (!acc[k.guru_id]) acc[k.guru_id] = []
+        acc[k.guru_id].push(k)
+        return acc
+      }, {})
+      const otherGuruId = Object.keys(groupedByGuru)[0]
+      const otherKomp = groupedByGuru[otherGuruId]
+
+      const { data: guruInfo } = await supabase.from('guru')
+        .select('nama_guru').eq('id', otherGuruId).maybeSingle()
+      const otherGuruName = guruInfo?.nama_guru || 'Guru Lain'
+
+      const getMatchKey = (k) => `${(k.bab_nama || '').trim().toLowerCase()}|${(k.nama || '').trim().toLowerCase()}`
+
+      // Build diff per rombel
+      const added = []
+      const modified = []
+      const removed = []
+
+      myRombels.forEach(rombel => {
+        const mineR = mine.filter(k => k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel))
+        const otherR = otherKomp.filter(k => k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel))
+        if (otherR.length === 0) return
+
+        otherR.forEach(oth => {
+          const matchedMine = mineR.find(m => getMatchKey(m) === getMatchKey(oth))
+          if (!matchedMine) {
+            added.push({ ...oth, _rombel: rombel })
+          } else {
+            const isDiff =
+              (matchedMine.deskripsi || '') !== (oth.deskripsi || '') ||
+              Number(matchedMine.bobot) !== Number(oth.bobot) ||
+              matchedMine.metode_hitung !== oth.metode_hitung ||
+              matchedMine.is_nilai_visible !== oth.is_nilai_visible
+            if (isDiff) modified.push({ mine: matchedMine, other: oth, _rombel: rombel })
+          }
+        })
+
+        mineR.forEach(m => {
+          const matchedOther = otherR.find(oth => getMatchKey(oth) === getMatchKey(m))
+          if (!matchedOther) removed.push({ ...m, _rombel: rombel })
+        })
+      })
+
+      if (added.length > 0 || modified.length > 0 || removed.length > 0) {
+        const allRombels = [...new Set([
+          ...added.map(i => i._rombel),
+          ...modified.map(i => i._rombel),
+          ...removed.map(i => i._rombel)
+        ])].sort()
+        setSyncAvailable({ otherGuruId, otherGuruName, allRombels, diff: { added, modified, removed } })
+        setSyncFilterRombel(prev => allRombels.includes(prev) ? prev : allRombels[0])
+      } else {
+        setSyncAvailable(null)
+      }
+    } catch (e) {
+      console.error('Error checking for sync:', e)
+    }
+  }
+
+  const handleExecuteSync = async () => {
+    if (!syncAvailable || !activeTa || !selectedMapelId || !selectedSemesterId || !syncFilterRombel) return
+    setSyncProcessing(true)
+    try {
+      const rombel = syncFilterRombel
+      const classesForRombel = targetKelasList.filter(c => c.replace(/\D/g, '') === rombel)
+      
+      const { added, modified, removed } = syncAvailable.diff
+
+      // Only process items that belong to the currently selected rombel
+      const addedForRombel = added
+        .map((item, origIdx) => ({ item, origIdx }))
+        .filter(({ item }) => item._rombel === rombel)
+      const modifiedForRombel = modified
+        .map((item, origIdx) => ({ item, origIdx }))
+        .filter(({ item }) => item._rombel === rombel)
+      const removedForRombel = removed
+        .map((item, origIdx) => ({ item, origIdx }))
+        .filter(({ item }) => item._rombel === rombel)
+
+      // 1. ADD NEW COMPONENTS
+      const inserts = []
+      addedForRombel.forEach(({ item: oth, origIdx }) => {
+        if (syncSelections[`add_${origIdx}`] !== false) {
+          inserts.push({
+            bab_nama: oth.bab_nama,
+            nama: oth.nama,
+            deskripsi: oth.deskripsi,
+            bobot: oth.bobot,
+            urutan: oth.urutan,
+            target_kelas: classesForRombel,
+            kelas: classesForRombel[0] || 'LINTAS',
+            metode_hitung: oth.metode_hitung,
+            is_nilai_visible: oth.is_nilai_visible,
+            guru_id: session.id,
+            tahun_ajaran_id: activeTa.id,
+            semester_id: selectedSemesterId,
+            mata_pelajaran_id: selectedMapelId,
+            instruksi: oth.instruksi,
+            lampiran_urls: oth.lampiran_urls
+          })
+        }
+      })
+
+      if (inserts.length > 0) {
+        await supabase.from('nilai_komponen').insert(inserts)
+      }
+
+      // 2. MODIFY EXISTING COMPONENTS
+      for (const { item, origIdx } of modifiedForRombel) {
+        if (syncSelections[`mod_${origIdx}`] !== false) {
+          await supabase.from('nilai_komponen').update({
+            deskripsi: item.other.deskripsi,
+            bobot: item.other.bobot,
+            metode_hitung: item.other.metode_hitung,
+            is_nilai_visible: item.other.is_nilai_visible,
+            instruksi: item.other.instruksi,
+            lampiran_urls: item.other.lampiran_urls
+          }).eq('id', item.mine.id)
+        }
+      }
+
+      // 3. REMOVE COMPONENTS
+      const deleteIds = []
+      removedForRombel.forEach(({ item, origIdx }) => {
+        if (syncSelections[`del_${origIdx}`] !== false) {
+          deleteIds.push(item.id)
+        }
+      })
+
+      if (deleteIds.length > 0) {
+        await supabase.from('nilai_siswa').delete().in('komponen_id', deleteIds)
+        await supabase.from('nilai_komponen').delete().in('id', deleteIds)
+      }
+
+      // Log activity
+      await logActivity(
+        session.id,
+        'guru',
+        `Sinkronisasi BAB & TP Kelas ${rombel} dengan Guru ${syncAvailable.otherGuruName}`,
+        { target_kelas: classesForRombel }
+      )
+
+      setShowSyncModal(false)
+      setSyncAvailable(null)
+      await fetchKomponen()
+      alert('Sinkronisasi selesai!')
+    } catch (e) {
+      console.error('Error executing sync:', e)
+      alert('Terjadi kesalahan saat sinkronisasi.')
+    } finally {
+      setSyncProcessing(false)
+    }
+  }
+
   // Session data
   const waliKelas  = session?.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa?.id).map(k => k.kelas) || []
   const mapelRaw   = session?.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa?.id) || []
@@ -91,10 +286,9 @@ export default function NilaiGuruSection({ session, activeTa }) {
     if (id && nama && !acc.find(x => x.id === id)) acc.push({ id, nama })
     return acc
   }, [])
-  const uniqueClassesForMapel = [...new Set([
-    ...waliKelas,
-    ...mapelRaw.filter(m => m.mata_pelajaran_id === selectedMapelId).map(m => m.kelas)
-  ])].sort()
+  const uniqueClassesForMapel = [...new Set(
+    mapelRaw.filter(m => m.mata_pelajaran_id === selectedMapelId).map(m => m.kelas)
+  )].sort()
   const activeTargetKelas = targetKelasList.filter(c => uniqueClassesForMapel.includes(c))
   // Extract unique rombel numbers (7, 8, 9) from class names like "7A", "7B"
   const uniqueRombels = [...new Set(uniqueClassesForMapel.map(c => c.replace(/\D/g, '')))].sort()
@@ -193,6 +387,10 @@ export default function NilaiGuruSection({ session, activeTa }) {
   useEffect(() => {
     if (classKomponen.length > 0 && students.length > 0) fetchNilai()
   }, [classKompIdsStr, studentNisnsStr])
+
+  useEffect(() => {
+    checkForSync()
+  }, [selectedMapelId, selectedSemesterId, activeTabKelas, komponen])
 
   // ─── Fetch Functions ──────────────────────────────────────────────────────
   const fetchConfigAkhir = async () => {
@@ -1679,6 +1877,190 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
 
   return (
     <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-8rem)]">
+      {/* Modal Sync Struktur BAB/TP */}
+      {showSyncModal && syncAvailable && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex-1">
+                <h3 className="font-bold text-slate-800 text-base">Sinkronisasi Struktur BAB & TP</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Bandingkan dan terapkan perubahan dari Guru <span className="font-bold text-slate-700">{syncAvailable.otherGuruName}</span></p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Rombel filter dropdown */}
+                <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Kelas</span>
+                  <select
+                    value={syncFilterRombel}
+                    onChange={(e) => setSyncFilterRombel(e.target.value)}
+                    className="text-xs font-bold text-slate-800 bg-transparent outline-none cursor-pointer pr-1"
+                  >
+                    {syncAvailable.allRombels.map(r => {
+                      const addCount = syncAvailable.diff.added.filter(i => i._rombel === r).length
+                      const modCount = syncAvailable.diff.modified.filter(i => i._rombel === r).length
+                      const delCount = syncAvailable.diff.removed.filter(i => i._rombel === r).length
+                      return (
+                        <option key={r} value={r}>
+                          Tingkat {r} ({addCount + modCount + delCount} perubahan)
+                        </option>
+                      )
+                    })}
+                  </select>
+                </div>
+                <button onClick={() => setShowSyncModal(false)} className="text-slate-400 hover:text-slate-600 p-1 ml-1">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-4 overflow-y-auto space-y-3 bg-slate-50/50">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800 leading-relaxed font-medium">
+                💡 <span className="font-bold text-blue-900">Petunjuk:</span> Menampilkan perbedaan untuk <span className="font-bold">Kelas tingkat {syncFilterRombel}</span>. Perubahan terpilih akan langsung diterapkan ke data Anda. Harap hati-hati dengan <span className="text-rose-600 font-bold">Hapus Data</span> karena akan menghapus nilai siswa.
+              </div>
+
+              {(() => {
+                // Filter items for the selected rombel
+                const filteredAdded = syncAvailable.diff.added
+                  .map((item, origIdx) => ({ item, origIdx }))
+                  .filter(({ item }) => item._rombel === syncFilterRombel)
+                const filteredModified = syncAvailable.diff.modified
+                  .map((item, origIdx) => ({ item, origIdx }))
+                  .filter(({ item }) => item._rombel === syncFilterRombel)
+                const filteredRemoved = syncAvailable.diff.removed
+                  .map((item, origIdx) => ({ item, origIdx }))
+                  .filter(({ item }) => item._rombel === syncFilterRombel)
+
+                if (filteredAdded.length === 0 && filteredModified.length === 0 && filteredRemoved.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-400 text-sm font-medium">
+                      Tidak ada perbedaan untuk Kelas tingkat {syncFilterRombel}
+                    </div>
+                  )
+                }
+
+                // Collect all BABs in order
+                const allBabs = [...new Set([
+                  ...filteredAdded.map(({ item }) => item.bab_nama || 'Lainnya'),
+                  ...filteredModified.map(({ item }) => item.other.bab_nama || 'Lainnya'),
+                  ...filteredRemoved.map(({ item }) => item.bab_nama || 'Lainnya'),
+                ])]
+
+                return (
+                  <div className="space-y-4">
+                    {allBabs.map(bab => {
+                      const babAdded = filteredAdded.filter(({ item }) => (item.bab_nama || 'Lainnya') === bab)
+                      const babModified = filteredModified.filter(({ item }) => (item.other.bab_nama || 'Lainnya') === bab)
+                      const babRemoved = filteredRemoved.filter(({ item }) => (item.bab_nama || 'Lainnya') === bab)
+
+                      return (
+                        <div key={bab} className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                          {/* BAB header */}
+                          <div className="bg-slate-800 px-4 py-2.5 flex items-center gap-2">
+                            <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.75 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                            <span className="text-xs font-bold text-white">BAB: {bab}</span>
+                            <div className="ml-auto flex gap-1.5">
+                              {babAdded.length > 0 && <span className="text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-bold">+{babAdded.length}</span>}
+                              {babModified.length > 0 && <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold">~{babModified.length}</span>}
+                              {babRemoved.length > 0 && <span className="text-[9px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-bold">-{babRemoved.length}</span>}
+                            </div>
+                          </div>
+
+                          {/* Items */}
+                          <div className="divide-y divide-slate-100">
+                            {babAdded.map(({ item, origIdx }) => (
+                              <label key={`add_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-emerald-50/30 transition-all cursor-pointer">
+                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
+                                  checked={syncSelections[`add_${origIdx}`] !== false}
+                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`add_${origIdx}`]: e.target.checked })}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Tambah Baru</span>
+                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.nama}</span>
+                                  </div>
+                                  {item.deskripsi && <p className="text-[10px] text-slate-400 italic mt-0.5 truncate">Desc: {item.deskripsi}</p>}
+                                  <div className="flex gap-2 mt-1 text-[9px] text-slate-400 font-bold">
+                                    <span>Bobot: {item.bobot}</span><span>•</span>
+                                    <span>{item.metode_hitung === 'rata_rata' ? 'Rata-rata' : 'Bobot Manual'}</span>
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                            {babModified.map(({ item, origIdx }) => (
+                              <label key={`mod_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-blue-50/30 transition-all cursor-pointer">
+                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                                  checked={syncSelections[`mod_${origIdx}`] !== false}
+                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`mod_${origIdx}`]: e.target.checked })}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Perbarui</span>
+                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.other.nama}</span>
+                                  </div>
+                                  <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px] border-t border-slate-100 pt-1.5">
+                                    <div className="text-slate-400 font-medium">
+                                      <span className="font-bold text-slate-500">Anda:</span> Bobot {item.mine.bobot}
+                                      {item.mine.deskripsi && <span className="italic truncate block">"{item.mine.deskripsi}"</span>}
+                                    </div>
+                                    <div className="text-indigo-700 font-medium">
+                                      <span className="font-bold text-indigo-800">Baru:</span> Bobot {item.other.bobot}
+                                      {item.other.deskripsi && <span className="italic truncate block">"{item.other.deskripsi}"</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                            {babRemoved.map(({ item, origIdx }) => (
+                              <label key={`del_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-rose-50/30 transition-all cursor-pointer">
+                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-rose-600 focus:ring-rose-500 shrink-0"
+                                  checked={syncSelections[`del_${origIdx}`] !== false}
+                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`del_${origIdx}`]: e.target.checked })}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[9px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Hapus</span>
+                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.nama}</span>
+                                  </div>
+                                  <p className="text-[10px] text-rose-500 mt-0.5 font-medium">⚠️ Menghapus komponen + semua nilai siswa terkait</p>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
+              <button 
+                type="button" 
+                onClick={() => setShowSyncModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50"
+              >
+                Batal
+              </button>
+              <button 
+                type="button"
+                disabled={syncProcessing}
+                onClick={handleExecuteSync}
+                className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+              >
+                {syncProcessing ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : null}
+                Terapkan Perubahan Terpilih
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Modal Config Akhir */}
       {showConfigAkhirModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-xl p-4">
@@ -1866,10 +2248,6 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 Bobot Akhir
               </button>
-              <button onClick={() => setShowKelolaSemester(true)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl transition-colors shadow-sm">
-                <IconPencil /> Kelola Semester
-              </button>
               <button onClick={() => {
                 setNewBabTargetKelas(activeTabKelas ? [activeTabKelas] : [])
                 setShowAddBab(true)
@@ -1900,6 +2278,31 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
             </button>
           </div>
         </div>
+
+        {/* Sync Available Banner */}
+        {syncAvailable && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm shrink-0 animate-pulse-slow">
+            <div className="flex items-center gap-2.5 text-amber-800">
+              <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <p className="text-xs font-bold text-amber-900">Perbedaan Struktur BAB/TP Terdeteksi</p>
+                <p className="text-[10px] text-amber-700 font-medium">Struktur materi Anda berbeda dengan Guru {syncAvailable.otherGuruName} yang juga mengajar {mapelRaw.find(m => m.mata_pelajaran_id === selectedMapelId)?.mata_pelajaran?.nama || 'Mapel sejenis'} di tingkat Kelas {activeTabKelas.replace(/\D/g, '')}.</p>
+              </div>
+            </div>
+            <button onClick={() => {
+              const initSels = {}
+              syncAvailable.diff.added.forEach((_, idx) => { initSels[`add_${idx}`] = true })
+              syncAvailable.diff.modified.forEach((_, idx) => { initSels[`mod_${idx}`] = true })
+              syncAvailable.diff.removed.forEach((_, idx) => { initSels[`del_${idx}`] = true })
+              setSyncSelections(initSels)
+              setShowSyncModal(true)
+            }} className="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all shrink-0 w-fit self-end sm:self-auto">
+              Bandingkan & Sinkronkan
+            </button>
+          </div>
+        )}
         
         {/* Upload Progress/Result Messages */}
         {uploadProgress && (
@@ -2192,8 +2595,9 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                     <div className="bg-slate-50 border-r border-indigo-100 px-4 flex items-center justify-center text-slate-500 font-bold text-sm shrink-0">
                       {(() => {
                         if (!newBabRombel) return 'Bab ?:'
+                        const isAutoGenerated = (n) => ['PSTS','PSAS','PSAT'].some(k => n?.toUpperCase().includes(k))
                         const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))
-                        const uniqueBabs = [...new Set(classBabs.filter(k => k.bab_nama?.toLowerCase().startsWith('bab')).map(k => k.bab_nama))]
+                        const uniqueBabs = [...new Set(classBabs.filter(k => k.bab_nama?.toLowerCase().startsWith('bab') && !isAutoGenerated(k.bab_nama)).map(k => k.bab_nama))]
                         return `Bab ${uniqueBabs.length + 1}:`
                       })()}
                     </div>
@@ -2219,7 +2623,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
               </div>
             </div>
 
-            {/* KANAN: Daftar BAB */}
+            {/* KANAN: Daftar BAB + Setting Semester */}
             <div className="w-full md:w-2/5 flex flex-col bg-slate-50 relative">
               <button onClick={() => { setShowAddBab(false); setNewBabNama('') }} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -2229,29 +2633,26 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   {newBabRombel ? `Daftar BAB Kelas ${newBabRombel}` : 'Daftar BAB'}
                 </h3>
               </div>
-              <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+              <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
                 {!newBabRombel ? (
                   <div className="h-full flex items-center justify-center text-slate-400 text-sm italic">
                     Pilih kelas untuk melihat daftar BAB.
                   </div>
                 ) : (() => {
+                  const isAutoGenerated = (n) => ['PSTS','PSAS','PSAT'].some(k => n?.toUpperCase().includes(k))
                   const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === newBabRombel))
-                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
+                  const uniqueBabs = [...new Set(classBabs.filter(k => !isAutoGenerated(k.bab_nama)).map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
                     const isPstsA = a.toUpperCase().includes('PSTS');
                     const isPstsB = b.toUpperCase().includes('PSTS');
                     const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
                     const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
-                
                     if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
                     if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
                     if (isPsasA && !isPsasB) return 1;
                     if (isPsasB && !isPsasA) return -1;
-                    
                     const matchA = a.match(/\d+/);
                     const matchB = b.match(/\d+/);
-                    if (matchA && matchB) {
-                      return parseInt(matchA[0]) - parseInt(matchB[0]);
-                    }
+                    if (matchA && matchB) return parseInt(matchA[0]) - parseInt(matchB[0]);
                     return a.localeCompare(b);
                   });
                   
@@ -2265,125 +2666,35 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                   
                   return (
                     <div className="flex flex-col gap-2">
-                      {uniqueBabs.map((bab, idx) => (
-                        <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-sm font-bold text-slate-700 flex items-center justify-between gap-3 animate-fade-in hover:border-indigo-200 hover:shadow-md transition-all group">
-                          <span>{bab}</span>
-                          <button onClick={() => handleDeleteBab(bab)} className="p-1.5 opacity-0 group-hover:opacity-100 text-rose-500 hover:bg-rose-100 hover:text-rose-700 rounded-lg transition-all" title={`Hapus ${bab}`}>
-                            <IconTrash />
-                          </button>
-                        </div>
-                      ))}
+                      {uniqueBabs.map((bab, idx) => {
+                        const babSemesterId = komponen.find(k => k.bab_nama === bab)?.semester_id
+                        return (
+                          <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-2 animate-fade-in hover:border-indigo-200 hover:shadow-md transition-all group">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-bold text-slate-700 flex-1 leading-tight">{bab}</span>
+                              <button onClick={() => handleDeleteBab(bab)} className="p-1.5 opacity-0 group-hover:opacity-100 text-rose-500 hover:bg-rose-100 hover:text-rose-700 rounded-lg transition-all shrink-0" title={`Hapus ${bab}`}>
+                                <IconTrash />
+                              </button>
+                            </div>
+                            <select
+                              value={babSemesterId || ''}
+                              onChange={async (e) => {
+                                const newSemId = e.target.value
+                                const ids = komponen.filter(k => k.bab_nama === bab).map(k => k.id)
+                                await supabase.from('nilai_komponen').update({ semester_id: newSemId }).in('id', ids)
+                                fetchKomponen()
+                              }}
+                              className={`w-full px-3 py-1.5 border rounded-lg text-[11px] font-bold outline-none focus:border-indigo-500 cursor-pointer ${
+                                !babSemesterId ? 'text-rose-600 border-rose-300 bg-rose-50' : 'text-indigo-700 border-slate-200 bg-slate-50'
+                              }`}
+                            >
+                              <option value="" disabled hidden>— Pilih Semester —</option>
+                              {semesters.map(s => <option key={s.id} value={s.id} className="text-slate-700">Semester {s.nomor}</option>)}
+                            </select>
+                          </div>
+                        )
+                      })}
                     </div>
-                  )
-                })()}
-              </div>
-            </div>
-            
-          </div>
-        </div>
-      , document.body)}
-      
-      {showKelolaSemester && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xl animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-slide-up border border-slate-100 flex flex-col md:flex-row max-h-[90vh]">
-            
-            {/* KIRI: Pilih Rombel */}
-            <div className="w-full md:w-2/5 flex flex-col border-r border-slate-100 bg-white">
-              <div className="px-6 py-5 border-b border-slate-100 flex items-center bg-white">
-                <h3 className="font-bold text-slate-800 text-lg">Kelola Materi Semester</h3>
-              </div>
-              <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6 flex-1 bg-white">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-3 uppercase tracking-wide">Pilih Rombel (Tingkat Kelas)</label>
-                  <div className="flex flex-wrap gap-2">
-                    {uniqueRombels.filter(Boolean).map(r => {
-                      const isSelected = kelolaSemesterRombel === r
-                      return (
-                        <button key={r} onClick={() => setKelolaSemesterRombel(r)}
-                          className={`px-6 py-2.5 rounded-xl text-sm font-bold border transition-all ${isSelected ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-300'}`}>
-                          Kelas {r}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* KANAN: Daftar BAB & Set Semester */}
-            <div className="w-full md:w-3/5 flex flex-col bg-slate-50 relative">
-              <button onClick={() => setShowKelolaSemester(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors bg-white border border-slate-200 rounded-lg p-1 shadow-sm z-20">
-                <IconClose />
-              </button>
-              <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between pr-14 bg-slate-50">
-                <h3 className="font-bold text-slate-700 text-sm">
-                  {kelolaSemesterRombel ? `Daftar BAB Kelas ${kelolaSemesterRombel}` : 'Daftar BAB'}
-                </h3>
-              </div>
-              <div className="p-0 overflow-y-auto custom-scrollbar flex-1 relative bg-white">
-                {!kelolaSemesterRombel ? (
-                  <div className="h-full flex items-center justify-center text-slate-400 text-sm italic p-6">
-                    Pilih kelas untuk mengelola materi semester.
-                  </div>
-                ) : (() => {
-                  const classBabs = komponen.filter(k => k.target_kelas && k.target_kelas.some(c => c.replace(/\D/g, '') === kelolaSemesterRombel))
-                  const uniqueBabs = [...new Set(classBabs.map(k => k.bab_nama || 'Lainnya'))].sort((a,b) => {
-                    const isPstsA = a.toUpperCase().includes('PSTS');
-                    const isPstsB = b.toUpperCase().includes('PSTS');
-                    const isPsasA = a.toUpperCase().includes('PSAS') || a.toUpperCase().includes('PSAT');
-                    const isPsasB = b.toUpperCase().includes('PSAS') || b.toUpperCase().includes('PSAT');
-                    if (isPstsA && !isPstsB) return isPsasB ? -1 : 1;
-                    if (isPstsB && !isPstsA) return isPsasA ? 1 : -1;
-                    if (isPsasA && !isPsasB) return 1;
-                    if (isPsasB && !isPsasA) return -1;
-                    const matchA = a.match(/\d+/);
-                    const matchB = b.match(/\d+/);
-                    if (matchA && matchB) return parseInt(matchA[0]) - parseInt(matchB[0]);
-                    return a.localeCompare(b);
-                  })
-                  
-                  if (uniqueBabs.length === 0) {
-                    return (
-                      <div className="h-full flex items-center justify-center text-slate-400 text-sm italic p-6">
-                        Belum ada BAB untuk Kelas {kelolaSemesterRombel}.
-                      </div>
-                    )
-                  }
-                  
-                  return (
-                    <table key={kelolaSemesterRombel} className="w-full text-left text-sm border-collapse animate-fade-in">
-                      <thead className="bg-slate-100 text-slate-500 font-bold sticky top-0 shadow-sm z-10">
-                        <tr>
-                          <th className="px-5 py-3 border-b border-slate-200">Nama BAB</th>
-                          <th className="px-5 py-3 w-40 text-right border-b border-slate-200">Semester</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {uniqueBabs.map(bab => {
-                          const babSemester = komponen.find(k => k.bab_nama === bab)?.semester_id
-                          return (
-                            <tr key={bab} className="hover:bg-slate-50">
-                              <td className="px-5 py-4 font-bold text-slate-700 leading-tight">{bab}</td>
-                              <td className="px-5 py-4">
-                                <select 
-                                  value={babSemester || ''} 
-                                  onChange={async (e) => {
-                                    const newSemId = e.target.value
-                                    const ids = komponen.filter(k => k.bab_nama === bab).map(k => k.id)
-                                    await supabase.from('nilai_komponen').update({ semester_id: newSemId }).in('id', ids)
-                                    fetchKomponen()
-                                  }}
-                                  className={`px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-500 w-full min-w-[140px] cursor-pointer ${!babSemester ? 'text-rose-600 border-rose-300 bg-rose-50' : 'text-indigo-700'}`}
-                                >
-                                  <option value="" disabled hidden>PILIH SEMESTER</option>
-                                  {semesters.map(s => <option key={s.id} value={s.id} className="text-slate-700">Semester {s.nomor}</option>)}
-                                </select>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
                   )
                 })()}
               </div>
@@ -2414,12 +2725,11 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                 <div className="sm:w-1/3">
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Metode Hitung</label>
                   <select 
-                    value={manualBobotPending ? 'bobot_manual' : (komponen.find(k => k.bab_nama === selectedBabToManage)?.metode_hitung || 'rata_rata')} 
+                    value={manualBobotPending ? 'bobot_manual' : (komponen.find(k => k.bab_nama === selectedBabToManage)?.metode_hitung === 'bobot_manual' ? 'bobot_manual' : 'rata_rata')} 
                     onChange={e => handleUpdateMetode(selectedBabToManage, e.target.value)}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="rata_rata">Rata-rata</option>
-                    <option value="bobot_sama">Bobot Sama</option>
+                    <option value="rata_rata">Rata-rata / Bobot sama</option>
                     <option value="bobot_manual">Atur Bobot Manual</option>
                   </select>
                 </div>

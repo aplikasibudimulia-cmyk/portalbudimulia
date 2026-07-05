@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Portal-SKL</string>
+    <string name="title_activity_main">Portal-SKL</string>
+    <string name="package_name">com.budimulia.portal.skl</string>
+    <string name="custom_url_scheme">com.budimulia.portal.skl</string>
+</resources>

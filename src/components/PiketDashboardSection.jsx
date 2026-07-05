@@ -217,6 +217,17 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
           <p className="text-sm text-slate-500 font-medium mt-1">Ringkasan harian dan statistik kehadiran siswa.</p>
         </div>
         <div className="flex items-center gap-3">
+          <a
+            href="/presensi-manual-siswa"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm flex items-center gap-2 shrink-0"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            Presensi Manual Siswa
+          </a>
           <input 
             type="date" 
             value={tanggal}

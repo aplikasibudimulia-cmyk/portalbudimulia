@@ -85,8 +85,8 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           const classStudents = targetKelas ? siswaData.filter(s => s.kelas === targetKelas) : siswaData;
           setPresensiData(prev => {
             const newData = isRealtime ? { ...prev } : {}
-            classStudents.forEach(s => {
-              const rec = presensiDataDB.find(r => r.siswa_nisn === s.nisn)
+             classStudents.forEach(s => {
+              const rec = presensiDataDB.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
               if (rec) {
                 // Saat realtime: QR scan selalu diapply (tidak boleh ditimpa manual)
                 // Jika bukan realtime (reload penuh), atau siswa belum ada di form: selalu set
@@ -121,7 +121,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       setStudentsInClass(classStudents)
       const dataMap = {}
       classStudents.forEach(s => {
-        const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
+        const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
         if (rec) {
           dataMap[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
         }
@@ -131,8 +131,9 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   }
 
   const handleStatusChange = async (nisn, status) => {
-    if (presensiData[nisn]?.metode === 'qr_scan') {
-      alert('Presensi QR Code tidak dapat diubah manual.')
+    const currentMetode = presensiData[nisn]?.metode
+    if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
+      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
       return
     }
 
@@ -176,10 +177,11 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         status,
         waktu: newTime,
         metode: 'manual',
+        tipe: 'masuk',
         diinput_oleh: session.id,
         updated_at: new Date().toISOString()
       }
-      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn' })
+      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn,tipe' })
       if (error) throw error
     } catch (e) {
       console.error(e)
@@ -189,6 +191,12 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   }
 
   const handleTimeChange = async (nisn, time) => {
+    const currentMetode = presensiData[nisn]?.metode
+    if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
+      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
+      return
+    }
+
     setPresensiData(prev => ({
       ...prev,
       [nisn]: { ...prev[nisn], time }
@@ -207,10 +215,11 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         status: pd.status,
         waktu: time,
         metode: 'manual',
+        tipe: 'masuk',
         diinput_oleh: session.id,
         updated_at: new Date().toISOString()
       }
-      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn' })
+      const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn,tipe' })
       if (error) throw error
     } catch (e) {
       console.error(e)
@@ -247,6 +256,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           status,
           waktu: null,
           metode: 'manual',
+          tipe: 'masuk',
           diinput_oleh: session.id,
           updated_at: new Date().toISOString()
         })
@@ -263,7 +273,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           .eq('tanggal', tanggal)
           .in('siswa_nisn', nisnsToDelete)
       } else if (recordsToUpsert.length > 0) {
-        const { error } = await supabase.from('presensi_harian').upsert(recordsToUpsert, { onConflict: 'tanggal,siswa_nisn' })
+        const { error } = await supabase.from('presensi_harian').upsert(recordsToUpsert, { onConflict: 'tanggal,siswa_nisn,tipe' })
         if (error) throw error
       }
     } catch (e) {
@@ -285,6 +295,13 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       .insert({ tanggal, dibuka_oleh: session.id })
     if (!error) {
       setSesiAktif(true)
+      try {
+        await supabase.functions.invoke('presensi-reminder', {
+          body: { action: 'session_started' }
+        })
+      } catch (err) {
+        console.warn('Gagal mengirim notif sesi dimulai:', err)
+      }
     } else {
       alert('Gagal memulai sesi: ' + error.message)
     }
@@ -310,6 +327,52 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       alert('Gagal mengakhiri sesi: ' + error.message)
     }
     setIsSaving(false)
+  }
+
+  const handleBatalkanPresensi = async () => {
+    try {
+      const { data: codeSetting, error: getErr } = await supabase
+        .from('pengaturan_sekolah')
+        .select('setting_value')
+        .eq('setting_key', 'kode_pembatalan_presensi')
+        .maybeSingle()
+
+      if (getErr) throw getErr
+
+      const expectedCode = codeSetting?.setting_value || '123456'
+      
+      const pinInput = window.prompt('Masukkan KODE VERIFIKASI ADMIN untuk membatalkan seluruh presensi hari ini:')
+      if (pinInput === null) return // Batal
+
+      if (pinInput !== expectedCode) {
+        alert('Kode verifikasi salah! Pembatalan ditolak.')
+        return
+      }
+
+      const confirmed = window.confirm('🚨 PERINGATAN: Tindakan ini akan MENGHAPUS PERMANEN seluruh data presensi siswa hari ini. Apakah Anda yakin?')
+      if (!confirmed) return
+
+      setIsSaving(true)
+      
+      // Hapus data presensi harian hari ini
+      const { error: delPresensiErr } = await supabase
+        .from('presensi_harian')
+        .delete()
+        .eq('tanggal', tanggal)
+      
+      if (delPresensiErr) throw delPresensiErr
+
+      // Hapus sesi presensi hari ini jika ada
+      await supabase.from('sesi_presensi').delete().eq('tanggal', tanggal)
+
+      alert('✅ Seluruh data presensi hari ini berhasil dibatalkan dan dihapus bersih!')
+      await fetchDashboardData()
+    } catch (err) {
+      console.error(err)
+      alert('Gagal membatalkan presensi: ' + err.message)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleSaveSettings = async () => {
@@ -458,20 +521,50 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         {selectedKelas ? (
           <div className="flex-1 flex flex-col min-h-0">
             {!sesiAktif ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
-                <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
-                  <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+              presensiHariIni.length > 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
+                  <div className="w-20 h-20 bg-emerald-50 border border-emerald-100 rounded-full flex items-center justify-center mb-6 text-emerald-500 shadow-sm animate-pulse">
+                    <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Hari Ini Telah Selesai</h3>
+                  <p className="text-sm text-slate-500 mb-8 max-w-md">
+                    Seluruh data kehadiran hari ini telah tercatat dan disimpan dengan aman. Anda dapat melanjutkan kembali sesi presensi agar siswa dapat scan QR kembali, atau membatalkan seluruh data presensi hari ini.
+                  </p>
+                  <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <button 
+                      onClick={handleMulaiSesi} 
+                      disabled={isSaving} 
+                      className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      Lanjutkan Presensi Hari Ini
+                    </button>
+                    <button 
+                      onClick={handleBatalkanPresensi} 
+                      disabled={isSaving} 
+                      className="px-6 py-3 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-xl border border-rose-200 hover:border-rose-300 transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      Batalkan Presensi Hari Ini
+                    </button>
+                  </div>
                 </div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Belum Dimulai</h3>
-                <p className="text-sm text-slate-500 mb-8 max-w-sm">Anda harus memulai sesi hari ini terlebih dahulu agar siswa dapat melakukan scan QR, dan Anda dapat menginput presensi.</p>
-                <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                  {isSaving ? (
-                    <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
-                  ) : (
-                    <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Hari Ini</>
-                  )}
-                </button>
-              </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
+                  <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
+                    <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Belum Dimulai</h3>
+                  <p className="text-sm text-slate-500 mb-8 max-w-sm">Anda harus memulai sesi hari ini terlebih dahulu agar siswa dapat melakukan scan QR, dan Anda dapat menginput presensi.</p>
+                  <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                    {isSaving ? (
+                      <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
+                    ) : (
+                      <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Hari Ini</>
+                    )}
+                  </button>
+                </div>
+              )
             ) : (
             <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
               <div className="p-4 sm:p-6 border-b border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -581,7 +674,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                             {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
                               const pd = presensiData[s.nisn]
                               const isActive = pd?.status === opt;
-                              const isLocked = pd?.metode === 'qr_scan'
+                              const isLocked = pd?.metode === 'qr_scan' || pd?.metode === 'manual_piket'
                               const baseColors = {
                                 'H': 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
                                 'T': 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
@@ -614,21 +707,46 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
                                 type="time" 
                                 value={presensiData[s.nisn]?.time || ''}
                                 onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
-                                disabled={presensiData[s.nisn]?.metode === 'qr_scan'}
+                                disabled={presensiData[s.nisn]?.metode === 'qr_scan' || presensiData[s.nisn]?.metode === 'manual_piket'}
                                 className="ml-2 px-2 py-1.5 text-xs border border-slate-200 rounded-2xl bg-slate-50 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24 shrink-0 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                               />
                             )}
-                            {presensiData[s.nisn]?.metode === 'qr_scan' && (
-                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0" title="Discan oleh Siswa (QR Code)">
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                                QR Scan
-                              </div>
-                            )}
-                            {!presensiData[s.nisn] && (
-                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 shrink-0">
-                                Belum Presensi
-                              </div>
-                            )}
+                             {presensiData[s.nisn]?.metode === 'qr_scan' && (
+                               <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0" title="Discan oleh Siswa (QR Code)">
+                                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                                 QR Scan
+                                </div>
+                              )}
+                              {presensiData[s.nisn]?.metode === 'manual_piket' && (
+                               <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100 shrink-0" title="Presensi Mandiri Siswa (Meja Piket)">
+                                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                 Mandiri
+                                </div>
+                              )}
+                              {(() => {
+                                const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
+                                const coords = rec?.keterangan
+                                const isCoords = coords && /^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/.test(coords)
+                                if (isCoords) {
+                                  return (
+                                    <a 
+                                      href={`https://www.google.com/maps?q=${coords}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded transition-colors shrink-0"
+                                      title="Lihat lokasi presensi di Google Maps"
+                                    >
+                                      📍 Lokasi
+                                    </a>
+                                  )
+                                }
+                                return null
+                              })()}
+                              {!presensiData[s.nisn] && (
+                                <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 shrink-0">
+                                  Belum Presensi
+                                </div>
+                              )}
                           </div>
                         </div>
                       </td>
