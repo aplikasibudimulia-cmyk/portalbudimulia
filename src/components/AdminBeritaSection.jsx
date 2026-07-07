@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
 
-export default function AdminBeritaSection() {
+export default function AdminBeritaSection({ readOnly = false }) {
   const [berita, setBerita] = useState([])
   const [loading, setLoading] = useState(true)
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -166,17 +166,19 @@ export default function AdminBeritaSection() {
           <h2 className="text-2xl font-black text-slate-800">Berita Sekolah</h2>
           <p className="text-sm text-slate-500">Kelola artikel, pengumuman, dan berita untuk beranda siswa dan guru.</p>
         </div>
-        <button 
-          onClick={() => {
-            setFormData({ id: null, judul: '', konten: '', gambar_url: '', target_role: ['siswa', 'guru'], target_kelas: [], is_published: false })
-            setFile(null)
-            setIsFormOpen(true)
-          }}
-          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-          Tulis Berita
-        </button>
+        {!readOnly && (
+          <button 
+            onClick={() => {
+              setFormData({ id: null, judul: '', konten: '', gambar_url: '', target_role: ['siswa', 'guru'], target_kelas: [], is_published: false })
+              setFile(null)
+              setIsFormOpen(true)
+            }}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+            Tulis Berita
+          </button>
+        )}
       </div>
 
       {isFormOpen && (
@@ -287,7 +289,7 @@ export default function AdminBeritaSection() {
                   <th className="px-6 py-4">Judul Berita</th>
                   <th className="px-6 py-4">Target</th>
                   <th className="px-6 py-4">Tanggal Buat</th>
-                  <th className="px-6 py-4 text-right">Aksi</th>
+                  {!readOnly && <th className="px-6 py-4 text-right">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -295,8 +297,9 @@ export default function AdminBeritaSection() {
                   <tr key={b.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4">
                       <button 
-                        onClick={() => handleTogglePublish(b.id, b.is_published, b.judul)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${b.is_published ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                        onClick={() => !readOnly && handleTogglePublish(b.id, b.is_published, b.judul)}
+                        disabled={readOnly}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${b.is_published ? 'bg-emerald-500' : 'bg-slate-300'} ${readOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
                       >
                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${b.is_published ? 'translate-x-6' : 'translate-x-1'}`} />
                       </button>
@@ -327,14 +330,16 @@ export default function AdminBeritaSection() {
                     <td className="px-6 py-4 text-slate-500">
                       {new Date(b.created_at).toLocaleDateString('id-ID')}
                     </td>
-                    <td className="px-6 py-4 text-right space-x-2">
-                      <button onClick={() => handleEdit(b)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                      </button>
-                      <button onClick={() => handleDelete(b.id, b.judul)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                      </button>
-                    </td>
+                    {!readOnly && (
+                      <td className="px-6 py-4 text-right space-x-2">
+                        <button onClick={() => handleEdit(b)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                        </button>
+                        <button onClick={() => handleDelete(b.id, b.judul)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

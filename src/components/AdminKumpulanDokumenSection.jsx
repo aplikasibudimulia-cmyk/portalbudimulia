@@ -104,6 +104,26 @@ export default function AdminKumpulanDokumenSection({ kumpulanDokumenList, fetch
     globalUploadManager.startUpload()
     const type = activeUploadDoc
 
+    // Fetch active tahun_ajaran and enrollment codes to map NISNs to enrollment codes
+    let nisnToKodeMap = {}
+    try {
+      const { data: taData } = await supabase.from('tahun_ajaran').select('id').eq('is_active', true).maybeSingle();
+      if (taData?.id) {
+        const { data: enrollments } = await supabase
+          .from('enrollment')
+          .select('kode, nisn')
+          .eq('tahun_ajaran_id', taData.id);
+        
+        enrollments?.forEach(e => {
+          if (e.nisn && e.kode) {
+            nisnToKodeMap[String(e.nisn).trim()] = e.kode;
+          }
+        });
+      }
+    } catch (mapErr) {
+      console.error("Failed to build NISN mapping:", mapErr);
+    }
+
     for (let i = 0; i < filesList.length; i++) {
       if (globalUploadManager.getState().cancelFlag) break
       const file = filesList[i]
@@ -117,6 +137,11 @@ export default function AdminKumpulanDokumenSection({ kumpulanDokumenList, fetch
         kode = baseName.replace(new RegExp(`${type.kode_jenis}$`, 'i'), '').trim()
       }
       kode = kode.replace(/_$/, '')
+
+      // Map NISN to active enrollment code if available
+      if (/^\d{10}$/.test(kode) && nisnToKodeMap[kode]) {
+        kode = nisnToKodeMap[kode];
+      }
 
       const formData = new FormData()
       formData.append('file', file)

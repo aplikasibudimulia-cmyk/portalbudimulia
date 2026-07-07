@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
 
-export default function AdminNotifikasiSection() {
+export default function AdminNotifikasiSection({ readOnly = false }) {
   const [notifikasi, setNotifikasi] = useState([])
   const [loading, setLoading] = useState(true)
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -105,13 +105,15 @@ export default function AdminNotifikasiSection() {
           <h2 className="text-2xl font-black text-slate-800">Notifikasi Siswa</h2>
           <p className="text-sm text-slate-500">Kirim pemberitahuan in-app ke seluruh siswa, kelas tertentu, atau individu.</p>
         </div>
-        <button 
-          onClick={() => setIsFormOpen(true)}
-          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-          Kirim Notifikasi Baru
-        </button>
+        {!readOnly && (
+          <button 
+            onClick={() => setIsFormOpen(true)}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+            Kirim Notifikasi Baru
+          </button>
+        )}
       </div>
 
       {isFormOpen && (
@@ -219,7 +221,7 @@ export default function AdminNotifikasiSection() {
                   <th className="px-6 py-4">Tipe</th>
                   <th className="px-6 py-4 text-center">Dibaca Oleh</th>
                   <th className="px-6 py-4 text-right">Tanggal</th>
-                  <th className="px-6 py-4 text-right">Aksi</th>
+                  {!readOnly && <th className="px-6 py-4 text-right">Aksi</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -251,11 +253,13 @@ export default function AdminNotifikasiSection() {
                       <td className="px-6 py-4 text-slate-500 text-right">
                         {new Date(n.created_at).toLocaleDateString('id-ID')}
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <button onClick={() => handleDelete(n.id, n.judul)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        </button>
-                      </td>
+                      {!readOnly && (
+                        <td className="px-6 py-4 text-right">
+                          <button onClick={() => handleDelete(n.id, n.judul)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}

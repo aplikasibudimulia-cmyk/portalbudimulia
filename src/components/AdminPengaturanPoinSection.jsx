@@ -10,7 +10,7 @@ const getPoinColor = (p, max = 100) => {
   return { bar: 'bg-red-500', badge: 'bg-red-100 text-red-700 border-red-200', label: 'Kritis' }
 }
 
-export default function AdminPengaturanPoinSection({ activeTa }) {
+export default function AdminPengaturanPoinSection({ activeTa, readOnly = false }) {
   const [students, setStudents] = useState([])
   const [studentPoints, setStudentPoints] = useState({})
   const [stages, setStages] = useState([])
@@ -171,12 +171,14 @@ export default function AdminPengaturanPoinSection({ activeTa }) {
             <p className="text-xs text-indigo-600 mt-0.5">Nilai poin awal untuk siswa baru. Berlaku global untuk semua semester.</p>
           </div>
           <div className="flex items-center gap-2">
-            <input type="number" value={defaultPoin} onChange={e => setDefaultPoin(parseInt(e.target.value) || 100)} min={1} max={1000}
-              className="w-24 px-3 py-2 border border-indigo-200 rounded-xl text-sm font-bold text-indigo-700 bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-center" />
-            <button onClick={handleSaveDefault} disabled={savingDefault}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold disabled:opacity-60 transition-all">
-              {savingDefault ? 'Menyimpan...' : 'Simpan'}
-            </button>
+            <input type="number" value={defaultPoin} onChange={e => setDefaultPoin(parseInt(e.target.value) || 100)} min={1} max={1000} disabled={readOnly}
+              className="w-24 px-3 py-2 border border-indigo-200 rounded-xl text-sm font-bold text-indigo-700 bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-center disabled:opacity-75 disabled:cursor-not-allowed" />
+            {!readOnly && (
+              <button onClick={handleSaveDefault} disabled={savingDefault}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold disabled:opacity-60 transition-all">
+                {savingDefault ? 'Menyimpan...' : 'Simpan'}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -209,11 +211,13 @@ export default function AdminPengaturanPoinSection({ activeTa }) {
           <option value="all">Semua Kelas</option>
           {allKelas.map(k => <option key={k} value={k}>{k}</option>)}
         </select>
-        <button onClick={() => setShowResetAll(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold transition-all">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.69"/></svg>
-          Reset Semua
-        </button>
+        {!readOnly && (
+          <button onClick={() => setShowResetAll(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold transition-all">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.69"/></svg>
+            Reset Semua
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -230,7 +234,7 @@ export default function AdminPengaturanPoinSection({ activeTa }) {
                   <th className="px-4 py-2.5 text-left">Kelas</th>
                   <th className="px-4 py-2.5 text-left w-48">Poin</th>
                   <th className="px-4 py-2.5 text-left hidden md:table-cell">Tahap Pembinaan</th>
-                  <th className="px-4 py-2.5 text-center w-20">Aksi</th>
+                  {!readOnly && <th className="px-4 py-2.5 text-center w-20">Aksi</th>}
                 </tr>
               </thead>
               <tbody>
@@ -263,14 +267,16 @@ export default function AdminPengaturanPoinSection({ activeTa }) {
                           <span className="text-xs text-slate-400">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => handleResetPoin(s)} disabled={resettingId === s.nisn}
-                          className="p-1.5 text-slate-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50 text-[10px] font-bold" title="Reset Poin">
-                          {resettingId === s.nisn ? <div className="w-3 h-3 border-2 border-orange-300 border-t-orange-600 rounded-full animate-spin" /> : (
-                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.69"/></svg>
-                          )}
-                        </button>
-                      </td>
+                      {!readOnly && (
+                        <td className="px-4 py-3 text-center">
+                          <button onClick={() => handleResetPoin(s)} disabled={resettingId === s.nisn}
+                            className="p-1.5 text-slate-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50 text-[10px] font-bold" title="Reset Poin">
+                            {resettingId === s.nisn ? <div className="w-3 h-3 border-2 border-orange-300 border-t-orange-600 rounded-full animate-spin" /> : (
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.69"/></svg>
+                            )}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}

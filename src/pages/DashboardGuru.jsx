@@ -17,6 +17,17 @@ import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
 import DenahKehadiranSection from '../components/DenahKehadiranSection'
 import PengumumanResmiSection from '../components/PengumumanResmiSection'
 import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
+import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
+import AdminRoleSection from '../components/AdminRoleSection'
+import AdminActivityLogSection from '../components/AdminActivityLogSection'
+import AdminBeritaSection from '../components/AdminBeritaSection'
+import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
+import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
+import AdminSemesterSection from '../components/AdminSemesterSection'
+import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
+import AdminPersonalisasiSection from '../components/AdminPersonalisasiSection'
+import GuruDokumenSection from '../components/GuruDokumenSection'
+import CollapsibleSection from '../components/CollapsibleSection'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -215,7 +226,9 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   }
 
   const handleToggleReq = async (nisn, reqId) => {
-    const kode = actualKodes[nisn] || nisn; // use the actual database key
+    const student = students.find(s => String(s.nisn) === String(nisn));
+    const defaultKode = student?.kode || nisn;
+    const kode = actualKodes[nisn] || defaultKode;
     const currentReqs = fileReqs[nisn] || {}
     const newStatus = !currentReqs[reqId]
     const updatedReqs = { ...currentReqs, [reqId]: newStatus }
@@ -249,12 +262,13 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
       icon: 'warning',
     })
     if (!confirmed) return
-    const nisns = filteredStudents.map(s => s.nisn).filter(Boolean)
-    if (nisns.length === 0) return
+    const validStudents = filteredStudents.filter(s => s.nisn)
+    if (validStudents.length === 0) return
     setToggling(`mass_req_${reqId}`)
 
-    const upserts = nisns.map(nisn => {
-      const kode = actualKodes[nisn] || nisn;
+    const upserts = validStudents.map(s => {
+      const nisn = String(s.nisn);
+      const kode = actualKodes[nisn] || s.kode || nisn;
       const currentReqs = fileReqs[nisn] || {}
       return {
         kode_siswa: kode,
@@ -276,13 +290,15 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
       }
       setFileReqs(prev => ({ ...prev, ...newReqs }))
     }
-    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kode || 'all', senderId: clientId } }) }
+    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: 'all', senderId: clientId } }) }
     setToggling(null)
   }
 
   const handleToggleFileAccess = async (kodeParam, fileName) => {
     const nisn = kodeParam; // the UI calls this with s.nisn
-    const kode = actualKodes[nisn] || nisn;
+    const student = students.find(s => String(s.nisn) === String(nisn));
+    const defaultKode = student?.kode || nisn;
+    const kode = actualKodes[nisn] || defaultKode;
     const currentStatus = fileAccess[nisn]
     setToggling(nisn)
     const { error } = await supabase.from('berkas_pengumuman')
@@ -300,7 +316,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
         details: `${!currentStatus ? 'Membuka' : 'Menutup'} akses dokumen ${fileName}`
       })
     }
-    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kodeParam || 'all', senderId: clientId } }) }
+    if (broadcastChannelRef.current) { broadcastChannelRef.current.send({ type: 'broadcast', event: 'berkas_updated', payload: { kode_siswa: kode || 'all', senderId: clientId } }) }
     setToggling(null)
   }
 
@@ -603,10 +619,18 @@ export default function DashboardGuru() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
-  const [kepsekMenuOpen, setKepsekMenuOpen] = useState(false)
   const [showCalendarGuru, setShowCalendarGuru] = useState(true)
   const [fitur, setFitur] = useState(new Set())
+  const [fiturAkses, setFiturAkses] = useState({})
   const [loading, setLoading] = useState(true)
+  const [collapsedGroups, setCollapsedGroups] = useState({
+    manajemenPengguna: false,
+    akademikData: false,
+    kehadiranPresensi: false,
+    informasiDokumen: false,
+    sistemPoin: false,
+    analitikLaporan: false
+  })
 
   // Notification States
   const [unreadNotifCount, setUnreadNotifCount] = useState(0)
@@ -665,6 +689,42 @@ export default function DashboardGuru() {
   const [activeTa, setActiveTa] = useState(null)
   const [siswaSearch, setSiswaSearch] = useState('')
 
+  // States for delegated Admin panels
+  const [allStudents, setAllStudents] = useState([])
+  const [allFotos, setAllFotos] = useState([])
+  const [tahunAjarans, setTahunAjarans] = useState([])
+  const [adminDataLoading, setAdminDataLoading] = useState(false)
+  const [newTahunAjaran, setNewTahunAjaran] = useState('')
+  const [tahunAjaranSaving, setTahunAjaranSaving] = useState(false)
+  const [announcement, setAnnouncement] = useState('')
+  const [announcementSaving, setAnnouncementSaving] = useState(false)
+  const [announcementMsg, setAnnouncementMsg] = useState(null)
+  const [kumpulanDokumenList, setKumpulanDokumenList] = useState([])
+
+  const fetchAdminData = async () => {
+    setAdminDataLoading(true)
+    try {
+      const { data: stdData } = await supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
+      if (stdData) setAllStudents(stdData)
+
+      const { data: fotoData } = await supabase.from('foto').select('*, tahun_ajaran:tahun_ajaran_id(nama)')
+      if (fotoData) setAllFotos(fotoData)
+
+      const { data: taData } = await supabase.from('tahun_ajaran').select('*').order('nama', { ascending: false })
+      if (taData) setTahunAjarans(taData)
+
+      const { data: announceData } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'pengumuman_teks').maybeSingle()
+      if (announceData) setAnnouncement(announceData.setting_value ?? '')
+
+      const { data: docData } = await supabase.from('kumpulan_dokumen').select('*').order('created_at', { ascending: false })
+      if (docData) setKumpulanDokumenList(docData)
+    } catch (err) {
+      console.error('Error fetching admin data:', err)
+    } finally {
+      setAdminDataLoading(false)
+    }
+  }
+
   const [currentFont, setCurrentFont] = useState(() => {
     return localStorage.getItem('app_font') || 'jakarta'
   })
@@ -691,7 +751,16 @@ export default function DashboardGuru() {
 
   useEffect(() => {
     if (loading) return
-    const staticMenus = ['dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 'pengaturan_poin', 'dashboard_eksekutif', 'program_sekolah', 'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek']
+    const staticMenus = [
+      'dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 
+      'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 
+      'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
+      'pengaturan_poin', 'dashboard_eksekutif', 'program_sekolah', 
+      'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
+      // Delegated Admin Menus
+      'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 
+      'presensi_qr', 'konfigurasi'
+    ]
     if (!staticMenus.includes(activeMenu)) {
       const exists = menuTypes.find(t => t.id === activeMenu)
       if (!exists) {
@@ -728,6 +797,12 @@ export default function DashboardGuru() {
     if (rawSession) {
       const parsed = JSON.parse(rawSession)
       fetchData(parsed)
+
+      // Fetch full admin resources on-demand when entering an Admin module
+      const adminMenus = ['manajemen_akun', 'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 'konfigurasi']
+      if (adminMenus.includes(activeMenu)) {
+        fetchAdminData()
+      }
     }
   }, [activeMenu])
 
@@ -778,12 +853,20 @@ export default function DashboardGuru() {
 
     // 1. Fetch features
     let currentFitur = new Set()
+    let currentFiturAkses = {}
     const roleIds = activeSession.roles.map(r => r.id)
     if (roleIds.length > 0) {
-      const { data } = await supabase.from('role_fitur').select('fitur').in('role_id', roleIds)
+      const { data } = await supabase.from('role_fitur').select('fitur, akses_level').in('role_id', roleIds)
       if (data) {
-        currentFitur = new Set(data.map(d => d.fitur))
+        data.forEach(d => {
+          currentFitur.add(d.fitur)
+          const level = d.akses_level || 'edit'
+          if (level === 'edit' || !currentFiturAkses[d.fitur]) {
+            currentFiturAkses[d.fitur] = level
+          }
+        })
         setFitur(currentFitur)
+        setFiturAkses(currentFiturAkses)
       }
     }
 
@@ -796,10 +879,14 @@ export default function DashboardGuru() {
     const allMapelAssignments = activeSession.guru_mapel_raw || []
 
     // Revoke 'kelola_pengumuman' and 'lihat_dokumen' feature if the teacher has NO wali classes at all
-    if (allWaliAssignments.length === 0) {
+    // BUT do not revoke if they have admin/kurikulum privileges (like kelola_akun_pengguna)
+    if (allWaliAssignments.length === 0 && !currentFitur.has('kelola_akun_pengguna')) {
       currentFitur.delete('kelola_pengumuman')
       currentFitur.delete('lihat_dokumen')
       setFitur(new Set(currentFitur)) // Update state with the revoked feature
+      delete currentFiturAkses['kelola_pengumuman']
+      delete currentFiturAkses['lihat_dokumen']
+      setFiturAkses({ ...currentFiturAkses })
     }
 
     const allAssignedClasses = Array.from(new Set([
@@ -994,202 +1081,285 @@ export default function DashboardGuru() {
 
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+          {/* Beranda */}
           <button onClick={() => { setActiveMenu('dashboard'); setSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}>
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
             <IconDashboard /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
           </button>
 
-          {/* Kalender Akademik */}
-          {showCalendarGuru && (
-            <button onClick={() => { setActiveMenu('program_sekolah'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              {!sidebarCollapsed && <span className="animate-fade-in truncate">Kalender Akademik</span>}
-            </button>
-          )}
-
-          {/* Collapsible Group: Kepala Sekolah */}
-          <div 
-            onClick={() => !sidebarCollapsed && setKepsekMenuOpen(!kepsekMenuOpen)}
-            className={`pt-4 pb-2 px-3 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}
-          >
-            {!sidebarCollapsed ? (
-              <>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">KEPALA SEKOLAH</p>
-                <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${kepsekMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                </svg>
-              </>
-            ) : (
-              <div className="w-full border-t border-slate-100 my-2" />
-            )}
-          </div>
-
-          {(kepsekMenuOpen || sidebarCollapsed) && (
-            <div className="space-y-1">
-              <button onClick={() => { setActiveMenu('dashboard_eksekutif'); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'dashboard_eksekutif' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Eksekutif</span>}
-              </button>
-
-              <button onClick={() => { setActiveMenu('program_sekolah'); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Program Sekolah</span>}
-              </button>
-
-              <button onClick={() => { setActiveMenu('denah_kehadiran'); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Denah Kehadiran</span>}
-              </button>
-
-              <button onClick={() => { setActiveMenu('rekap_poin'); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'rekap_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
-              </button>
-
-              <button onClick={() => { setActiveMenu('pengumuman_resmi_kepsek'); setSidebarOpen(false); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'pengumuman_resmi_kepsek' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengumuman Resmi</span>}
-              </button>
-            </div>
-          )}
-
-          {(fitur.has('lihat_data_siswa') || fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman') || fitur.has('kelola_presensi_sekolah')) && (
+          {/* Group: MANAJEMEN PENGGUNA (Delegated Admin) */}
+          {(fitur.has('kelola_akun_pengguna') || fitur.has('lihat_log_aktivitas')) && (
             <>
-              {!sidebarCollapsed && (
-                <div className="pt-4 pb-2 px-3 animate-fade-in">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">AKADEMIK</p>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, manajemenPengguna: !prev.manajemenPengguna }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">MANAJEMEN PENGGUNA</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.manajemenPengguna ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.manajemenPengguna || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('kelola_akun_pengguna') && (
+                    <button title="Manajemen Akun" onClick={() => { setActiveMenu('manajemen_akun'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_akun' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Akun</span>}
+                    </button>
+                  )}
+                  {fitur.has('lihat_log_aktivitas') && (
+                    <button title="Log Aktivitas" onClick={() => { setActiveMenu('log_aktivitas'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
+                    </button>
+                  )}
                 </div>
               )}
+            </>
+          )}
 
-              {fitur.has('lihat_data_siswa') && (
-                <>
-                  {session.kelas?.length > 0 && (
-                    <button onClick={() => { setActiveMenu('siswa_wali'); setSidebarOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'siswa_wali' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                        }`}>
+          {/* Group: AKADEMIK & DATA SISWA */}
+          {(fitur.has('lihat_data_siswa') || fitur.has('input_nilai') || showCalendarGuru || fitur.has('kelola_kalender_akademik') || fitur.has('akses_denah_kehadiran')) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, akademikData: !prev.akademikData }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">AKADEMIK & DATA SISWA</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.akademikData ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.akademikData || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('lihat_data_siswa') && session.kelas?.length > 0 && (
+                    <button title="Siswa Wali Kelas" onClick={() => { setActiveMenu('siswa_wali'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'siswa_wali' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                       <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Wali Kelas</span>}
                     </button>
                   )}
-                  {session.guru_mapel_raw?.length > 0 && (
-                    <>
-                      <button onClick={() => { setActiveMenu('siswa_mapel'); setSidebarOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'siswa_mapel' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                          }`}>
-                        <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Mapel</span>}
-                      </button>
-                      <button onClick={() => { setActiveMenu('input_nilai'); setSidebarOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'input_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                          }`}>
-                        <IconNilai /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Input Nilai</span>}
-                      </button>
-                    </>
+                  {fitur.has('lihat_data_siswa') && session.guru_mapel_raw?.length > 0 && (
+                    <button title="Siswa Mata Pelajaran" onClick={() => { setActiveMenu('siswa_mapel'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'siswa_mapel' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Mapel</span>}
+                    </button>
                   )}
-                </>
-              )}
-
-              {fitur.has('kelola_presensi_sekolah') && (
-                <>
-
-                  <button onClick={() => { setActiveMenu('data_presensi_siswa'); setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'data_presensi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                      }`}>
-                    <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Data Presensi Siswa</span>}
-                  </button>
-                </>
-              )}
-
-              {(fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman')) && menuTypes.map(t => (
-                <button key={t.id} onClick={() => { setActiveMenu(t.id); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <IconFile />
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
-                </button>
-              ))}
-            </>
-          )}
-
-          {(fitur.has('lihat_tata_tertib') || fitur.has('lihat_katalog_poin') || fitur.has('lihat_tahap_pembinaan') || fitur.has('catat_poin') || fitur.has('kelola_poin_siswa')) && (
-            <>
-              {!sidebarCollapsed && (
-                <div className="pt-4 pb-2 px-3 animate-fade-in">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">SISTEM POIN</p>
+                  {fitur.has('input_nilai') && session.guru_mapel_raw?.length > 0 && (
+                    <button title="Input Nilai Siswa" onClick={() => { setActiveMenu('input_nilai'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'input_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <IconNilai /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Input Nilai</span>}
+                    </button>
+                  )}
+                  {(showCalendarGuru || fitur.has('kelola_kalender_akademik')) && (
+                    <button title="Kalender Akademik" onClick={() => { setActiveMenu('program_sekolah'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Program Sekolah</span>}
+                    </button>
+                  )}
+                  {fitur.has('akses_denah_kehadiran') && (
+                    <button title="Denah Kehadiran" onClick={() => { setActiveMenu('denah_kehadiran'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Denah Kehadiran</span>}
+                    </button>
+                  )}
                 </div>
               )}
+            </>
+          )}
 
-              {fitur.has('lihat_tata_tertib') && (
-                <button onClick={() => { setActiveMenu('tata_tertib'); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'tata_tertib' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Tata Tertib</span>}
-                </button>
-              )}
-
-              {fitur.has('lihat_katalog_poin') && (
-                <button onClick={() => { setActiveMenu('katalog_poin'); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'katalog_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Katalog Poin</span>}
-                </button>
-              )}
-
-              {fitur.has('lihat_tahap_pembinaan') && (
-                <button onClick={() => { setActiveMenu('tahap_pembinaan'); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'tahap_pembinaan' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Tahap Pembinaan</span>}
-                </button>
-              )}
-
-              {fitur.has('catat_poin') && (
-                <button onClick={() => { setActiveMenu('catat_poin'); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'catat_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Catat Poin</span>}
-                </button>
-              )}
-
-              {fitur.has('kelola_poin_siswa') && (
-                <button onClick={() => { setActiveMenu('pengaturan_poin'); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'pengaturan_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}>
-                  <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Poin</span>}
-                </button>
+          {/* Group: KEHADIRAN & PRESENSI */}
+          {(fitur.has('kelola_presensi_sekolah') || fitur.has('akses_presensi_qr')) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, kehadiranPresensi: !prev.kehadiranPresensi }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">KEHADIRAN & PRESENSI</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.kehadiranPresensi ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.kehadiranPresensi || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('kelola_presensi_sekolah') && (
+                    <button title="Data Presensi Siswa" onClick={() => { setActiveMenu('data_presensi_siswa'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'data_presensi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Data Presensi Siswa</span>}
+                    </button>
+                  )}
+                  {fitur.has('akses_presensi_qr') && (
+                    <button title="Presensi QR Code" onClick={() => { setActiveMenu('presensi_qr'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'presensi_qr' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi QR Code</span>}
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}
 
-          {!sidebarCollapsed && (
-            <div className="pt-4 pb-2 px-3 animate-fade-in">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">PENGATURAN</p>
-            </div>
+          {/* Group: INFORMASI & DOKUMEN */}
+          {(fitur.has('kelola_berita_sekolah') || fitur.has('kirim_notifikasi_siswa') || fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman') || fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, informasiDokumen: !prev.informasiDokumen }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">INFORMASI & DOKUMEN</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.informasiDokumen ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.informasiDokumen || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('kelola_berita_sekolah') && (
+                    <button title="Berita Sekolah" onClick={() => { setActiveMenu('berita_sekolah'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'berita_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2 15h10"/><path d="M2 18h10"/><path d="M2 12h10"/></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Berita Sekolah</span>}
+                    </button>
+                  )}
+                  {fitur.has('kirim_notifikasi_siswa') && (
+                    <button title="Notifikasi Siswa" onClick={() => { setActiveMenu('notifikasi'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'notifikasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi Siswa</span>}
+                    </button>
+                  )}
+                  {(fitur.has('lihat_dokumen') || fitur.has('kelola_pengumuman')) && menuTypes.map(t => (
+                    <button key={t.id} onClick={() => { setActiveMenu(t.id); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <IconFile />
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
+                    </button>
+                  ))}
+                  {(fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
+                    <button title="Dokumen Guru" onClick={() => { setActiveMenu('dokumen_guru'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dokumen_guru' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <IconFile />
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Dokumen Guru</span>}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
           )}
+
+          {/* Group: SISTEM POIN & KESISWAAN */}
+          {(fitur.has('lihat_tata_tertib') || fitur.has('lihat_katalog_poin') || fitur.has('lihat_tahap_pembinaan') || fitur.has('catat_poin') || fitur.has('kelola_poin_siswa') || fitur.has('akses_rekap_poin')) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, sistemPoin: !prev.sistemPoin }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">SISTEM POIN & KESISWAAN</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.sistemPoin ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.sistemPoin || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('lihat_tata_tertib') && (
+                    <button title="Tata Tertib Sekolah" onClick={() => { setActiveMenu('tata_tertib'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tata_tertib' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Tata Tertib</span>}
+                    </button>
+                  )}
+                  {fitur.has('lihat_katalog_poin') && (
+                    <button title="Katalog Poin" onClick={() => { setActiveMenu('katalog_poin'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'katalog_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Katalog Poin</span>}
+                    </button>
+                  )}
+                  {fitur.has('lihat_tahap_pembinaan') && (
+                    <button title="Tahap Pembinaan Siswa" onClick={() => { setActiveMenu('tahap_pembinaan'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tahap_pembinaan' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Tahap Pembinaan</span>}
+                    </button>
+                  )}
+                  {fitur.has('catat_poin') && (
+                    <button title="Catat Poin Siswa" onClick={() => { setActiveMenu('catat_poin'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'catat_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Catat Poin</span>}
+                    </button>
+                  )}
+                  {fitur.has('kelola_poin_siswa') && (
+                    <button title="Pengaturan Poin" onClick={() => { setActiveMenu('pengaturan_poin'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengaturan_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Poin</span>}
+                    </button>
+                  )}
+                  {fitur.has('akses_rekap_poin') && (
+                    <button title="Rekap & Analitik Poin" onClick={() => { setActiveMenu('rekap_poin'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'rekap_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Group: ANALITIK & LAPORAN */}
+          {(fitur.has('akses_dashboard_eksekutif') || fitur.has('akses_pengumuman_resmi_kepsek')) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, analitikLaporan: !prev.analitikLaporan }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">ANALITIK & LAPORAN</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.analitikLaporan ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.analitikLaporan || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  {fitur.has('akses_dashboard_eksekutif') && (
+                    <button title="Dashboard Eksekutif" onClick={() => { setActiveMenu('dashboard_eksekutif'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dashboard_eksekutif' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Eksekutif</span>}
+                    </button>
+                  )}
+                  {fitur.has('akses_pengumuman_resmi_kepsek') && (
+                    <button title="Pengumuman Resmi" onClick={() => { setActiveMenu('pengumuman_resmi_kepsek'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengumuman_resmi_kepsek' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengumuman Resmi</span>}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Standalone: Profile & Ubah Sandi */}
+          <div className="w-full border-t border-slate-100 my-2" />
           <button onClick={() => { setActiveMenu('profil'); setSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'profil' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}>
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'profil' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
             <IconUser /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Profil Saya</span>}
           </button>
           <button onClick={() => { setActiveMenu('password'); setSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeMenu === 'password' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}>
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'password' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
             <IconKey /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Ubah Sandi</span>}
           </button>
         </nav>
 
         <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-2">
+          {fitur.has('kelola_role_akses') && (
+            <button title="Manajemen Role & Akses" onClick={() => { setActiveMenu('manajemen_role'); setSidebarOpen(false); }}
+              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_role' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><rect x="7" y="7" width="3" height="3"></rect><rect x="14" y="7" width="3" height="3"></rect><rect x="7" y="14" width="3" height="3"></rect><rect x="14" y="14" width="3" height="3"></rect></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Role</span>}
+            </button>
+          )}
+          {fitur.has('kelola_konfigurasi_sistem') && (
+            <button title="Pengaturan Sistem" onClick={() => { setActiveMenu('konfigurasi'); setSidebarOpen(false); }}
+              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konfigurasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+              <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Sistem</span>}
+            </button>
+          )}
+
           <button onClick={cycleFont}
             className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
             <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
@@ -1219,7 +1389,7 @@ export default function DashboardGuru() {
               title="Notifikasi"
             >
               <svg 
-                className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-[12deg]" 
+                className="w-6 h-6 transition-transform duration-300 group-hover:rotate-[12deg]" 
                 fill="none" 
                 viewBox="0 0 24 24" 
                 stroke="currentColor" 
@@ -1398,7 +1568,7 @@ export default function DashboardGuru() {
               </div>
             )}
 
-            {activeMenu === 'data_presensi_siswa' && (
+            {activeMenu === 'data_presensi_siswa' && fitur.has('kelola_presensi_sekolah') && (
               <DataPresensiSiswaSection session={session} activeTa={activeTa} />
             )}
 
@@ -1500,23 +1670,23 @@ export default function DashboardGuru() {
             )}
 
             {activeMenu === 'tata_tertib' && fitur.has('lihat_tata_tertib') && (
-              <AdminTataTertibSection readOnly={true} />
+              <AdminTataTertibSection readOnly={fiturAkses['lihat_tata_tertib'] === 'read'} />
             )}
 
             {activeMenu === 'katalog_poin' && fitur.has('lihat_katalog_poin') && (
-              <AdminKatalogPoinSection readOnly={true} />
+              <AdminKatalogPoinSection readOnly={fiturAkses['lihat_katalog_poin'] === 'read'} />
             )}
 
             {activeMenu === 'tahap_pembinaan' && fitur.has('lihat_tahap_pembinaan') && (
-              <AdminTahapPembinaanSection readOnly={true} />
+              <AdminTahapPembinaanSection readOnly={fiturAkses['lihat_tahap_pembinaan'] === 'read'} />
             )}
 
             {activeMenu === 'catat_poin' && fitur.has('catat_poin') && (
-              <AdminCatatPoinSection session={session} activeTa={activeTa} />
+              <AdminCatatPoinSection session={session} activeTa={activeTa} readOnly={fiturAkses['catat_poin'] === 'read'} />
             )}
 
             {activeMenu === 'pengaturan_poin' && fitur.has('kelola_poin_siswa') && (
-              <AdminPengaturanPoinSection activeTa={activeTa} />
+              <AdminPengaturanPoinSection activeTa={activeTa} readOnly={fiturAkses['kelola_poin_siswa'] === 'read'} />
             )}
 
 
@@ -1550,28 +1720,37 @@ export default function DashboardGuru() {
               <PiketDashboardSection session={session} activeTa={activeTa} />
             )}
 
-            {activeMenu === 'input_nilai' && session.guru_mapel_raw?.length > 0 && (
+            {activeMenu === 'input_nilai' && fitur.has('input_nilai') && session.guru_mapel_raw?.length > 0 && (
               <NilaiGuruSection session={session} activeTa={activeTa} />
             )}
 
-            {activeMenu === 'program_sekolah' && (
-              <ProgramSekolahSection session={session} activeTa={activeTa} />
+            {activeMenu === 'program_sekolah' && (showCalendarGuru || fitur.has('kelola_kalender_akademik')) && (
+              <ProgramSekolahSection session={session} activeTa={activeTa} isAdmin={fiturAkses['kelola_kalender_akademik'] === 'edit'} />
             )}
 
-            {activeMenu === 'rekap_poin' && (
+            {activeMenu === 'rekap_poin' && fitur.has('akses_rekap_poin') && (
               <RekapPoinSiswaSection session={session} activeTa={activeTa} />
             )}
 
-            {activeMenu === 'denah_kehadiran' && (
+            {activeMenu === 'denah_kehadiran' && fitur.has('akses_denah_kehadiran') && (
               <DenahKehadiranSection session={session} activeTa={activeTa} isAdmin={false} />
             )}
 
-            {activeMenu === 'pengumuman_resmi_kepsek' && (
+            {activeMenu === 'pengumuman_resmi_kepsek' && fitur.has('akses_pengumuman_resmi_kepsek') && (
               <PengumumanResmiSection session={session} activeTa={activeTa} />
             )}
 
-            {activeMenu === 'dashboard_eksekutif' && (
+            {activeMenu === 'dashboard_eksekutif' && fitur.has('akses_dashboard_eksekutif') && (
               <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
+            )}
+
+            {activeMenu === 'dokumen_guru' && (fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
+              <GuruDokumenSection 
+                session={session} 
+                activeTa={activeTa} 
+                fitur={fitur} 
+                readOnly={fiturAkses['upload_dokumen_guru'] === 'read'} 
+              />
             )}
 
             {activeMenu === 'password' && (
@@ -1619,6 +1798,115 @@ export default function DashboardGuru() {
                     </button>
                   </div>
                 </form>
+              </div>
+            )}
+
+            {activeMenu === 'manajemen_akun' && fitur.has('kelola_akun_pengguna') && (
+              <AdminManajemenAkunSection
+                students={allStudents}
+                allFotos={allFotos}
+                activeTa={activeTa}
+                tahunAjarans={tahunAjarans}
+                onRefresh={fetchAdminData}
+              />
+            )}
+
+            {activeMenu === 'manajemen_role' && fitur.has('kelola_role_akses') && (
+              <AdminRoleSection />
+            )}
+
+            {activeMenu === 'log_aktivitas' && fitur.has('lihat_log_aktivitas') && (
+              <AdminActivityLogSection />
+            )}
+
+            {activeMenu === 'berita_sekolah' && fitur.has('kelola_berita_sekolah') && (
+              <AdminBeritaSection session={session} readOnly={fiturAkses['kelola_berita_sekolah'] === 'read'} />
+            )}
+
+            {activeMenu === 'notifikasi' && fitur.has('kirim_notifikasi_siswa') && (
+              <AdminNotifikasiSection session={session} readOnly={fiturAkses['kirim_notifikasi_siswa'] === 'read'} />
+            )}
+
+            {activeMenu === 'presensi_qr' && fitur.has('akses_presensi_qr') && (
+              <AdminPresensiConfigSection />
+            )}
+
+            {activeMenu === 'konfigurasi' && fitur.has('kelola_konfigurasi_sistem') && (
+              <div className="animate-slide-up">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">Pengaturan Sistem</h2>
+                    <p className="text-slate-500 text-sm mt-1">Konfigurasi data siswa dan informasi pengumuman</p>
+                  </div>
+                </div>
+
+                <CollapsibleSection title="Manajemen Tahun Ajaran" defaultOpen={true}>
+                  <div className="flex gap-2 mb-4">
+                    <input type="text" value={newTahunAjaran} onChange={e => setNewTahunAjaran(e.target.value)} 
+                      placeholder="Contoh: 2025/2026" className="flex-1 px-3 py-2 border rounded-lg text-sm" />
+                    <button onClick={async () => {
+                      setTahunAjaranSaving(true)
+                      const { error } = await supabase.from('tahun_ajaran').insert({ nama: newTahunAjaran })
+                      setTahunAjaranSaving(false)
+                      if (error) alert('Gagal: ' + error.message)
+                      else { setNewTahunAjaran(''); fetchAdminData(); }
+                    }} disabled={!newTahunAjaran || tahunAjaranSaving}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+                      Tambah
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {tahunAjarans.map(ta => (
+                      <div key={ta.id} className="flex items-center justify-between p-3 border rounded-lg bg-slate-50">
+                        <div>
+                          <span className="font-medium text-sm text-slate-800">{ta.nama}</span>
+                          {ta.is_aktif && <span className="ml-2 text-xs px-2 py-0.5 bg-green-100 text-green-700 font-bold rounded-full">Aktif</span>}
+                        </div>
+                        {!ta.is_aktif && (
+                          <button onClick={async () => {
+                            await supabase.from('tahun_ajaran').update({ is_aktif: false }).neq('id', ta.id)
+                            const { error } = await supabase.from('tahun_ajaran').update({ is_aktif: true }).eq('id', ta.id)
+                            if (error) alert('Gagal: ' + error.message)
+                            else fetchAdminData()
+                          }} className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Aktifkan</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleSection>
+
+                <div className="mt-6">
+                  <AdminSemesterSection />
+                </div>
+
+                <div className="mt-6">
+                  <CollapsibleSection title="Konfigurasi Pengumuman Teks" defaultOpen={false}>
+                    <textarea rows="4" value={announcement} onChange={e => setAnnouncement(e.target.value)}
+                      placeholder="Masukkan pengumuman running text untuk dashboard siswa..." className="w-full p-3 border rounded-lg text-sm mb-4"></textarea>
+                    <button onClick={async () => {
+                      setAnnouncementSaving(true); setAnnouncementMsg(null)
+                      const { error } = await supabase.from('pengaturan_sekolah').upsert({ setting_key: 'pengumuman_teks', setting_value: announcement }, { onConflict: 'setting_key' })
+                      setAnnouncementSaving(false)
+                      if (error) setAnnouncementMsg({ type: 'error', text: 'Gagal menyimpan: ' + error.message })
+                      else setAnnouncementMsg({ type: 'success', text: 'Pengumuman teks berhasil disimpan!' })
+                    }} disabled={announcementSaving}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+                      {announcementSaving ? 'Menyimpan...' : 'Simpan Pengumuman'}
+                    </button>
+                    {announcementMsg && (
+                      <p className={`text-xs mt-2 ${announcementMsg.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>{announcementMsg.text}</p>
+                    )}
+                  </CollapsibleSection>
+                </div>
+
+                <div className="mt-6">
+                  <AdminBerandaConfigSection />
+                </div>
+
+                <div className="mt-6">
+                  <AdminPersonalisasiSection />
+                </div>
               </div>
             )}
 
