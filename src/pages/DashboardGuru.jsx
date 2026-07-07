@@ -757,6 +757,7 @@ export default function DashboardGuru() {
       'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
       'pengaturan_poin', 'dashboard_eksekutif', 'program_sekolah', 
       'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
+      'dokumen_guru',
       // Delegated Admin Menus
       'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 
       'presensi_qr', 'konfigurasi'
