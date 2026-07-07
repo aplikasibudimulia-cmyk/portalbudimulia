@@ -28,6 +28,7 @@ import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
 import DenahKehadiranSection from '../components/DenahKehadiranSection'
 import PengumumanResmiSection from '../components/PengumumanResmiSection'
+import GuruDokumenSection from '../components/GuruDokumenSection'
 import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
@@ -2549,6 +2550,10 @@ function Admin() {
                   {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
                 </button>
               ))}
+              <button title="Dokumen Guru" onClick={() => handleMenuNavigation('dokumen_guru')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dokumen_guru' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <IconFile /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Dokumen Guru</span>}
+              </button>
             </div>
           )}
 
@@ -2711,6 +2716,15 @@ function Admin() {
 
           {activeMenu === 'dashboard_eksekutif' && (
             <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
+          )}
+
+          {activeMenu === 'dokumen_guru' && (
+            <GuruDokumenSection 
+              session={session} 
+              activeTa={activeTa} 
+              fitur={new Set(['kelola_dokumen_guru'])} 
+              readOnly={false} 
+            />
           )}
 
           {activeMenu === 'tata_tertib' && (
