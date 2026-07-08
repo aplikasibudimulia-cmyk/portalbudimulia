@@ -602,6 +602,99 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
       )}
     </div>
   )
+
+}
+
+const CalendarWidget = ({ programs, onDateSelect }) => {
+  const [currentDate, setCurrentDate] = useState(new Date())
+  const [activeDate, setActiveDate] = useState(new Date())
+
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+
+  const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+
+  // Dapatkan hari pertama dari bulan ini (0 = Minggu, 1 = Senin, dst)
+  const firstDayIndex = new Date(year, month, 1).getDay()
+  // Dapatkan jumlah hari di bulan ini
+  const totalDays = new Date(year, month + 1, 0).getDate()
+
+  const daysArray = []
+  // Isi hari kosong untuk menyelaraskan hari pertama
+  for (let i = 0; i < firstDayIndex; i++) {
+    daysArray.push(null)
+  }
+  // Isi tanggal 1 sampai totalDays
+  for (let i = 1; i <= totalDays; i++) {
+    daysArray.push(new Date(year, month, i))
+  }
+
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(year, month - 1, 1))
+  }
+
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(year, month + 1, 1))
+  }
+
+  const isSameDay = (d1, d2) => {
+    if (!d1 || !d2) return false
+    return d1.getDate() === d2.getDate() && d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()
+  }
+
+  return (
+    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-sm font-bold text-slate-800">{monthNames[month]} {year}</h4>
+        <div className="flex gap-1">
+          <button onClick={handlePrevMonth} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          </button>
+          <button onClick={handleNextMonth} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+        <div className="text-rose-500">Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {daysArray.map((date, idx) => {
+          if (!date) return <div key={`empty-${idx}`} />
+          
+          const hasEvent = programs.some(p => {
+            const pDate = new Date(p.tanggal_mulai)
+            return pDate.getDate() === date.getDate() && pDate.getMonth() === date.getMonth() && pDate.getFullYear() === date.getFullYear()
+          })
+
+          const isSelected = isSameDay(date, activeDate)
+          const isToday = isSameDay(date, new Date())
+
+          return (
+            <button
+              key={`day-${date.getDate()}`}
+              onClick={() => {
+                setActiveDate(date)
+                onDateSelect(date)
+              }}
+              className={`relative aspect-square flex flex-col items-center justify-center rounded-xl text-xs font-bold transition-all ${
+                isSelected 
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' 
+                  : isToday 
+                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' 
+                    : 'text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <span>{date.getDate()}</span>
+              {hasEvent && !isSelected && (
+                <span className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export default function DashboardGuru() {
@@ -688,6 +781,13 @@ export default function DashboardGuru() {
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [activeTa, setActiveTa] = useState(null)
   const [siswaSearch, setSiswaSearch] = useState('')
+
+  // Dashboard Guru Extra States
+  const [jadwalHariIni, setJadwalHariIni] = useState([])
+  const [waliKehadiran, setWaliKehadiran] = useState(null)
+  const [programBulanIni, setProgramBulanIni] = useState([])
+  const [selectedDate, setSelectedDate] = useState(new Date())
+  const [selectedDateEvents, setSelectedDateEvents] = useState([])
 
   // States for delegated Admin panels
   const [allStudents, setAllStudents] = useState([])
@@ -914,6 +1014,76 @@ export default function DashboardGuru() {
 
       const { data: fotoData } = await supabase.from('foto').select('*')
       if (fotoData) setFotos(fotoData)
+
+      // A. Fetch Jadwal Mengajar Hari Ini
+      const hariIni = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][new Date().getDay()]
+      try {
+        const { data: jData } = await supabase
+          .from('jadwal_pelajaran')
+          .select('*, mata_pelajaran(nama)')
+          .eq('guru_id', userData.id)
+          .eq('hari', hariIni)
+          .eq('tahun_ajaran_id', activeTaData?.id)
+          .order('jam_ke')
+        setJadwalHariIni(jData || [])
+      } catch (err) {
+        console.warn("Tabel jadwal_pelajaran belum dibuat atau belum dimigrasi:", err)
+        setJadwalHariIni([])
+      }
+
+      // B. Fetch Kehadiran Kelas Perwalian (Jika Wali Kelas)
+      const activeWali = activeSession.kelas?.find(k => activeTaData && k.tahun_ajaran_id === activeTaData.id)
+      if (activeWali) {
+        const todayStr = new Date().toISOString().split('T')[0]
+        const { data: presensiData } = await supabase
+          .from('presensi_harian')
+          .select('status')
+          .eq('kelas', activeWali.kelas)
+          .eq('tanggal', todayStr)
+        
+        let hadir = 0, sakit = 0, izin = 0, alpa = 0
+        if (presensiData) {
+          presensiData.forEach(p => {
+            const st = p.status?.toLowerCase()
+            if (st === 'hadir') hadir++
+            else if (st === 'sakit') sakit++
+            else if (st === 'izin') izin++
+            else if (st === 'alpa' || st === 'tanpa keterangan') alpa++
+          })
+        }
+        
+        // Filter total siswa perwalian aktif
+        const totalWaliStudents = siswaData ? siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && s.kelas === activeWali.kelas).length : 0
+        
+        setWaliKehadiran({
+          hadir, sakit, izin, alpa,
+          totalSiswa: totalWaliStudents,
+          sudahPresensi: presensiData ? presensiData.length : 0
+        })
+      } else {
+        setWaliKehadiran(null)
+      }
+
+      // C. Fetch Program Sekolah untuk bulan berjalan
+      try {
+        const firstDay = new Date()
+        firstDay.setDate(1)
+        const lastDay = new Date(firstDay.getFullYear(), firstDay.getMonth() + 1, 0)
+        const { data: progData } = await supabase
+          .from('program_sekolah')
+          .select('*')
+          .gte('tanggal_mulai', firstDay.toISOString().split('T')[0])
+          .lte('tanggal_mulai', lastDay.toISOString().split('T')[0])
+        setProgramBulanIni(progData || [])
+
+        // Set agenda hari ini
+        const todayDateStr = new Date().toISOString().split('T')[0]
+        setSelectedDateEvents((progData || []).filter(p => p.tanggal_mulai === todayDateStr))
+      } catch (err) {
+        console.warn("Error fetching program_sekolah:", err)
+        setProgramBulanIni([])
+        setSelectedDateEvents([])
+      }
     }
 
     // 4. Fetch Jenis Pengumuman (if has permission)
@@ -1441,37 +1611,217 @@ export default function DashboardGuru() {
                       <svg className="absolute right-0 bottom-0 opacity-10 w-64 h-64 -mb-16 -mr-16 transform rotate-12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 22h20L12 2zm0 3.8l7.5 14.2H4.5L12 5.8z" /></svg>
                     </div>
 
-                    {(() => {
-                      const activeWaliClasses = session.kelas?.filter(k => !activeTa || k.tahun_ajaran_id === activeTa.id).map(k => k.kelas) || [];
-
-                      if (activeWaliClasses.length > 0) {
-                        return <PiketDashboardSection session={session} activeTa={activeTa} filterKelas={activeWaliClasses} />;
-                      }
-
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                <IconUsers /> Statistik Kelas Saya
-                              </h3>
-                              <div className="text-3xl font-black text-indigo-600 mb-1">{students.filter(s => activeTa && s.tahun_ajaran_id == activeTa.id).length}</div>
-                              <p className="text-sm text-slate-500">Total siswa aktif di kelas yang Anda ampu</p>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                      {/* Kolom Utama (Kiri & Tengah) */}
+                      <div className="lg:col-span-2 space-y-6">
+                        
+                        {/* 1. Jadwal Mengajar Hari Ini */}
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300 hover:shadow-md">
+                          <div className="flex items-center gap-2.5 pb-4 border-b border-slate-100 mb-4">
+                            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
                             </div>
-                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center items-center text-center">
-                              <p className="text-slate-500 text-sm mb-4">Gunakan menu di sidebar untuk mulai mengelola data akademik siswa atau mengubah profil Anda.</p>
-                              {session.guru_mapel_raw?.length > 0 && (
-                                <button onClick={() => setActiveMenu('siswa_mapel')} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-xl text-sm hover:bg-indigo-100 transition-colors">
-                                  Lihat Siswa Mapel &rarr;
-                                </button>
-                              )}
+                            <div>
+                              <h3 className="font-bold text-slate-800 text-base">Jadwal Mengajar Hari Ini</h3>
+                              <p className="text-xs text-slate-400">Jadwal mengajar aktif Anda pada hari ini</p>
                             </div>
                           </div>
 
-                          <GuruDashboardBerita session={session} />
-                        </>
-                      );
-                    })()}
+                          {jadwalHariIni.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                              <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
+                                <svg className="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
+                              </div>
+                              <p className="text-sm font-semibold text-slate-700">Tidak Ada Jadwal Mengajar</p>
+                              <p className="text-xs text-slate-400 mt-1 max-w-sm">Jadwal mengajar Anda hari ini belum diatur oleh kurikulum. Hubungi kurikulum jika terjadi kekeliruan.</p>
+                            </div>
+                          ) : (
+                            <div className="relative border-l-2 border-indigo-100 pl-4 ml-3 space-y-5 py-2">
+                              {jadwalHariIni.map((j) => (
+                                <div key={j.id} className="relative group">
+                                  {/* Dot Indicator */}
+                                  <div className="absolute -left-[23px] top-1.5 w-3 h-3 rounded-full bg-indigo-500 ring-4 ring-indigo-50 group-hover:scale-125 transition-transform" />
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                      <h4 className="text-sm font-bold text-slate-800 truncate group-hover:text-indigo-600 transition-colors">
+                                        {j.mata_pelajaran?.nama || 'Mata Pelajaran'}
+                                      </h4>
+                                      <p className="text-xs text-slate-400 mt-0.5">
+                                        Jam Ke-{j.jam_ke} • Kelas {j.kelas} {j.keterangan ? `(${j.keterangan})` : ''}
+                                      </p>
+                                    </div>
+                                    <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-xl shrink-0">
+                                      {j.waktu_mulai?.slice(0, 5)} - {j.waktu_selesai?.slice(0, 5)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 2. Widget Kehadiran Harian Kelas Perwalian (Khusus Wali Kelas) */}
+                        {waliKehadiran && (
+                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300 hover:shadow-md">
+                            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                </div>
+                                <div>
+                                  <h3 className="font-bold text-slate-800 text-base">Presensi Kelas Perwalian</h3>
+                                  <p className="text-xs text-slate-400">Status kehadiran siswa hari ini secara real-time</p>
+                                </div>
+                              </div>
+                              <button onClick={() => setActiveMenu('siswa_wali')} className="text-xs font-bold text-indigo-600 hover:text-indigo-700 hover:underline">
+                                Detail Siswa &rarr;
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="bg-emerald-50/50 p-4 rounded-2xl text-center border border-emerald-100/30">
+                                <div className="text-2xl font-black text-emerald-600">{waliKehadiran.hadir}</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Hadir</div>
+                              </div>
+                              <div className="bg-blue-50/50 p-4 rounded-2xl text-center border border-blue-100/30">
+                                <div className="text-2xl font-black text-blue-600">{waliKehadiran.sakit}</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Sakit</div>
+                              </div>
+                              <div className="bg-amber-50/50 p-4 rounded-2xl text-center border border-amber-100/30">
+                                <div className="text-2xl font-black text-amber-600">{waliKehadiran.izin}</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Izin</div>
+                              </div>
+                              <div className="bg-rose-50/50 p-4 rounded-2xl text-center border border-rose-100/30">
+                                <div className="text-2xl font-black text-rose-600">{waliKehadiran.alpa}</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Alpa / Tanpa Ket.</div>
+                              </div>
+                            </div>
+
+                            {/* Progress bar presensi */}
+                            <div className="mt-5">
+                              <div className="flex justify-between text-xs font-semibold text-slate-600 mb-1.5">
+                                <span>Partisipasi Presensi Harian</span>
+                                <span>
+                                  {waliKehadiran.totalSiswa > 0 
+                                    ? Math.round((waliKehadiran.sudahPresensi / waliKehadiran.totalSiswa) * 100) 
+                                    : 0}% ({waliKehadiran.sudahPresensi}/{waliKehadiran.totalSiswa} Siswa)
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex">
+                                <div className="bg-emerald-500 h-full" style={{ width: `${waliKehadiran.totalSiswa > 0 ? (waliKehadiran.hadir / waliKehadiran.totalSiswa) * 100 : 0}%` }} />
+                                <div className="bg-blue-500 h-full" style={{ width: `${waliKehadiran.totalSiswa > 0 ? (waliKehadiran.sakit / waliKehadiran.totalSiswa) * 100 : 0}%` }} />
+                                <div className="bg-amber-500 h-full" style={{ width: `${waliKehadiran.totalSiswa > 0 ? (waliKehadiran.izin / waliKehadiran.totalSiswa) * 100 : 0}%` }} />
+                                <div className="bg-rose-500 h-full" style={{ width: `${waliKehadiran.totalSiswa > 0 ? (waliKehadiran.alpa / waliKehadiran.totalSiswa) * 100 : 0}%` }} />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 3. Berita Sekolah */}
+                        <GuruDashboardBerita session={session} />
+                      </div>
+
+                      {/* Kolom Kanan (Informasi & Navigasi Cepat) */}
+                      <div className="space-y-6">
+                        
+                        {/* A. Quick Actions (List Memanjang) */}
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300 hover:shadow-md">
+                          <h3 className="font-bold text-slate-800 text-sm mb-4 uppercase tracking-wider">Aksi Cepat</h3>
+                          <div className="space-y-2">
+                            {fitur.has('input_nilai') && (
+                              <button 
+                                onClick={() => setActiveMenu('input_nilai')}
+                                className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30 transition-all text-left group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6M9 16h4M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-700">Input Nilai Siswa</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">Kelola nilai akademik siswa kelas ampu</div>
+                                  </div>
+                                </div>
+                                <svg className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                              </button>
+                            )}
+
+                            {(fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
+                              <button 
+                                onClick={() => setActiveMenu('dokumen_guru')}
+                                className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30 transition-all text-left group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-700">Upload Dokumen Guru</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">Upload RPP, Silabus, atau dokumen ajar</div>
+                                  </div>
+                                </div>
+                                <svg className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                              </button>
+                            )}
+
+                            {fitur.has('catat_poin') && (
+                              <button 
+                                onClick={() => setActiveMenu('catat_poin')}
+                                className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30 transition-all text-left group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-700">Catat Poin Siswa</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">Catat poin pelanggaran siswa</div>
+                                  </div>
+                                </div>
+                                <svg className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* B. Kalender Agenda Bulanan */}
+                        <div className="space-y-4">
+                          <CalendarWidget 
+                            programs={programBulanIni} 
+                            onDateSelect={(date) => {
+                              setSelectedDate(date)
+                              const dStr = date.toISOString().split('T')[0]
+                              const activeEvents = programBulanIni.filter(p => p.tanggal_mulai === dStr)
+                              setSelectedDateEvents(activeEvents)
+                            }} 
+                          />
+                          
+                          {/* List Agenda untuk tanggal terpilih */}
+                          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm transition-all">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                              Agenda Kegiatan ({selectedDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long' })})
+                            </h4>
+                            {selectedDateEvents.length === 0 ? (
+                              <p className="text-xs text-slate-400 italic py-2">Tidak ada agenda sekolah pada tanggal ini.</p>
+                            ) : (
+                              <div className="space-y-3">
+                                {selectedDateEvents.map(e => (
+                                  <div key={e.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 animate-fade-in">
+                                    <div className="text-xs font-bold text-slate-800">{e.nama}</div>
+                                    {e.deskripsi && <div className="text-[10px] text-slate-500 mt-1">{e.deskripsi}</div>}
+                                    <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-200/40">
+                                      <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase tracking-wider">{e.status}</span>
+                                      <span className="text-[9px] text-slate-400 font-medium">Visual: {e.visibilitas}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
                 )}
               </>

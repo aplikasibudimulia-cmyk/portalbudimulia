@@ -54,6 +54,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [guruWaliKelas, setGuruWaliKelas] = useState([])
   const [guruBK, setGuruBK] = useState([])
   const [guruMapel, setGuruMapel] = useState([])
+  const [guruKodeTa, setGuruKodeTa] = useState([]) // { tahun_ajaran_id, tahun_ajaran, nomor_kode }
   const [initialFormSnapshot, setInitialFormSnapshot] = useState(null)
   
   const [isEditingWali, setIsEditingWali] = useState(false)
@@ -122,6 +123,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     return arr.map(item => ({
       tahun_ajaran_id: item.tahun_ajaran_id,
       kelas_list: [...(item.kelas_list || [])].sort()
+    })).sort((a, b) => String(a.tahun_ajaran_id).localeCompare(String(b.tahun_ajaran_id)));
+  };
+
+  const _cleanKodeTa = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(item => ({
+      tahun_ajaran_id: item.tahun_ajaran_id,
+      nomor_kode: item.nomor_kode || ''
     })).sort((a, b) => String(a.tahun_ajaran_id).localeCompare(String(b.tahun_ajaran_id)));
   };
 
@@ -210,6 +219,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           `${taNames[gm.tahun_ajaran_id] || gm.tahun_ajaran_id}: ${gm.mapel_list.map(ml => `${mapelNames[ml.mapel_id] || ml.mapel_id}(${ml.kelas_list.join(',')})`).join('; ')}`
         ).join(' | ');
         changes.push({ label: 'Mata Pelajaran', from: fmtMapel(initMapel) || '(tidak ada)', to: fmtMapel(currMapel) || '(tidak ada)' });
+      }
+
+      const currKode = _cleanKodeTa(guruKodeTa);
+      const initKode = _cleanKodeTa(initialFormSnapshot.guruKodeTa || []);
+      if (JSON.stringify(currKode) !== JSON.stringify(initKode)) {
+        const taNames = tahunAjarans?.reduce((acc, ta) => { acc[ta.id] = ta.nama; return acc; }, {}) || {};
+        const fmtKode = (arr) => arr.filter(k => k.nomor_kode).map(k => `${taNames[k.tahun_ajaran_id] || k.tahun_ajaran_id}: ${k.nomor_kode}`).join(' | ');
+        changes.push({ label: 'Kode per TA', from: fmtKode(initKode) || '(belum ada)', to: fmtKode(currKode) || '(belum ada)' });
       }
     }
 
@@ -360,7 +377,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           foto_url: guru.foto_url,
           hasAkun: !!akun,
           akun_id: akun?.id,
-          username: akun?.username || '(Belum punya akun)',
+          username: akun?.username ? (akun.username.includes('@') ? akun.username.split('@')[0] : akun.username) : '(Belum punya akun)',
           password_exists: !!akun?.password,
           status: akun?.status || 'nonaktif',
           rawGuru: guru
@@ -642,6 +659,33 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       const defaultPrimaryMapelId = g?.guru_mapel?.[0]?.mata_pelajaran_id || ''
       setPrimaryMapelId(defaultPrimaryMapelId)
 
+      // Fetch kode guru per tahun ajaran dari tabel guru_kode_ta
+      let kodeTaList = []
+      if (row && row.id) {
+        const { data: kodeTaData } = await supabase
+          .from('guru_kode_ta')
+          .select('tahun_ajaran_id, nomor_kode')
+          .eq('guru_id', row.id)
+        
+        // Gabungkan dengan semua tahun ajaran yang ada (tampilkan semua TA meski belum ada kodenya)
+        kodeTaList = (tahunAjarans || []).map(ta => {
+          const existing = (kodeTaData || []).find(k => k.tahun_ajaran_id === ta.id)
+          return {
+            tahun_ajaran_id: ta.id,
+            tahun_ajaran: ta.nama,
+            nomor_kode: existing?.nomor_kode || ''
+          }
+        }).sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
+      } else {
+        // Guru baru: siapkan baris kosong untuk semua TA
+        kodeTaList = (tahunAjarans || []).map(ta => ({
+          tahun_ajaran_id: ta.id,
+          tahun_ajaran: ta.nama,
+          nomor_kode: ''
+        })).sort((a, b) => (b.tahun_ajaran || '').localeCompare(a.tahun_ajaran || ''))
+      }
+      setGuruKodeTa(kodeTaList)
+
       const formState = {
         isNew: !row,
         row: row,
@@ -670,7 +714,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         studentEnrollments: [],
         guruWaliKelas: JSON.parse(JSON.stringify(waliList)),
         guruBK: JSON.parse(JSON.stringify(bkList)),
-        guruMapel: JSON.parse(JSON.stringify(mapelList))
+        guruMapel: JSON.parse(JSON.stringify(mapelList)),
+        guruKodeTa: JSON.parse(JSON.stringify(kodeTaList))
       })
     }
     setShowBiodataModal(true)
@@ -711,7 +756,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
     setIsProcessing(true)
     setProgressText("Menyimpan data...")
-    
+
     try {
       let f_id = biodataForm.foreign_id
       
@@ -786,16 +831,28 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
         const guruPayload = { 
           kode: biodataForm.kode, 
-          nama_guru: biodataForm.nama,
-          no_hp: formatPhoneNumber(biodataForm.no_hp) || null
+          nama_guru: biodataForm.nama
         }
+        // Sinkronkan user_name di tabel guru dengan username yang diisi admin (tanpa domain)
+        if (biodataForm.username && biodataForm.username !== '(Belum punya akun)') {
+          const cleanName = biodataForm.username.includes('@') 
+            ? biodataForm.username.split('@')[0] 
+            : biodataForm.username
+          guruPayload.user_name = cleanName
+        }
+        // Jika password diisi di form, sinkronkan juga kolom plain-text kode_akses di tabel guru
+        if (biodataForm.password) {
+          guruPayload.kode_akses = biodataForm.password
+        }
+
         if (biodataForm.isNew) {
           const { data, error } = await supabase.from('guru').insert([guruPayload]).select()
           if (error) throw error
           f_id = data[0].id.toString()
           biodataForm.id = data[0].id
         } else {
-          await supabase.from('guru').update(guruPayload).eq('id', biodataForm.id)
+          const { error: guruUpdateErr } = await supabase.from('guru').update(guruPayload).eq('id', biodataForm.id)
+          if (guruUpdateErr) throw new Error('Gagal update data guru: ' + guruUpdateErr.message)
           f_id = biodataForm.id.toString()
         }
 
@@ -809,7 +866,6 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         await supabase.from('guru_kelas').delete().eq('guru_id', biodataForm.id)
         const waliInserts = []
         guruWaliKelas.forEach(wk => {
-          // Pastikan max 1 kelas per TA
           const kelasTerpilih = wk.kelas_list[0]
           if (kelasTerpilih) {
             waliInserts.push({ guru_id: biodataForm.id, kelas: kelasTerpilih, tahun_ajaran_id: wk.tahun_ajaran_id })
@@ -817,7 +873,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         })
         if (waliInserts.length > 0) await supabase.from('guru_kelas').insert(waliInserts)
 
-        // Sync BK (multi kelas diperbolehkan)
+        // Sync BK
         await supabase.from('guru_bk').delete().eq('guru_id', biodataForm.id)
         const bkInserts = []
         guruBK.forEach(bk => {
@@ -827,7 +883,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         })
         if (bkInserts.length > 0) await supabase.from('guru_bk').insert(bkInserts)
 
-        // Sync Mapel across ALL TAs (from guruMapel state)
+        // Sync Mapel across ALL TAs
         await supabase.from('guru_mapel').delete().eq('guru_id', biodataForm.id)
         const mapelInserts = []
         guruMapel.forEach(gm => {
@@ -839,6 +895,20 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           })
         })
         if (mapelInserts.length > 0) await supabase.from('guru_mapel').insert(mapelInserts)
+
+        // Sync Kode Guru per Tahun Ajaran (untuk kebutuhan jadwal pelajaran)
+        const guruId = biodataForm.id
+        const kodeUpserts = guruKodeTa
+          .filter(k => k.nomor_kode && k.nomor_kode.toString().trim() !== '')
+          .map(k => ({
+            guru_id: guruId,
+            tahun_ajaran_id: k.tahun_ajaran_id,
+            nomor_kode: k.nomor_kode.toString().trim()
+          }))
+        await supabase.from('guru_kode_ta').delete().eq('guru_id', guruId)
+        if (kodeUpserts.length > 0) {
+          await supabase.from('guru_kode_ta').insert(kodeUpserts)
+        }
       }
 
       // 2. Save Akun Pengguna
@@ -847,12 +917,22 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         const roleName = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'murid' : activeTab)
         
         if (biodataForm.hasAkun && biodataForm.akun_id) {
-          // Update data akun non-password langsung ke tabel (trigger sinkronisasi otomatis)
-          const { error: updateErr } = await supabase.from('akun_pengguna').update({
-            username: uName,
+          // Strip domain dari username — simpan hanya bagian sebelum @ (misal: ebm.mesrawati)
+          const cleanUsername = uName.includes('@') ? uName.split('@')[0] : uName
+
+          // Panggil RPC untuk sinkronisasi username ke akun_pengguna DAN auth.users sekaligus
+          const { data: updateResult, error: updateErr } = await supabase.rpc('admin_update_username', {
+            p_akun_id: biodataForm.akun_id,
+            p_new_username: cleanUsername
+          })
+          if (updateErr || !updateResult?.ok) {
+            throw new Error('Gagal update username: ' + (updateResult?.msg || updateErr?.message))
+          }
+
+          // Update status akun
+          await supabase.from('akun_pengguna').update({
             status: biodataForm.akun_status
           }).eq('id', biodataForm.akun_id)
-          if (updateErr) throw updateErr
 
           // Jika ada password baru, panggil RPC reset password
           if (biodataForm.password) {
@@ -862,6 +942,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             })
             if (resetErr || !resetResult?.ok) throw new Error(resetResult?.msg || resetErr?.message || "Gagal mereset password")
           }
+
         } else {
           // Buat akun baru via secure RPC admin_create_user
           const pWord = biodataForm.password || '123456'
@@ -1939,13 +2020,18 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                     ) : (
                       <>
                         <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1">Kode Guru *</label>
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Kode Guru (ID Permanen) *</label>
                           <input required value={biodataForm.kode} onChange={e => setBiodataForm({...biodataForm, kode: e.target.value})} placeholder="g02026" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                          <p className="text-[10px] text-slate-400 mt-1">ID permanen guru (tidak berubah setiap tahun ajaran).</p>
                         </div>
+
                         <div className="md:col-span-2 grid grid-cols-2 gap-4">
                           <div className="md:col-span-1">
                             <label className="block text-xs font-medium text-slate-700 mb-1">Nama Lengkap *</label>
-                            <input required value={biodataForm.nama} onChange={e => setBiodataForm({...biodataForm, nama: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                            <input required value={biodataForm.nama} 
+                              onChange={e => setBiodataForm({...biodataForm, nama: e.target.value})} 
+                              className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                            />
                           </div>
                           <div className="md:col-span-1">
                             <label className="block text-xs font-medium text-slate-700 mb-1">No HP / WhatsApp</label>

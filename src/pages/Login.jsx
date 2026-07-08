@@ -164,11 +164,7 @@ function Login() {
       // 1. Autentikasi menggunakan Supabase Auth (Mengamankan Session Client)
       let emailToSignIn = username.trim().toLowerCase()
       if (!emailToSignIn.includes('@')) {
-        if (emailToSignIn.startsWith('ebmortu.')) {
-          emailToSignIn = emailToSignIn + '@ebudimulia.local'
-        } else {
-          emailToSignIn = emailToSignIn + '@gmail.com'
-        }
+        emailToSignIn = emailToSignIn + '@ebudimulia.local'
       }
 
       const { error: authError } = await supabase.auth.signInWithPassword({
