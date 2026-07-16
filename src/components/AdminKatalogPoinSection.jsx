@@ -104,6 +104,32 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
     else fetchData()
   }
 
+  const handleClearCatalog = async () => {
+    const tipeText = activeTab === 'negative' ? 'Negatif' : 'Positif'
+    const count = data.filter(d => d.tipe === activeTab).length
+    if (count === 0) {
+      alert(`Katalog poin ${tipeText.toLowerCase()} sudah kosong.`)
+      return
+    }
+    const confirmed = await requestConfirm({
+      title: `Bersihkan Katalog Poin ${tipeText}?`,
+      message: `Tindakan ini akan menghapus seluruh data katalog poin ${tipeText.toLowerCase()} (${count} item) secara permanen dari database. Apakah Anda yakin?`,
+      confirmLabel: 'Ya, Hapus Semua',
+      confirmColor: 'red',
+      icon: 'danger',
+    })
+    if (!confirmed) return
+    
+    setLoading(true)
+    const { error } = await supabase.from('point_catalog').delete().eq('tipe', activeTab)
+    if (error) {
+      alert('Gagal: ' + error.message)
+      setLoading(false)
+    } else {
+      fetchData()
+    }
+  }
+
   // ─── EXPORT ───────────────────────────────────────────────
   const handleExport = async () => {
     const wb = new ExcelJS.Workbook()
@@ -161,11 +187,17 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
     const valid = importRows.filter(r => r._valid)
     if (valid.length === 0) { alert('Tidak ada data valid.'); return }
     setImportLoading(true)
-    const upserts = valid.map(r => ({ tipe: r.tipe, kategori: r.kategori, kode: r.kode, jenis: r.jenis, keterangan: r.keterangan, poin: r.poin }))
+    const allUpserts = valid.map(r => ({ tipe: r.tipe, kategori: r.kategori, kode: r.kode, jenis: r.jenis, keterangan: r.keterangan, poin: r.poin }))
+    // Deduplicate by kode — keep last occurrence to prevent
+    // "ON CONFLICT DO UPDATE command cannot affect row a second time"
+    const seen = new Map()
+    allUpserts.forEach(row => seen.set(row.kode, row))
+    const upserts = Array.from(seen.values())
+    const skippedDuplicates = allUpserts.length - upserts.length
     const { error } = await supabase.from('point_catalog').upsert(upserts, { onConflict: 'kode' })
     setImportLoading(false)
     if (error) { alert('Gagal import: ' + error.message); return }
-    setImportResult({ success: valid.length, skipped: importRows.length - valid.length })
+    setImportResult({ success: upserts.length, skipped: (importRows.length - valid.length) + skippedDuplicates })
     fetchData()
   }
 
@@ -216,6 +248,12 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
               Import
             </button>
+            {data.filter(d => d.tipe === activeTab).length > 0 && (
+              <button onClick={handleClearCatalog} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition-all shadow-sm">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                Bersihkan
+              </button>
+            )}
             <button onClick={openAdd} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-all shadow-sm">
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Tambah

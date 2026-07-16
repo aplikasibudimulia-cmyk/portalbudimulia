@@ -9,6 +9,8 @@ import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import SiswaPoinSection from '../components/SiswaPoinSection'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
+import SiswaBKKonsultasiSection from '../components/SiswaBKKonsultasiSection'
+import SiswaJadwalSection from '../components/SiswaJadwalSection'
 import { requestNotifPermission, showLocalNotif, subscribeToPushNotification } from '../utils/pushNotif'
 
 function Dashboard() {
@@ -20,6 +22,24 @@ function Dashboard() {
   // Sidebar state for mobile and desktop collapse
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // Default to collapsed as requested
+  const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
+  const [showIosHint, setShowIosHint] = useState(false)
+
+  // Detect iOS (Safari doesn't support requestFullscreen)
+  const isIOS = /ipad|iphone|ipod/i.test(navigator.userAgent) || 
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+  const toggleAppFullScreen = () => {
+    if (isIOS) {
+      setShowIosHint(true)
+      return
+    }
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
   
   const [selectedType, setSelectedType] = useState(null)
   const [pdfUrl, setPdfUrl] = useState(null)
@@ -43,7 +63,15 @@ function Dashboard() {
   const [showFeatureConfig, setShowFeatureConfig] = useState({
     presensi: true,
     nilai: true,
-    poin: true
+    poin: true,
+    poinTotal: true,
+    poinNegatif: true,
+    poinPositif: true,
+    poinLeaderboard: true,
+    poinTataTertib: true,
+    poinKatalog: true,
+    jadwal: true,
+    jadwalSemester: '2'
   })
   const [recentNotifications, setRecentNotifications] = useState([])
   
@@ -56,6 +84,20 @@ function Dashboard() {
   const [currentFont, setCurrentFont] = useState(() => {
     return localStorage.getItem('app_font') || 'jakarta'
   })
+
+  useEffect(() => {
+    const handleFs = () => setIsNativeFullScreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleFs)
+    document.addEventListener('webkitfullscreenchange', handleFs)
+    document.addEventListener('mozfullscreenchange', handleFs)
+    document.addEventListener('MSFullscreenChange', handleFs)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFs)
+      document.removeEventListener('webkitfullscreenchange', handleFs)
+      document.removeEventListener('mozfullscreenchange', handleFs)
+      document.removeEventListener('MSFullscreenChange', handleFs)
+    }
+  }, [])
 
   useEffect(() => {
     document.documentElement.classList.remove('font-ubuntu', 'font-bricolage')
@@ -88,6 +130,9 @@ function Dashboard() {
 
   useEffect(() => {
     const init = async () => {
+      // Pastikan token Supabase diperbarui secara sinkron sebelum query data
+      await supabase.auth.getSession()
+
       const raw = localStorage.getItem('siswa_session')
       if (!raw) {
         navigate('/')
@@ -125,7 +170,20 @@ function Dashboard() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
+        const newShowFeature = { 
+          presensi: true, 
+          nilai: true, 
+          poin: true, 
+          poinTotal: true, 
+          poinNegatif: true, 
+          poinPositif: true, 
+          poinLeaderboard: true, 
+          poinTataTertib: true, 
+          poinKatalog: true, 
+          kalender: true,
+          jadwal: true,
+          jadwalSemester: '2'
+        }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
@@ -137,7 +195,15 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_leaderboard') newShowFeature.poinLeaderboard = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_tata_tertib') newShowFeature.poinTataTertib = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_katalog') newShowFeature.poinKatalog = p.setting_value === 'true'
           if (p.setting_key === 'show_calendar_siswa') newShowFeature.kalender = p.setting_value === 'true'
+          if (p.setting_key === 'show_jadwal_siswa') newShowFeature.jadwal = p.setting_value === 'true'
+          if (p.setting_key === 'jadwal_semester_aktif') newShowFeature.jadwalSemester = p.setting_value || '2'
         })
         setShowProfileConfig(newShowProfile)
         setShowFeatureConfig(newShowFeature)
@@ -351,7 +417,20 @@ function Dashboard() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
+        const newShowFeature = { 
+          presensi: true, 
+          nilai: true, 
+          poin: true, 
+          poinTotal: true, 
+          poinNegatif: true, 
+          poinPositif: true, 
+          poinLeaderboard: true, 
+          poinTataTertib: true, 
+          poinKatalog: true, 
+          kalender: true,
+          jadwal: true,
+          jadwalSemester: '2'
+        }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'tema_warna') document.documentElement.setAttribute('data-theme', p.setting_value)
@@ -363,7 +442,15 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_leaderboard') newShowFeature.poinLeaderboard = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_tata_tertib') newShowFeature.poinTataTertib = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_katalog') newShowFeature.poinKatalog = p.setting_value === 'true'
           if (p.setting_key === 'show_calendar_siswa') newShowFeature.kalender = p.setting_value === 'true'
+          if (p.setting_key === 'show_jadwal_siswa') newShowFeature.jadwal = p.setting_value === 'true'
+          if (p.setting_key === 'jadwal_semester_aktif') newShowFeature.jadwalSemester = p.setting_value || '2'
         })
         setShowProfileConfig(prev => {
           if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile
@@ -495,8 +582,10 @@ function Dashboard() {
     selectedType === 'NILAI' ? 'Laporan Nilai Saya' : 
     selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : 
     selectedType === 'POIN' ? 'Poin Siswa' : 
+    selectedType === 'JADWAL' ? 'Jadwal Pelajaran' :
     selectedType === 'PENGATURAN' ? 'Pengaturan Portal' : 
     selectedType === 'KALENDER' ? 'Kalender Akademik' : 
+    selectedType === 'KONSULTASI_BK' ? 'Konsultasi BK' : 
     selectedType ? selectedType.nama : 
     'Beranda Profil'
 
@@ -645,6 +734,22 @@ function Dashboard() {
                 </button>
               )}
 
+              {/* Jadwal Pelajaran */}
+              {showFeatureConfig.jadwal && (
+                <button 
+                  onClick={() => { setSelectedType('JADWAL'); setSidebarOpen(false) }}
+                  title="Jadwal Pelajaran"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'JADWAL' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'JADWAL' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M3 9h18" />
+                    <path d="M9 21V9" />
+                  </svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
+                </button>
+              )}
+
               {/* Kalender Akademik */}
               {showFeatureConfig.kalender && (
                 <button 
@@ -661,6 +766,18 @@ function Dashboard() {
                   {!sidebarCollapsed && <span className="animate-fade-in truncate">Kalender Akademik</span>}
                 </button>
               )}
+
+              {/* Konsultasi BK */}
+              <button 
+                onClick={() => { setSelectedType('KONSULTASI_BK'); setSidebarOpen(false) }}
+                title="Konsultasi BK"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'KONSULTASI_BK' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'KONSULTASI_BK' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Konsultasi BK</span>}
+              </button>
 
             </div>
           </div>
@@ -724,6 +841,20 @@ function Dashboard() {
               {!sidebarCollapsed && <span className="animate-fade-in">Pengaturan</span>}
             </button>
 
+            {/* App Fullscreen Button */}
+            <button
+              onClick={toggleAppFullScreen}
+              title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh Aplikasi'}
+              className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${isNativeFullScreen ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+            >
+              {isNativeFullScreen ? (
+                <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+              ) : (
+                <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              )}
+              {!sidebarCollapsed && <span className="animate-fade-in">{isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>}
+            </button>
+
            <button onClick={handleLogout}
              title="Keluar"
              className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold text-rose-500 hover:bg-rose-100 hover:text-rose-600 transition-all ${sidebarCollapsed ? 'justify-center aspect-square px-0 bg-red-50' : 'gap-4 bg-red-50'}`}>
@@ -733,8 +864,60 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50">
+      {/* iOS Fullscreen Hint Modal */}
+      {showIosHint && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowIosHint(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              <div>
+                <p className="text-white font-bold text-sm">Cara Layar Penuh di iPhone/iPad</p>
+                <p className="text-indigo-200 text-xs mt-0.5">Safari tidak mendukung fullscreen langsung</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-slate-700 text-sm font-medium">Tambahkan aplikasi ke Home Screen untuk pengalaman layar penuh:</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <p className="text-sm text-slate-600">Tekan tombol <strong>Bagikan</strong> <span className="inline-block bg-slate-100 px-1.5 py-0.5 rounded text-xs">⎙</span> di bagian bawah Safari</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <p className="text-sm text-slate-600">Pilih <strong>"Tambahkan ke Layar Utama"</strong> (Add to Home Screen)</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <p className="text-sm text-slate-600">Buka aplikasi dari <strong>Home Screen</strong> untuk mode layar penuh otomatis</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={() => setShowIosHint(false)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors text-sm">
+                Mengerti
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Fullscreen FAB – always visible on mobile */}
+      <button
+        onClick={toggleAppFullScreen}
+        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+        className={`fixed bottom-5 right-5 z-[100] md:hidden w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-300 border ${
+          isNativeFullScreen
+            ? 'bg-indigo-600 border-indigo-700 text-white'
+            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+        }`}
+      >
+        {isNativeFullScreen ? (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+        )}
+      </button>
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50 dashboard-content-area">
         
         {/* Sticky Orange Notification Banner */}
         {!notifGranted && 'Notification' in window && (
@@ -767,9 +950,28 @@ function Dashboard() {
             ) : selectedType === 'PRESENSI' ? (
               <SiswaPresensiSection studentData={studentData} />
             ) : selectedType === 'POIN' ? (
-              <SiswaPoinSection siswaNisn={studentData?.nisn} activeTa={{ id: studentData?.tahun_ajaran_id }} />
+              <SiswaPoinSection 
+                siswaNisn={studentData?.nisn} 
+                activeTa={{ id: studentData?.tahun_ajaran_id }} 
+                showTabPoinSaya={showFeatureConfig.poinTotal || showFeatureConfig.poinNegatif || showFeatureConfig.poinPositif}
+                showPoinTotal={showFeatureConfig.poinTotal}
+                showPoinNegatif={showFeatureConfig.poinNegatif}
+                showPoinPositif={showFeatureConfig.poinPositif}
+                showTabLeaderboard={showFeatureConfig.poinLeaderboard}
+                showTabTataTertib={showFeatureConfig.poinTataTertib}
+                showTabKatalog={showFeatureConfig.poinKatalog}
+                showPointRecords={showFeatureConfig.detailPoin}
+              />
+            ) : selectedType === 'JADWAL' ? (
+              <SiswaJadwalSection 
+                kelas={studentData?.kelas}
+                activeTa={{ id: studentData?.tahun_ajaran_id }}
+                semester={showFeatureConfig.jadwalSemester}
+              />
             ) : selectedType === 'KALENDER' ? (
               <ProgramSekolahSection session={null} isAdmin={false} activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} />
+            ) : selectedType === 'KONSULTASI_BK' ? (
+              <SiswaBKKonsultasiSection studentData={studentData} />
             ) : selectedType === 'PROFIL' ? (
               <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
             ) : selectedType === 'PENGATURAN' ? (

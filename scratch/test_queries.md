@@ -27,8 +27,7 @@ fetch('https://ngdepacckohoxemlauhd.supabase.co/rest/v1/siswa_permanent?select=*
 ---
 
 ### 2. Mengubah (Edit) Data Siswa Lain secara Anonim
-Perintah ini mensimulasikan siswa yang usil mencoba mengubah nama siswa lain (misal siswa dengan NISN `0131121177` / Chloe Euginia).
-
+Perintah ini mensimulasikan siswa yang usil mencoba mengubah nama siswa lain (misal siswa dengan NISN `0131121177` / Chloe Euginia). 
 ```javascript
 fetch('https://ngdepacckohoxemlauhd.supabase.co/rest/v1/siswa_permanent?nisn=eq.0131121177', {
   method: 'PATCH',

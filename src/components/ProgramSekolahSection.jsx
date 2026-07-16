@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import TagInput from './TagInput'
 import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
+import * as XLSX from 'xlsx'
+
 
 export default function ProgramSekolahSection({ session, isAdmin = false, activeTa }) {
   const [programs, setPrograms] = useState([])
@@ -453,6 +455,277 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
       alert("Gagal menghapus program: " + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const excelInputRef = useRef(null)
+
+  const handleExportExcel = () => {
+    const headers = [
+      'ID Kegiatan',
+      'Nama Program / Kegiatan',
+      'Tanggal Mulai (YYYY-MM-DD)',
+      'Tanggal Selesai (YYYY-MM-DD)',
+      'Kategori',
+      'Lokasi',
+      'Target Peserta',
+      'PIC Guru',
+      'Estimasi Anggaran',
+      'Status',
+      'Visibilitas',
+      'Hari Efektif (YA/TIDAK)',
+      'Deskripsi'
+    ]
+
+    const dataToExport = programs.map(p => {
+      const mainCat = p.categories?.[0]?.category?.nama || ''
+      const locName = p.lokasi?.nama || ''
+      const targetList = p.targets?.map(t => t.target?.nama).filter(Boolean).join(', ') || ''
+      const picList = p.pics?.map(pi => pi.guru?.nama_guru).filter(Boolean).join(', ') || ''
+      
+      return {
+        'ID Kegiatan': p.id,
+        'Nama Program / Kegiatan': p.nama,
+        'Tanggal Mulai (YYYY-MM-DD)': p.tanggal_mulai,
+        'Tanggal Selesai (YYYY-MM-DD)': p.tanggal_selesai,
+        'Kategori': mainCat,
+        'Lokasi': locName,
+        'Target Peserta': targetList,
+        'PIC Guru': picList,
+        'Estimasi Anggaran': p.estimasi_anggaran || 0,
+        'Status': p.status || 'Direncanakan',
+        'Visibilitas': p.visibilitas || 'internal',
+        'Hari Efektif (YA/TIDAK)': p.hari_efektif ? 'YA' : 'TIDAK',
+        'Deskripsi': p.deskripsi || ''
+      }
+    })
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport, { header: headers })
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Program Sekolah')
+    
+    // Auto-fit column widths
+    const maxLens = {}
+    // Initialize maxLens with header lengths to ensure headers are fully visible
+    headers.forEach(h => {
+      maxLens[h] = h.length
+    })
+
+    dataToExport.forEach(row => {
+      Object.keys(row).forEach(key => {
+        const valStr = String(row[key] || '')
+        maxLens[key] = Math.max(maxLens[key] || 10, valStr.length)
+      })
+    })
+    worksheet['!cols'] = Object.keys(maxLens).map(key => ({ wch: maxLens[key] + 2 }))
+
+    XLSX.writeFile(workbook, `Program_Sekolah_${activeTa?.nama?.replace('/', '-') || 'Download'}.xlsx`)
+  }
+
+  const handleImportExcel = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLoading(true)
+
+    try {
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer)
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const data = XLSX.utils.sheet_to_json(ws, { defval: '' })
+
+      if (!data.length) {
+        alert("File Excel kosong!")
+        setLoading(false)
+        return
+      }
+
+      let successCount = 0
+      let errorCount = 0
+
+      // Dapatkan data master untuk pemetaan cepat
+      const { data: latestCats, error: errCats } = await supabase.from('program_sekolah_kategori').select('*')
+      const { data: latestLocs, error: errLocs } = await supabase.from('program_sekolah_lokasi').select('*')
+      const { data: latestTars, error: errTars } = await supabase.from('program_sekolah_target_peserta').select('*')
+      const { data: latestGurus, error: errGurus } = await supabase.from('guru').select('id, nama_guru')
+
+      if (errCats) console.error('Error fetching program_sekolah_kategori:', errCats)
+      if (errLocs) console.error('Error fetching program_sekolah_lokasi:', errLocs)
+      if (errTars) console.error('Error fetching program_sekolah_target_peserta:', errTars)
+      if (errGurus) console.error('Error fetching guru:', errGurus)
+
+      const catMap = new Map(latestCats?.map(c => [c.nama.toLowerCase().trim(), c.id]) || [])
+      const locMap = new Map(latestLocs?.map(l => [l.nama.toLowerCase().trim(), l.id]) || [])
+      const tarMap = new Map(latestTars?.map(t => [t.nama.toLowerCase().trim(), t.id]) || [])
+      const guruMap = new Map(latestGurus?.map(g => [g.nama_guru.toLowerCase().trim(), g.id]) || [])
+
+      for (const row of data) {
+        const nama = String(row['Nama Program / Kegiatan'] || row['nama'] || '').trim()
+        const start = String(row['Tanggal Mulai (YYYY-MM-DD)'] || row['tanggal_mulai'] || '').trim()
+        const end = String(row['Tanggal Selesai (YYYY-MM-DD)'] || row['tanggal_selesai'] || start).trim()
+        
+        if (!nama || !start) {
+          errorCount++
+          continue
+        }
+
+        // 1. Dapatkan/Buat Kategori
+        const catName = String(row['Kategori'] || '').trim()
+        let catId = null
+        if (catName) {
+          const key = catName.toLowerCase()
+          if (catMap.has(key)) {
+            catId = catMap.get(key)
+          } else {
+            const { data: newCat, error: catInsErr } = await supabase.from('program_sekolah_kategori').insert([{ nama: catName }]).select().single()
+            if (newCat) {
+              catId = newCat.id
+              catMap.set(key, catId)
+            } else {
+              // Fallback jika insert conflict/error (misal: RLS atau unique constraint)
+              const { data: existingCat } = await supabase.from('program_sekolah_kategori').select('id').eq('nama', catName).maybeSingle()
+              if (existingCat) {
+                catId = existingCat.id
+                catMap.set(key, catId)
+              } else {
+                console.warn(`Gagal mencocokkan/membuat kategori: "${catName}"`, catInsErr)
+              }
+            }
+          }
+        }
+
+        // 2. Dapatkan/Buat Lokasi
+        const locName = String(row['Lokasi'] || '').trim()
+        let locId = null
+        if (locName) {
+          const key = locName.toLowerCase()
+          if (locMap.has(key)) {
+            locId = locMap.get(key)
+          } else {
+            const { data: newLoc, error: locInsErr } = await supabase.from('program_sekolah_lokasi').insert([{ nama: locName }]).select().single()
+            if (newLoc) {
+              locId = newLoc.id
+              locMap.set(key, locId)
+            } else {
+              // Fallback
+              const { data: existingLoc } = await supabase.from('program_sekolah_lokasi').select('id').eq('nama', locName).maybeSingle()
+              if (existingLoc) {
+                locId = existingLoc.id
+                locMap.set(key, locId)
+              } else {
+                console.warn(`Gagal mencocokkan/membuat lokasi: "${locName}"`, locInsErr)
+              }
+            }
+          }
+        }
+
+        // 3. Persiapkan payload utama
+        const budgetVal = parseFloat(row['Estimasi Anggaran'] || 0)
+        const isEfektif = String(row['Hari Efektif (YA/TIDAK)'] || '').toUpperCase().startsWith('Y') || row['hari_efektif'] === true
+        
+        const payload = {
+          nama,
+          tanggal_mulai: start,
+          tanggal_selesai: end,
+          lokasi_id: locId,
+          estimasi_anggaran: isNaN(budgetVal) ? 0 : budgetVal,
+          status: row['Status'] || 'Direncanakan',
+          visibilitas: row['Visibilitas'] || 'internal',
+          hari_efektif: isEfektif,
+          deskripsi: row['Deskripsi'] || '',
+          created_by: session?.user?.id || null
+        }
+
+        const idKegiatan = row['ID Kegiatan'] || row['id']
+        let progId = null
+
+        // Cek apakah update atau insert baru
+        if (idKegiatan && idKegiatan.length === 36) {
+          const { error: updateErr } = await supabase.from('program_sekolah').update(payload).eq('id', idKegiatan)
+          if (!updateErr) {
+            progId = idKegiatan
+          } else {
+            console.error(`Gagal update program "${nama}":`, updateErr.message)
+          }
+        }
+
+        if (!progId) {
+          const { data: newProg, error: insertErr } = await supabase.from('program_sekolah').insert([payload]).select().single()
+          if (newProg && !insertErr) {
+            progId = newProg.id
+          } else if (insertErr) {
+            console.error(`Gagal insert program "${nama}":`, insertErr.message)
+          }
+        }
+
+        if (progId) {
+          successCount++
+
+          // 4. Kategori Pivot
+          await supabase.from('program_sekolah_kategori_pivot').delete().eq('program_id', progId)
+          if (catId) {
+            await supabase.from('program_sekolah_kategori_pivot').insert([{ program_id: progId, kategori_id: catId }])
+          }
+
+          // 5. Target Peserta Pivot
+          await supabase.from('program_sekolah_target_pivot').delete().eq('program_id', progId)
+          const targetStr = String(row['Target Peserta'] || '')
+          if (targetStr) {
+            const listTars = targetStr.split(',').map(t => t.trim()).filter(Boolean)
+            for (const tName of listTars) {
+              const key = tName.toLowerCase()
+              let tId = null
+              if (tarMap.has(key)) {
+                tId = tarMap.get(key)
+              } else {
+                const { data: newTar, error: tarInsErr } = await supabase.from('program_sekolah_target_peserta').insert([{ nama: tName }]).select().single()
+                if (newTar) {
+                  tId = newTar.id
+                  tarMap.set(key, tId)
+                } else {
+                  // Fallback
+                  const { data: existingTar } = await supabase.from('program_sekolah_target_peserta').select('id').eq('nama', tName).maybeSingle()
+                  if (existingTar) {
+                    tId = existingTar.id
+                    tarMap.set(key, tId)
+                  } else {
+                    console.warn(`Gagal mencocokkan/membuat target peserta: "${tName}"`, tarInsErr)
+                  }
+                }
+              }
+              if (tId) {
+                await supabase.from('program_sekolah_target_pivot').insert([{ program_id: progId, target_id: tId }])
+              }
+            }
+          }
+
+          // 6. PIC Guru Pivot
+          await supabase.from('program_sekolah_pic_pivot').delete().eq('program_id', progId)
+          const picStr = String(row['PIC Guru'] || '')
+          if (picStr) {
+            const listPics = picStr.split(',').map(p => p.trim()).filter(Boolean)
+            const picInserts = []
+            for (const pName of listPics) {
+              const key = pName.toLowerCase()
+              if (guruMap.has(key)) {
+                picInserts.push({ program_id: progId, guru_id: guruMap.get(key) })
+              }
+            }
+            if (picInserts.length > 0) {
+              await supabase.from('program_sekolah_pic_pivot').insert(picInserts)
+            }
+          }
+        } else {
+          errorCount++
+        }
+      }
+
+      alert(`Sinkronisasi Program Selesai!\nBerhasil: ${successCount}\nGagal/Dilewati: ${errorCount}`)
+      await fetchPrograms()
+    } catch (err) {
+      alert("Gagal memproses file Excel: " + err.message)
+    } finally {
+      setLoading(false)
+      if (excelInputRef.current) excelInputRef.current.value = ''
     }
   }
 
@@ -1478,6 +1751,27 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
       {/* Tombol-tombol Admin (Hanya tampil jika hasWriteAccess) */}
       {hasWriteAccess && (
         <div className="flex flex-wrap items-center gap-3">
+          <input 
+            type="file" 
+            ref={excelInputRef} 
+            onChange={handleImportExcel} 
+            accept=".xlsx, .xls" 
+            className="hidden" 
+          />
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100/50 font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 active:scale-95"
+          >
+            📤 Export Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => excelInputRef.current?.click()}
+            className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100/50 font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 active:scale-95"
+          >
+            📥 Import Excel
+          </button>
           <button
             type="button"
             onClick={handleGenerateDummyData}
@@ -1565,6 +1859,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
             const isSelected = selectedCategories.includes(cat.id)
             return (
               <button
+
                 key={cat.id}
                 onClick={() => {
                   if (isSelected) {
@@ -1596,6 +1891,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
           renderSemesterView(activeSemester)
         )}
       </div>
+
 
 
       {/* ==========================================

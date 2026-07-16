@@ -5,7 +5,7 @@ import { logActivity } from '../utils/logger'
 
 // Tipe presensi
 const TIPE = { MASUK: 'masuk', PULANG: 'pulang' }
-const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha' }
+const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 
 export default function PresensiManualSiswa() {
   const navigate = useNavigate()
@@ -112,9 +112,11 @@ export default function PresensiManualSiswa() {
           emailToSignIn = emailToSignIn + '@gmail.com'
         }
       }
+      
+      const authEmail = emailToSignIn.split('@')[0] + '@ebudimulia.local'
 
       const { error: authError } = await supabase.auth.signInWithPassword({
-        email: emailToSignIn,
+        email: authEmail,
         password: password.trim()
       })
 

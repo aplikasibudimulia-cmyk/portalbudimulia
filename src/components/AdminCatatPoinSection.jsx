@@ -24,7 +24,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const [studentPoin, setStudentPoin] = useState(null)
   const [katalogSearch, setKatalogSearch] = useState('')
   const [katalogResults, setKatalogResults] = useState([])
-  const [selectedKatalog, setSelectedKatalog] = useState(null)
+  const [selectedKatalogs, setSelectedKatalogs] = useState([])
   const [poinDiberikan, setPoinDiberikan] = useState('')
   const [keterangan, setKeterangan] = useState('')
   const [saving, setSaving] = useState(false)
@@ -45,6 +45,9 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const [exportDateFrom, setExportDateFrom] = useState(new Date().toISOString().slice(0, 10))
   const [exportDateTo, setExportDateTo] = useState(new Date().toISOString().slice(0, 10))
   const [showExportModal, setShowExportModal] = useState(false)
+
+  // Rekalkulasi Poin
+  const [rekalkulasiLoading, setRekalkulasiLoading] = useState(false)
 
   const studentSearchRef = useRef()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
@@ -141,10 +144,24 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   }, [katalogSearch])
 
   const selectKatalog = (k) => {
-    setSelectedKatalog(k)
-    setKatalogSearch(`[${k.kode}] ${k.jenis}`)
+    if (selectedKatalogs.some(item => item.id === k.id)) {
+      setKatalogSearch('')
+      setKatalogResults([])
+      return
+    }
+    const newKatalogs = [...selectedKatalogs, k]
+    setSelectedKatalogs(newKatalogs)
+    setKatalogSearch('')
     setKatalogResults([])
-    setPoinDiberikan(k.poin.toString())
+    const totalPoin = newKatalogs.reduce((sum, item) => sum + item.poin, 0)
+    setPoinDiberikan(totalPoin.toString())
+  }
+
+  const removeKatalog = (id) => {
+    const newKatalogs = selectedKatalogs.filter(item => item.id !== id)
+    setSelectedKatalogs(newKatalogs)
+    const totalPoin = newKatalogs.reduce((sum, item) => sum + item.poin, 0)
+    setPoinDiberikan(newKatalogs.length > 0 ? totalPoin.toString() : '')
   }
 
   // Determine active stage for a poin value
@@ -163,21 +180,41 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     const poinNum = parseInt(poinDiberikan)
     const petugasName = session?.nama_guru || session?.email || 'Admin'
 
-    // 1. Insert record
-    const { error: recErr } = await supabase.from('point_records').insert([{
-      nisn: selectedStudent.nisn,
-      nama_siswa: selectedStudent.nama_lengkap,
-      kelas: selectedStudent.kelas,
-      tahun_ajaran_id: activeTa.id,
-      semester,
-      catalog_id: selectedKatalog?.id || null,
-      kode_katalog: selectedKatalog?.kode || null,
-      jenis: selectedKatalog?.jenis || keterangan || 'Manual',
-      poin_diberikan: poinNum,
-      keterangan,
-      dicatat_oleh: petugasName,
-      tanggal,
-    }])
+    // 1. Insert records
+    let recordsToInsert = []
+    if (selectedKatalogs.length > 0) {
+      recordsToInsert = selectedKatalogs.map(k => ({
+        nisn: selectedStudent.nisn,
+        nama_siswa: selectedStudent.nama_lengkap,
+        kelas: selectedStudent.kelas,
+        tahun_ajaran_id: activeTa.id,
+        semester,
+        catalog_id: k.id,
+        kode_katalog: k.kode,
+        jenis: k.jenis,
+        poin_diberikan: k.poin,
+        keterangan,
+        dicatat_oleh: petugasName,
+        tanggal,
+      }))
+    } else {
+      recordsToInsert = [{
+        nisn: selectedStudent.nisn,
+        nama_siswa: selectedStudent.nama_lengkap,
+        kelas: selectedStudent.kelas,
+        tahun_ajaran_id: activeTa.id,
+        semester,
+        catalog_id: null,
+        kode_katalog: null,
+        jenis: keterangan || 'Manual',
+        poin_diberikan: poinNum,
+        keterangan,
+        dicatat_oleh: petugasName,
+        tanggal,
+      }]
+    }
+
+    const { error: recErr } = await supabase.from('point_records').insert(recordsToInsert)
     if (recErr) { alert('Gagal menyimpan: ' + recErr.message); setSaving(false); return }
 
     // 2. Upsert student_points — get current then update
@@ -230,7 +267,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     setSelectedStudent(null)
     setStudentSearch('')
     setStudentPoin(null)
-    setSelectedKatalog(null)
+    setSelectedKatalogs([])
     setKatalogSearch('')
     setPoinDiberikan('')
     setKeterangan('')
@@ -291,6 +328,60 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     else fetchRecords()
   }
 
+  const handleRekalkulasiPoin = async () => {
+    if (!activeTa?.id) return
+    const confirmed = await requestConfirm({
+      title: 'Rekalkulasi Ulang Poin?',
+      message: `Semua total poin siswa di semester ${semester} akan dihitung ulang berdasarkan catatan pelanggaran yang masih ada.\nProses ini aman — tidak menghapus data apapun.`,
+      confirmLabel: 'Rekalkulasi', confirmColor: 'indigo', icon: 'info',
+    })
+    if (!confirmed) return
+
+    setRekalkulasiLoading(true)
+    try {
+      // 1. Ambil semua point_records untuk TA & semester ini
+      const { data: allRecords } = await supabase.from('point_records')
+        .select('nisn, poin_diberikan')
+        .eq('tahun_ajaran_id', activeTa.id)
+        .eq('semester', semester)
+
+      // 2. Hitung total pengurangan poin per siswa
+      const poinByNisn = {}
+      ;(allRecords || []).forEach(r => {
+        if (!poinByNisn[r.nisn]) poinByNisn[r.nisn] = 0
+        poinByNisn[r.nisn] += (r.poin_diberikan || 0)
+      })
+
+      // 3. Ambil semua student_points yang ada untuk TA & semester ini
+      const { data: spList } = await supabase.from('student_points')
+        .select('nisn, poin_default')
+        .eq('tahun_ajaran_id', activeTa.id)
+        .eq('semester', semester)
+
+      // 4. Update tiap student_points dengan total yang benar
+      let updatedCount = 0
+      for (const sp of (spList || [])) {
+        const defaultPoin = sp.poin_default ?? 100
+        const totalPenguranganPoin = poinByNisn[sp.nisn] || 0
+        const correctTotalPoin = defaultPoin + totalPenguranganPoin // poin negatif sudah di-handle di sini
+        const { error } = await supabase.from('student_points')
+          .update({ total_poin: correctTotalPoin, updated_at: new Date().toISOString() })
+          .eq('nisn', sp.nisn)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', semester)
+        if (!error) updatedCount++
+      }
+
+
+      setSuccessMsg(`✅ Rekalkulasi selesai. ${updatedCount} data poin siswa telah diperbarui.`)
+      setTimeout(() => setSuccessMsg(''), 5000)
+      fetchRecords()
+    } catch (err) {
+      alert('Gagal rekalkulasi: ' + err.message)
+    }
+    setRekalkulasiLoading(false)
+  }
+
   return (
     <>
       <div className="animate-slide-up space-y-6">
@@ -314,6 +405,20 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
               </button>
             ))}
           </div>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleRekalkulasiPoin}
+              disabled={rekalkulasiLoading}
+              title="Hitung ulang total poin semua siswa berdasarkan catatan yang masih ada"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-xs font-semibold hover:bg-amber-100 transition-colors disabled:opacity-50"
+            >
+              <svg className={`w-3.5 h-3.5 ${rekalkulasiLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {rekalkulasiLoading ? 'Menghitung...' : 'Rekalkulasi Poin'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -376,7 +481,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
               <label className="block text-xs font-semibold text-slate-700 mb-1">Pilih dari Katalog Poin</label>
               <div className="relative">
                 <input type="text" value={katalogSearch}
-                  onChange={e => { setKatalogSearch(e.target.value); if (!e.target.value) { setSelectedKatalog(null); setPoinDiberikan('') } }}
+                  onChange={e => setKatalogSearch(e.target.value)}
                   placeholder="Cari kode atau jenis pelanggaran/prestasi..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                 {katalogResults.length > 0 && (
                   <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
@@ -391,6 +496,18 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
                   </div>
                 )}
               </div>
+              {selectedKatalogs.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {selectedKatalogs.map(k => (
+                    <span key={k.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border ${k.poin < 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                      <span className="font-mono font-bold text-[10px] bg-white/60 px-1 rounded">{k.kode}</span>
+                      <span className="truncate max-w-[200px]" title={k.jenis}>{k.jenis}</span>
+                      <span className="font-bold text-[11px]">{k.poin > 0 ? '+' : ''}{k.poin}</span>
+                      <button type="button" onClick={() => removeKatalog(k.id)} className="hover:text-red-950 font-bold ml-0.5 text-sm select-none">&times;</button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -398,7 +515,11 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Poin <span className="text-red-500">*</span></label>
                 <input type="number" value={poinDiberikan} onChange={e => setPoinDiberikan(e.target.value)} required
-                  placeholder="-5 atau +10" className={`w-full px-3 py-2 border rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none ${parseInt(poinDiberikan) > 0 ? 'text-emerald-700 border-emerald-200' : parseInt(poinDiberikan) < 0 ? 'text-red-700 border-red-200' : 'border-slate-200'}`} />
+                  disabled={selectedKatalogs.length > 0}
+                  placeholder="-5 atau +10" className={`w-full px-3 py-2 border rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed ${parseInt(poinDiberikan) > 0 ? 'text-emerald-700 border-emerald-200' : parseInt(poinDiberikan) < 0 ? 'text-red-700 border-red-200' : 'border-slate-200'}`} />
+                {selectedKatalogs.length > 0 && (
+                  <p className="text-[10px] text-slate-400 mt-1">Nilai poin otomatis dihitung dari katalog pilihan.</p>
+                )}
               </div>
               {/* Petugas */}
               <div>

@@ -24,12 +24,14 @@ import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection
 import AdminKumpulanDokumenSection from '../components/AdminKumpulanDokumenSection'
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
+import AdminJadwalPelajaranSection from '../components/AdminJadwalPelajaranSection'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
 import DenahKehadiranSection from '../components/DenahKehadiranSection'
 import PengumumanResmiSection from '../components/PengumumanResmiSection'
 import GuruDokumenSection from '../components/GuruDokumenSection'
 import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
+import AdminBKKonsultasiSection from '../components/AdminBKKonsultasiSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 import { useConfirm } from '../utils/useConfirm'
@@ -1812,6 +1814,20 @@ function Admin() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
+  const [showIosHint, setShowIosHint] = useState(false)
+
+  const isIOS = /ipad|iphone|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+  const toggleAppFullScreen = () => {
+    if (isIOS) { setShowIosHint(true); return }
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
   const [collapsedGroups, setCollapsedGroups] = useState({
     akademikData: false,
     kehadiranPresensi: false,
@@ -1864,6 +1880,20 @@ function Admin() {
   }, [navigate])
 
   useEffect(() => {
+    const handleFs = () => setIsNativeFullScreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleFs)
+    document.addEventListener('webkitfullscreenchange', handleFs)
+    document.addEventListener('mozfullscreenchange', handleFs)
+    document.addEventListener('MSFullscreenChange', handleFs)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFs)
+      document.removeEventListener('webkitfullscreenchange', handleFs)
+      document.removeEventListener('mozfullscreenchange', handleFs)
+      document.removeEventListener('MSFullscreenChange', handleFs)
+    }
+  }, [])
+
+  useEffect(() => {
     if (authLoading) return
     const channel = supabase
       .channel('admin-realtime')
@@ -1906,13 +1936,45 @@ function Admin() {
     }
   }
 
+  const fetchAllRows = async (queryFn) => {
+    let allData = []
+    let from = 0
+    let to = 999
+    let hasMore = true
+    
+    while (hasMore) {
+      const { data, error } = await queryFn().range(from, to)
+      if (error) {
+        console.error("Error fetching rows:", error)
+        break
+      }
+      if (!data || data.length === 0) {
+        hasMore = false
+      } else {
+        allData = [...allData, ...data]
+        if (data.length < 1000) {
+          hasMore = false
+        } else {
+          from += 1000
+          to += 1000
+        }
+      }
+    }
+    return allData
+  }
+
   const fetchStudents = async () => {
     setStudentsLoading(true)
-    const { data } = await supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
-    if (data) setStudents(data)
+    
+    const studentsData = await fetchAllRows(() => 
+      supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
+    )
+    if (studentsData) setStudents(studentsData)
     
     // Fetch ALL enrollments for the class target list in modals
-    const { data: enrData } = await supabase.from('enrollment').select('*, siswa_permanent(*), tahun_ajaran(nama, is_aktif)');
+    const enrData = await fetchAllRows(() => 
+      supabase.from('enrollment').select('*, siswa_permanent(*), tahun_ajaran(nama, is_aktif)')
+    )
     if (enrData) setAllEnrollments(enrData);
     
     const { data: fotoData } = await supabase.from('foto').select('*, tahun_ajaran:tahun_ajaran_id(nama)')
@@ -2125,6 +2187,14 @@ function Admin() {
         setCsvResult({ type: 'error', text: `Gagal sinkronisasi identitas: ${err1.message}` })
         setCsvSyncing(false)
         return
+      }
+
+      // Sync password ke auth.users untuk siswa yang kode_akses-nya diimport dari Excel
+      const nisnWithPassword = uniquePermanents
+        .filter(p => p.kode_akses && p.kode_akses.trim() !== '')
+        .map(p => String(p.nisn))
+      if (nisnWithPassword.length > 0) {
+        await supabase.rpc('fn_sync_student_passwords', { p_nisn_list: nisnWithPassword })
       }
 
       const { data: existingEnrollments } = await supabase
@@ -2489,6 +2559,11 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <IconActivity /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
               </button>
+              <button title="Jadwal Pelajaran" onClick={() => handleMenuNavigation('jadwal_pelajaran')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'jadwal_pelajaran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
+              </button>
             </div>
           )}
 
@@ -2597,6 +2672,11 @@ function Admin() {
                 <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
               </button>
+              <button title="Jadwal Konsultasi BK" onClick={() => handleMenuNavigation('konsultasi_bk')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konsultasi_bk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Konsultasi BK</span>}
+              </button>
             </div>
           )}
 
@@ -2649,9 +2729,75 @@ function Admin() {
           <button onClick={handleLogout}
             className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
             <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}
-            </button>
+          </button>
+
+          {/* App Fullscreen Button */}
+          <button
+            onClick={toggleAppFullScreen}
+            title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh Aplikasi'}
+            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium border transition-colors ${isNativeFullScreen ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'text-slate-600 bg-white hover:bg-slate-100 border-slate-200'} ${sidebarCollapsed ? 'aspect-square px-0' : 'gap-2 px-4 py-2.5'}`}
+          >
+            {isNativeFullScreen ? (
+              <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+            ) : (
+              <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+            )}
+            {!sidebarCollapsed && <span className="animate-fade-in truncate">{isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>}
+          </button>
         </div>
       </aside>
+
+      {/* iOS Fullscreen Hint Modal */}
+      {showIosHint && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowIosHint(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              <div>
+                <p className="text-white font-bold text-sm">Cara Layar Penuh di iPhone/iPad</p>
+                <p className="text-indigo-200 text-xs mt-0.5">Safari tidak mendukung fullscreen langsung</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-slate-700 text-sm font-medium">Tambahkan aplikasi ke Home Screen untuk pengalaman layar penuh:</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <p className="text-sm text-slate-600">Tekan tombol <strong>Bagikan</strong> <span className="inline-block bg-slate-100 px-1.5 py-0.5 rounded text-xs">⎙</span> di bagian bawah Safari</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <p className="text-sm text-slate-600">Pilih <strong>"Tambahkan ke Layar Utama"</strong> (Add to Home Screen)</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <p className="text-sm text-slate-600">Buka aplikasi dari <strong>Home Screen</strong> untuk mode layar penuh otomatis</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={() => setShowIosHint(false)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors text-sm">Mengerti</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Fullscreen FAB – visible on mobile */}
+      <button
+        onClick={toggleAppFullScreen}
+        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+        className={`fixed bottom-5 right-5 z-[100] md:hidden w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-300 border ${
+          isNativeFullScreen
+            ? 'bg-indigo-600 border-indigo-700 text-white'
+            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+        }`}
+      >
+        {isNativeFullScreen ? (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+        )}
+      </button>
 
       <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50">
         <div className="md:hidden p-4 border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20">
@@ -2690,6 +2836,10 @@ function Admin() {
             />
           )}
 
+          {activeMenu === 'jadwal_pelajaran' && (
+            <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
+          )}
+
           {activeMenu === 'manajemen_role' && (
             <AdminRoleSection />
           )}
@@ -2704,6 +2854,10 @@ function Admin() {
 
           {activeMenu === 'rekap_poin' && (
             <RekapPoinSiswaSection session={session} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'konsultasi_bk' && (
+            <AdminBKKonsultasiSection session={session} />
           )}
 
           {activeMenu === 'denah_kehadiran' && (

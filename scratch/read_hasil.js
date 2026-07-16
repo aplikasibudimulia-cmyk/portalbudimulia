@@ -1,48 +1,21 @@
 import fs from 'fs';
 
-try {
-  let content = fs.readFileSync('hasil.json', 'utf8');
-  // strip BOM if it exists
-  if (content.charCodeAt(0) === 0xFEFF || content.charCodeAt(0) === 0xFFFE) {
-    content = content.slice(1);
-  }
-  
-  // Also try utf16le if utf8 doesn't work well
-  let data;
-  try {
-    data = JSON.parse(content);
-  } catch (err) {
-    console.log("Failed parsing as UTF-8, trying UTF-16LE...");
-    let content16 = fs.readFileSync('hasil.json', 'utf16le');
-    if (content16.charCodeAt(0) === 0xFEFF || content16.charCodeAt(0) === 0xFFFE) {
-      content16 = content16.slice(1);
-    }
-    data = JSON.parse(content16);
-  }
+const buf = fs.readFileSync('hasil.json');
+console.log("Buffer length:", buf.length);
+console.log("First 20 bytes:", buf.slice(0, 20));
 
-  console.log("JSON root is array?", Array.isArray(data));
-  console.log("Length/Keys:", Array.isArray(data) ? data.length : Object.keys(data));
-  
-  const jsonStr = JSON.stringify(data);
-  const regex = /jason/i;
-  const match = jsonStr.match(regex);
-  console.log("Does 'jason' exist in hasil.json?", !!match);
-  
-  if (match) {
-    if (Array.isArray(data)) {
-      const results = data.filter(item => {
-        const itemStr = JSON.stringify(item).toLowerCase();
-        return itemStr.includes('jason');
-      });
-      console.log("Filtered items:", JSON.stringify(results, null, 2));
-    } else {
-      for (const [k, v] of Object.entries(data)) {
-        if (k.toLowerCase().includes('jason') || JSON.stringify(v).toLowerCase().includes('jason')) {
-          console.log(`Key matching: ${k}`, JSON.stringify(v, null, 2));
-        }
-      }
-    }
-  }
-} catch (e) {
-  console.error("Error reading/parsing hasil.json:", e);
+// Try UTF-16LE decoding
+let text = buf.toString('utf16le');
+if (text.charCodeAt(0) === 0xFEFF || text.charCodeAt(0) === 0xFFFE) {
+  text = text.slice(1);
 }
+console.log("As UTF-16LE snippet:");
+console.log(text.slice(0, 500));
+
+// Try UTF-8 decoding
+let text8 = buf.toString('utf8');
+if (text8.charCodeAt(0) === 0xFEFF || text8.charCodeAt(0) === 0xFFFE) {
+  text8 = text8.slice(1);
+}
+console.log("As UTF-8 snippet:");
+console.log(text8.slice(0, 500));

@@ -1,26 +1,38 @@
-async function run() {
-  console.log("Calling check_admins_metadata RPC...");
-  
-  const headers = {
-    'apikey': 'sb_publishable_HShpzptZQ6jymnZO-zrgrQ_4PPx_DYV',
-    'Authorization': 'Bearer sb_publishable_HShpzptZQ6jymnZO-zrgrQ_4PPx_DYV'
-  };
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
 
-  const url = 'https://ngdepacckohoxemlauhd.supabase.co/rest/v1/rpc/check_admins_metadata';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers
-  });
-
-  if (!response.ok) {
-    console.error("HTTP error:", response.status, response.statusText);
-    const errText = await response.text();
-    console.error("Error body:", errText);
-    return;
+// Parse .env manually
+const envContent = fs.readFileSync('.env', 'utf-8');
+const env = {};
+envContent.split('\n').forEach(line => {
+  const parts = line.split('=');
+  if (parts.length >= 2) {
+    env[parts[0].trim()] = parts.slice(1).join('=').trim();
   }
+});
 
-  const result = await response.json();
-  console.log("SQL Result:", JSON.stringify(result, null, 2));
+const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
+
+async function testRpc() {
+  console.log("Testing RPC...");
+  
+  // Try parameter named 'sql'
+  const { data: d1, error: e1 } = await supabase.rpc('execute_sql', {
+    sql: "SELECT 1"
+  });
+  console.log("Try 'sql':", d1, e1);
+
+  // Try parameter named 'query'
+  const { data: d2, error: e2 } = await supabase.rpc('execute_sql', {
+    query: "SELECT 1"
+  });
+  console.log("Try 'query':", d2, e2);
+
+  // Try parameter named 'sql_query'
+  const { data: d3, error: e3 } = await supabase.rpc('execute_sql', {
+    sql_query: "SELECT 1"
+  });
+  console.log("Try 'sql_query':", d3, e3);
 }
 
-run().catch(console.error);
+testRpc();

@@ -172,6 +172,7 @@ export default function AdminDashboardSection({ onNavigate }) {
       // Proses Tren Presensi (7 hari terakhir)
       const trenMap = {}
       presensiData?.forEach(p => {
+        if (p.status === 'P') return // Skip pulang
         if (!trenMap[p.tanggal]) trenMap[p.tanggal] = { name: p.tanggal, Hadir: 0, TidakHadir: 0 }
         if (p.status === 'H' || p.status === 'T') trenMap[p.tanggal].Hadir++
         else trenMap[p.tanggal].TidakHadir++

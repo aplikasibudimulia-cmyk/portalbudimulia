@@ -1,29 +1,36 @@
-import { createClient } from '@supabase/supabase-js'
-import fs from 'fs'
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
 
-const env = fs.readFileSync('.env', 'utf8')
-const lines = env.split('\n')
-const url = lines.find(l => l.startsWith('VITE_SUPABASE_URL')).split('=')[1].trim()
-const key = lines.find(l => l.startsWith('VITE_SUPABASE_ANON_KEY')).split('=')[1].trim()
-
-const supabase = createClient(url, key)
-
-async function checkSchema() {
-  const { data, error } = await supabase
-    .from('presensi_harian')
-    .select('*')
-    .limit(1)
-  
-  if (error) {
-    console.error('Error fetching:', error)
-  } else {
-    if (data.length > 0) {
-      console.log('Columns available in first row:', Object.keys(data[0]))
-      console.log('First row data:', data[0])
-    } else {
-      console.log('Table is empty.')
-    }
+// Parse .env manually
+const envContent = fs.readFileSync('.env', 'utf-8');
+const env = {};
+envContent.split('\n').forEach(line => {
+  const parts = line.split('=');
+  if (parts.length >= 2) {
+    env[parts[0].trim()] = parts.slice(1).join('=').trim();
   }
+});
+
+const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
+
+async function checkData() {
+  console.log("Checking data...");
+
+  // 1. Check roles
+  const { data: roles } = await supabase.from('roles').select('*');
+  console.log("All Roles:", roles);
+
+  // 2. Check akun_pengguna
+  const { data: users, error: errUsers } = await supabase.from('akun_pengguna').select('*').limit(5);
+  console.log("Users:", users, "Error:", errUsers);
+
+  // 3. Check guru
+  const { data: guruCount } = await supabase.from('guru').select('count', { count: 'exact' });
+  console.log("Guru count:", guruCount);
+
+  // 4. Check siswa_permanent
+  const { data: siswaCount } = await supabase.from('siswa_permanent').select('count', { count: 'exact' });
+  console.log("Siswa count:", siswaCount);
 }
 
-checkSchema()
+checkData();

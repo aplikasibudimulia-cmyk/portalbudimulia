@@ -5,7 +5,8 @@ dotenv.config();
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
 
 async function checkFKs() {
-  const { data, error } = await supabase.rpc('execute_sql', { sql_query: `
+  const { data, error } = await supabase.rpc('execute_sql', {
+    sql_query: `
     SELECT 
         tc.table_name, 
         kcu.column_name, 

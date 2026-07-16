@@ -1,17 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useConfirm } from '../utils/useConfirm'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification } from '../utils/pushNotif'
 import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
 
-const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha' }
+const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 const STATUS_COLORS = {
   H: 'text-emerald-600 bg-emerald-50 border-emerald-200',
   T: 'text-amber-600 bg-amber-50 border-amber-200',
   S: 'text-blue-600 bg-blue-50 border-blue-200',
   I: 'text-purple-600 bg-purple-50 border-purple-200',
   A: 'text-rose-600 bg-rose-50 border-rose-200',
+  P: 'text-slate-600 bg-slate-50 border-slate-200',
 }
 
 // Tipe presensi
@@ -49,6 +50,10 @@ export default function SiswaPresensiSection({ studentData }) {
   const [activeTab, setActiveTab] = useState('isi_presensi')
   const [tipeAktif, setTipeAktif] = useState(TIPE.MASUK) // masuk atau pulang
   const [sesiAktif, setSesiAktif] = useState(false)
+  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(false)
+  const [jamMulaiPresensi, setJamMulaiPresensi] = useState('')
+  const [hariAktifPresensi, setHariAktifPresensi] = useState('1,2,3,4,5')
+  const [jamBatasPulang, setJamBatasPulang] = useState('')
   const [notifGranted, setNotifGranted] = useState(isNotifGranted())
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [geofenceConfig, setGeofenceConfig] = useState({
@@ -57,6 +62,7 @@ export default function SiswaPresensiSection({ studentData }) {
     lng: null,
     radius: 200
   })
+  const [geofenceAreas, setGeofenceAreas] = useState([]) // multiple extra areas
 
   const scannerRef = useRef(null)
   const selfieInputRef = useRef(null)
@@ -92,6 +98,14 @@ export default function SiswaPresensiSection({ studentData }) {
       if (jam) setJamBatasHadir(jam)
       const qrStatus = settings.find(s => s.setting_key === 'presensi_qr_aktif')?.setting_value
       setQrAktif(qrStatus !== 'false')
+      const autAct = settings.find(s => s.setting_key === 'jadwal_otomatis_aktif')?.setting_value === 'true'
+      setJadwalOtomatisAktif(autAct)
+      const mul = settings.find(s => s.setting_key === 'jam_mulai_presensi')?.setting_value || ''
+      setJamMulaiPresensi(mul)
+      const har = settings.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value || '1,2,3,4,5'
+      setHariAktifPresensi(har)
+      const pul = settings.find(s => s.setting_key === 'jam_batas_pulang')?.setting_value || ''
+      setJamBatasPulang(pul)
       const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
       setSelfieRequired(selfieReq !== 'false')
 
@@ -106,9 +120,39 @@ export default function SiswaPresensiSection({ studentData }) {
         lng: isNaN(geoLng) ? null : geoLng,
         radius: isNaN(geoRadius) ? 200 : geoRadius
       })
+      // Load extra geofence areas
+      const areasRaw = settings.find(s => s.setting_key === 'geofence_areas')?.setting_value
+      if (areasRaw) {
+        try { setGeofenceAreas(JSON.parse(areasRaw)) } catch { setGeofenceAreas([]) }
+      }
     }
     setLoadingStatus(false)
   }, [studentData.nisn, today])
+
+  const isHariAktif = useMemo(() => {
+    if (!jadwalOtomatisAktif) return true
+    const todayDow = new Date().getDay()
+    const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
+    return activeDays.includes(todayDow)
+  }, [jadwalOtomatisAktif, hariAktifPresensi])
+
+  const presensiBelumMulai = useMemo(() => {
+    if (!jadwalOtomatisAktif || !jamMulaiPresensi) return false
+    if (!isHariAktif) return false
+    const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
+    const now = new Date()
+    const [nh, nm] = [now.getHours(), now.getMinutes()]
+    return nh < mh || (nh === mh && nm < mm)
+  }, [jadwalOtomatisAktif, jamMulaiPresensi, isHariAktif])
+
+  const presensiSelesai = useMemo(() => {
+    if (!jadwalOtomatisAktif || !jamBatasPulang) return false
+    if (!isHariAktif) return false
+    const [bh, bm] = jamBatasPulang.split(':').map(Number)
+    const now = new Date()
+    const [nh, nm] = [now.getHours(), now.getMinutes()]
+    return nh > bh || (nh === bh && nm >= bm)
+  }, [jadwalOtomatisAktif, jamBatasPulang, isHariAktif])
 
   useEffect(() => { loadStatus() }, [loadStatus])
 
@@ -280,7 +324,7 @@ export default function SiswaPresensiSection({ studentData }) {
   const uploadSelfie = async (blob, nisn, tipe) => {
     if (!blob) return null
     try {
-      const fileName = `${nisn}_${tipe}_${today}.jpg`
+      const fileName = `${nisn}_${tipe}_${today}_${Date.now()}.jpg`
       const { data, error } = await supabase.storage
         .from('selfie-presensi')
         .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true })
@@ -341,54 +385,83 @@ export default function SiswaPresensiSection({ studentData }) {
         throw new Error('Fitur Geolocation tidak didukung di browser ini.');
       }
 
-      const coords = await new Promise((resolve, reject) => {
+      const { coords, accuracy } = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             // Anti-Fake GPS / Mock location detection
             if (pos.mocked || pos.coords.accuracy === 0) {
-              reject(new Error('Peringatan Keamanan: Terdeteksi penggunaan Fake GPS / Lokasi Palsu! Silakan nonaktifkan aplikasi pemalsu lokasi Anda.'))
-              return
+              reject(new Error('Peringatan Keamanan: Terdeteksi penggunaan Fake GPS / Lokasi Palsu! Silakan nonaktifkan aplikasi pemalsu lokasi Anda.'));
+              return;
             }
-            resolve(`${pos.coords.latitude},${pos.coords.longitude}`)
+            resolve({
+              coords: `${pos.coords.latitude},${pos.coords.longitude}`,
+              accuracy: Math.round(pos.coords.accuracy)
+            });
           },
           (err) => reject(new Error('Izin lokasi ditolak. Anda wajib memberikan izin lokasi di browser Anda untuk melakukan presensi.')),
           { enableHighAccuracy: true, timeout: 8000 }
-        )
-      })
+        );
+      });
 
-      // ===== GEOFENCING CHECK =====
-      if (geofenceConfig.aktif && geofenceConfig.lat !== null && geofenceConfig.lng !== null) {
-        const [userLat, userLng] = coords.split(',').map(Number)
-        const jarak = hitungJarak(userLat, userLng, geofenceConfig.lat, geofenceConfig.lng)
-        if (jarak > geofenceConfig.radius) {
-          setStep(STEP.ERROR)
-          setErrorMsg(`Presensi ditolak. Lokasi Anda berada di luar area sekolah. Jarak Anda: ${Math.round(jarak)} meter dari sekolah (Batas toleransi: ${geofenceConfig.radius} meter).`)
-          return
+      // ===== GEOFENCING CHECK (OR logic: primary point + extra areas) =====
+      if (geofenceConfig.aktif) {
+        const [userLat, userLng] = coords.split(',').map(Number);
+
+        // Build all areas to check: primary + extra
+        const allAreas = [];
+        if (geofenceConfig.lat !== null && geofenceConfig.lng !== null) {
+          allAreas.push({ lat: geofenceConfig.lat, lng: geofenceConfig.lng, radius: geofenceConfig.radius, nama: 'Sekolah' });
+        }
+        geofenceAreas.forEach(a => {
+          const lat = parseFloat(a.lat);
+          const lng = parseFloat(a.lng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            allAreas.push({ lat, lng, radius: a.radius || 200, nama: a.nama || 'Area Tambahan' });
+          }
+        });
+
+        if (allAreas.length > 0) {
+          // OR logic: allowed if within ANY area
+          const diDalamSalahSatuArea = allAreas.some(area => {
+            const jarak = hitungJarak(userLat, userLng, area.lat, area.lng);
+            return jarak <= area.radius;
+          });
+
+          if (!diDalamSalahSatuArea) {
+            // Find closest area for error message
+            const closest = allAreas.reduce((best, area) => {
+              const jarak = hitungJarak(userLat, userLng, area.lat, area.lng);
+              return jarak < best.jarak ? { ...area, jarak } : best;
+            }, { jarak: Infinity });
+            setStep(STEP.ERROR);
+            setErrorMsg(`Presensi ditolak. Lokasi Anda berada di luar area sekolah yang terdaftar. Jarak terdekat: ${Math.round(closest.jarak)} meter dari area "${closest.nama}" (Batas: ${closest.radius} meter). Akurasi GPS Perangkat Anda: ±${accuracy} meter. Tips: Karena akurasi GPS browser Anda saat ini berkisar ±${accuracy} meter, disarankan bagi Admin untuk memperbesar "Radius Toleransi" (misal menjadi 100-200 meter) di Pengaturan Presensi untuk mengantisipasi pergeseran (drift) sinyal GPS.`);
+            return;
+          }
         }
       }
 
-      const now = new Date()
-      const jamSekarang = now.toTimeString().slice(0, 5)
-      const [bH, bM] = jamBatasHadir.split(':').map(Number)
-      const [sH, sM] = jamSekarang.split(':').map(Number)
-      const lewatBatas = sH > bH || (sH === bH && sM > bM)
-      const statusOtomatis = (tipeAktif === TIPE.MASUK) ? (lewatBatas ? 'T' : 'H') : 'H'
+      const now = new Date();
+      const jamSekarang = now.toTimeString().slice(0, 5);
+      const [bH, bM] = jamBatasHadir.split(':').map(Number);
+      const [sH, sM] = jamSekarang.split(':').map(Number);
+      const lewatBatas = sH > bH || (sH === bH && sM > bM);
+      const statusOtomatis = (tipeAktif === TIPE.MASUK) ? (lewatBatas ? 'T' : 'H') : 'P';
 
       // Cek duplikat untuk tipe yang sama
       const { data: existing } = await supabase.from('presensi_harian')
         .select('id').eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
-        .eq('tipe', tipeAktif).maybeSingle()
+        .eq('tipe', tipeAktif).maybeSingle();
 
       if (existing) {
-        setStep(STEP.ERROR)
-        setErrorMsg(`Anda sudah presensi ${tipeAktif} hari ini.`)
-        return
+        setStep(STEP.ERROR);
+        setErrorMsg(`Anda sudah presensi ${tipeAktif} hari ini.`);
+        return;
       }
 
       // Upload selfie ke Supabase Storage (jika ada)
-      let selfieUrl = null
+      let selfieUrl = null;
       if (selfieB) {
-        selfieUrl = await uploadSelfie(selfieB, studentData.nisn, tipeAktif)
+        selfieUrl = await uploadSelfie(selfieB, studentData.nisn, tipeAktif);
       }
 
       // Insert presensi
@@ -466,8 +539,25 @@ export default function SiswaPresensiSection({ studentData }) {
     if (!confirmed) return
     setStep(STEP.SUBMITTING)
     try {
+      const filesToDelete = []
+      if (presensiMasuk?.selfie_url) {
+        const urlParts = presensiMasuk.selfie_url.split('/')
+        const fileName = urlParts[urlParts.length - 1].split('?')[0] // remove query parameters if any
+        filesToDelete.push(fileName)
+      }
+      if (presensiPulang?.selfie_url) {
+        const urlParts = presensiPulang.selfie_url.split('/')
+        const fileName = urlParts[urlParts.length - 1].split('?')[0]
+        filesToDelete.push(fileName)
+      }
+
       const { error } = await supabase.from('presensi_harian').delete().eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
       if (error) throw error
+
+      if (filesToDelete.length > 0) {
+        await supabase.storage.from('selfie-presensi').remove(filesToDelete)
+      }
+
       setPresensiMasuk(null); setPresensiPulang(null)
       setTipeAktif(TIPE.MASUK)
       setStep(STEP.IDLE)
@@ -590,7 +680,7 @@ export default function SiswaPresensiSection({ studentData }) {
         <SiswaRiwayatPresensi studentData={studentData} />
       ) : (
         <div className="max-w-md mx-auto">
-          <div className="mb-6">
+          <div className="mb-6 hidden">
             <h2 className="text-2xl font-black text-slate-900">Presensi Hari Ini</h2>
             <p className="text-sm text-slate-500 mt-1">Scan QR Code dari layar TV sekolah untuk mencatat kehadiran Anda.</p>
           </div>
@@ -639,6 +729,39 @@ export default function SiswaPresensiSection({ studentData }) {
               </div>
               <h3 className="text-lg font-black text-slate-800 mb-1">Presensi Lengkap 🎉</h3>
               <p className="text-sm text-slate-500">Masuk & pulang sudah tercatat. Sampai jumpa besok!</p>
+              {import.meta.env.DEV && (
+                <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
+              )}
+            </div>
+          ) : presensiSelesai ? (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
+              <div className="w-24 h-24 rounded-full bg-slate-50 border-2 border-slate-100 flex items-center justify-center mb-5">
+                <span className="text-4xl select-none">🌙</span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Presensi Selesai</h3>
+              <p className="text-sm text-slate-500 max-w-sm">Presensi hari ini telah selesai pukul <strong>{jamBatasPulang}</strong>. Sampai jumpa besok! 👋</p>
+              {import.meta.env.DEV && (
+                <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
+              )}
+            </div>
+          ) : (jadwalOtomatisAktif && !isHariAktif) ? (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
+              <div className="w-24 h-24 rounded-full bg-slate-50 border-2 border-slate-100 flex items-center justify-center mb-5">
+                <span className="text-4xl select-none">🏖️</span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Hari Bebas Presensi</h3>
+              <p className="text-sm text-slate-500 max-w-sm">Hari ini tidak dijadwalkan untuk presensi.</p>
+              {import.meta.env.DEV && (
+                <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
+              )}
+            </div>
+          ) : presensiBelumMulai ? (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
+              <div className="w-24 h-24 rounded-full bg-slate-50 border-2 border-slate-100 flex items-center justify-center mb-5">
+                <span className="text-4xl select-none">🌅</span>
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Presensi Belum Mulai</h3>
+              <p className="text-sm text-slate-500 max-w-sm">Sesi presensi otomatis hari ini belum dimulai (dijadwalkan pukul <strong>{jamMulaiPresensi}</strong>). Silakan tunggu beberapa saat lagi. 👋</p>
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}

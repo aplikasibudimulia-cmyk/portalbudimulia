@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 
 // Constants
-const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha' }
+const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 
 const getPoinMeta = (p, max = 100) => {
   const pct = max > 0 ? Math.max(0, Math.min(100, (p / max) * 100)) : 0
@@ -22,6 +23,8 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   const [motivasi, setMotivasi] = useState('')
   const [countdown, setCountdown] = useState(null)
   const [poinData, setPoinData] = useState(null)
+  const [selectedNews, setSelectedNews] = useState(null)
+  const [showFullImage, setShowFullImage] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const MOTIVASI_LIST = [
@@ -60,10 +63,10 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   const fetchPresensi = async () => {
     const today = new Date().toLocaleDateString('en-CA')
     const [{ data: prData }, { data: sesi }] = await Promise.all([
-      supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn).maybeSingle(),
+      supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
       supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
     ])
-    setPresensiHariIni(prData)
+    setPresensiHariIni(prData || [])
     setSesiPresensiAktif(!!sesi)
   }
 
@@ -75,13 +78,13 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
 
     try {
       // 1. Fetch Presensi Hari Ini
-      const reqPresensiHariIni = supabase.from('presensi_harian').select('*').eq('tanggal', todayStr).eq('siswa_nisn', studentData.nisn).maybeSingle()
+      const reqPresensiHariIni = supabase.from('presensi_harian').select('*').eq('tanggal', todayStr).eq('siswa_nisn', studentData.nisn)
       
       // 2. Fetch Rekap Presensi Bulan Ini
       const startOfMonth = `${thisMonthPrefix}-01`
       const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
       const endOfMonth = `${thisMonthPrefix}-${String(lastDay).padStart(2, '0')}`
-      const reqRekapBulan = supabase.from('presensi_harian').select('status').eq('siswa_nisn', studentData.nisn).gte('tanggal', startOfMonth).lte('tanggal', endOfMonth)
+      const reqRekapBulan = supabase.from('presensi_harian').select('status, tipe').eq('siswa_nisn', studentData.nisn).gte('tanggal', startOfMonth).lte('tanggal', endOfMonth)
       
       // 3. Fetch Nilai Terbaru
       const reqNilai = supabase.from('nilai_siswa')
@@ -123,8 +126,9 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       
       // Set Rekap Bulan Ini
       if (resRekap.data) {
-        const rekap = { H: 0, T: 0, S: 0, I: 0, A: 0, total: resRekap.data.length }
-        resRekap.data.forEach(p => {
+        const records = resRekap.data.filter(p => !p.tipe || p.tipe !== 'pulang')
+        const rekap = { H: 0, T: 0, S: 0, I: 0, A: 0, total: records.length }
+        records.forEach(p => {
           if (rekap[p.status] !== undefined) rekap[p.status]++
         })
         setRekapBulan(rekap)
@@ -217,23 +221,28 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     <div className="animate-slide-up space-y-6">
       
       {/* WIDGET 1: Status Presensi Hari Ini */}
-      {!isOrangTua && showFeatureConfig.presensi && (presensiHariIni || sesiPresensiAktif) && (
-        <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
+      {!isOrangTua && showFeatureConfig.presensi && (((presensiHariIni && presensiHariIni.length > 0)) || sesiPresensiAktif) && (
+        <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni && presensiHariIni.length > 0 ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-800 text-lg mb-1">
-                {presensiHariIni ? `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉` : 'Perhatian: Belum Presensi'}
+                {presensiHariIni && presensiHariIni.length > 0 ? `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉` : 'Perhatian: Belum Presensi'}
               </h3>
-              {presensiHariIni ? (
-                <p className="text-sm text-slate-500 flex items-center gap-2">
-                  Status: <span className="font-bold px-2 py-0.5 bg-slate-100 rounded-full border border-slate-200 text-slate-700">{STATUS_LABELS[presensiHariIni.status] || presensiHariIni.status}</span>
-                  Jam: <span className="font-bold">{presensiHariIni.waktu} WIB</span>
-                </p>
+              {presensiHariIni && presensiHariIni.length > 0 ? (
+                <div className="text-sm text-slate-500 flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
+                  {presensiHariIni.map(p => (
+                    <span key={p.id} className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-100">
+                      <span className="font-extrabold capitalize text-xs text-slate-550">{p.tipe || 'masuk'}:</span>
+                      <span className="font-bold text-xs text-slate-700">{STATUS_LABELS[p.status] || p.status}</span>
+                      <span className="text-xs text-slate-400 font-mono">({p.waktu})</span>
+                    </span>
+                  ))}
+                </div>
               ) : (
                 <p className="text-sm text-amber-700">Anda belum melakukan presensi hari ini. Silakan klik tombol di samping.</p>
               )}
             </div>
-            {!presensiHariIni && (
+            {!(presensiHariIni && presensiHariIni.length > 0) && (
               <button 
                 onClick={() => onNavigate('PRESENSI')}
                 className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-indigo-100"
@@ -282,37 +291,6 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
           </div>
         )}
 
-        {/* WIDGET 2.5: Poin Saya */}
-        {!isOrangTua && showFeatureConfig.poin && poinData && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('POIN')}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <svg className="w-5 h-5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                Poin Siswa
-              </h3>
-              <button onClick={() => onNavigate('POIN')} className="text-xs font-bold text-indigo-500 hover:text-indigo-600">Detail &rarr;</button>
-            </div>
-            
-            <div className="flex items-center gap-6">
-              <div className="flex-1">
-                <div className="flex items-end gap-2 mb-2">
-                  <span className="text-4xl font-black text-slate-800 leading-none">{poinData.current}</span>
-                  <span className="text-sm font-bold text-slate-400 mb-1">/ {poinData.max}</span>
-                </div>
-                <div className="w-full bg-slate-100 rounded-full h-2 mb-2 overflow-hidden">
-                  <div className={`h-2 rounded-full bg-gradient-to-r ${getPoinMeta(poinData.current, poinData.max).bar}`} style={{ width: `${Math.max(0, Math.min(100, (poinData.current / poinData.max) * 100))}%` }}></div>
-                </div>
-                <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-bold ${getPoinMeta(poinData.current, poinData.max).badge}`}>
-                  {getPoinMeta(poinData.current, poinData.max).emoji} {getPoinMeta(poinData.current, poinData.max).label}
-                </div>
-              </div>
-              
-              <div className="w-16 h-16 shrink-0 bg-slate-50 rounded-2xl flex items-center justify-center border border-slate-100 shadow-inner">
-                <span className="text-3xl">{getPoinMeta(poinData.current, poinData.max).emoji}</span>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* WIDGET 3: Nilai Terbaru */}
         {showFeatureConfig.nilai && (
@@ -398,7 +376,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
               
               return (
                 <div key={b.id} className="flex gap-4 p-4 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
-                     onClick={() => alert('Fitur baca konten penuh segera hadir!')}> {/* TODO: Modal */}
+                     onClick={() => setSelectedNews(b)}>
                   {b.gambar_url && (
                     <img src={b.gambar_url} alt={b.judul} className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-lg shrink-0 border border-slate-200" />
                   )}
@@ -442,6 +420,87 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         )}
       </div>
 
+      {/* MODAL BACA BERITA DETAIL */}
+      {selectedNews && createPortal(
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-[9999] flex items-center justify-center p-4" onClick={() => { setSelectedNews(null); setShowFullImage(false); }}>
+          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden animate-scale-in flex flex-col max-h-[95vh] border border-slate-100" onClick={(e) => e.stopPropagation()}>
+            
+            {/* Header / Gambar Berita */}
+            {selectedNews.gambar_url ? (
+              <div className="relative shrink-0 bg-slate-900 flex justify-center group overflow-hidden max-h-[50vh]">
+                <img 
+                  src={selectedNews.gambar_url} 
+                  alt={selectedNews.judul} 
+                  onClick={() => setShowFullImage(true)}
+                  className="w-full object-contain max-h-[50vh] cursor-zoom-in transition-transform duration-350 hover:scale-[1.01]" 
+                />
+                <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm text-[10px] text-white px-2.5 py-1 rounded-lg pointer-events-none flex items-center gap-1.5 font-bold uppercase tracking-wider">
+                  <span>🔍 Klik gambar untuk memperbesar</span>
+                </div>
+                <button 
+                  onClick={() => setSelectedNews(null)}
+                  className="absolute top-4 right-4 w-9 h-9 bg-black/40 hover:bg-black/60 text-white rounded-full flex items-center justify-center transition-colors shadow-md z-10"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            ) : (
+              <div className="p-6 pb-2 shrink-0 flex justify-between items-start border-b border-slate-100">
+                <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase px-2.5 py-1 rounded-full border border-indigo-100">Pengumuman Sekolah</span>
+                <button 
+                  onClick={() => setSelectedNews(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-50 rounded-xl transition-all"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            )}
+
+            {/* Scrollable Content */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                  Diterbitkan pada {new Date(selectedNews.published_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </span>
+                <h3 className="text-xl md:text-2xl font-black text-slate-800 leading-snug mt-1">{selectedNews.judul}</h3>
+              </div>
+
+              <div className="text-sm text-slate-600 leading-relaxed whitespace-pre-line border-t border-slate-100 pt-4 font-medium">
+                {selectedNews.konten}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+              <button 
+                onClick={() => setSelectedNews(null)}
+                className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-all uppercase tracking-wider"
+              >
+                Tutup Bacaan
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* LIGHTBOX / FULL SCREEN IMAGE VIEWER */}
+      {showFullImage && selectedNews?.gambar_url && createPortal(
+        <div 
+          className="fixed inset-0 bg-black/95 z-[99999] flex items-center justify-center p-4 cursor-zoom-out animate-fade-in"
+          onClick={() => setShowFullImage(false)}
+        >
+          <img 
+            src={selectedNews.gambar_url} 
+            alt={selectedNews.judul} 
+            className="max-w-full max-h-full object-contain animate-scale-in"
+          />
+          <div className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white rounded-full p-2.5 transition-colors">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

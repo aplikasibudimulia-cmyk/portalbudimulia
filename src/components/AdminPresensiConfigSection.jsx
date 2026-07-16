@@ -18,7 +18,11 @@ function hitungJarak(lat1, lon1, lat2, lon2) {
 export default function AdminPresensiConfigSection() {
   const [settings, setSettings] = useState({
     qr_interval_detik: '20',
+    jam_mulai_presensi: '06:00',
     jam_batas_hadir: '07:00',
+    jam_batas_pulang: '14:00',
+    jadwal_otomatis_aktif: 'false',
+    hari_aktif_presensi: '1,2,3,4,5',
     presensi_qr_aktif: 'true',
     selfie_required: 'true',
     notif_peringatan_aktif: 'true',
@@ -31,6 +35,7 @@ export default function AdminPresensiConfigSection() {
     geofence_radius_meter: '200',
     kode_pembatalan_presensi: '123456',
   })
+  const [geofenceAreas, setGeofenceAreas] = useState([]) // multiple areas
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
@@ -40,6 +45,81 @@ export default function AdminPresensiConfigSection() {
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [isResetting, setIsResetting] = useState(false)
   const [resetMsg, setResetMsg] = useState('')
+  const [isLoggingInAsPiket, setIsLoggingInAsPiket] = useState(false)
+
+  const handleLoginAsPiket = async () => {
+    setIsLoggingInAsPiket(true)
+    try {
+      // Find by code first (cleaner, no spaces)
+      let { data: guru, error: errGuru } = await supabase
+        .from('guru')
+        .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
+        .eq('kode', 'piketsmpbm135')
+        .maybeSingle()
+
+      // If not found, try finding by name
+      if (!guru) {
+        const { data: guruByName } = await supabase
+          .from('guru')
+          .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
+          .eq('nama_guru', 'Petugas Piket')
+          .maybeSingle()
+        guru = guruByName
+      }
+
+      if (!guru) {
+        alert('Gagal: Data guru dengan kode "piketsmpbm135" atau nama "Petugas Piket" tidak ditemukan di database.')
+        setIsLoggingInAsPiket(false)
+        return
+      }
+
+      // Find their login account by loading all guru accounts and filtering in memory (same as AdminManajemenAkunSection)
+      // Select specific columns to avoid permission denied on sensitive columns (like password)
+      const { data: akunList, error: errAkun } = await supabase
+        .from('akun_pengguna')
+        .select('id, username, role, foreign_id')
+        .eq('role', 'guru')
+
+      if (errAkun) throw errAkun
+
+      const akun = akunList?.find(a => String(a.foreign_id) === String(guru.id))
+
+      if (!akun) {
+        alert(`Gagal: Data guru ditemukan (ID: ${guru.id}), tetapi akun login portalnya belum dibuat. Silakan buat akun login di Manajemen Akun terlebih dahulu.`)
+        setIsLoggingInAsPiket(false)
+        return
+      }
+
+      // Build session data (same as impersonate flow in AdminManajemenAkunSection.jsx)
+      const sessionData = {
+        id: guru.id,
+        kode: guru.kode,
+        nama_guru: guru.nama_guru,
+        user_name: guru.user_name,
+        foto_url: guru.foto_url,
+        roles: guru.guru_role.map(r => ({ id: r.role_id, nama: r.roles?.nama })),
+        kelas: guru.guru_kelas,
+        akun_id: akun.id,
+        app_role: akun.role
+      }
+
+      const { data: tokenRecord, error: errToken } = await supabase
+        .from('impersonate_tokens')
+        .insert({
+          role: 'guru',
+          session_data: sessionData
+        })
+        .select('id')
+        .single()
+
+      if (errToken) throw errToken
+      window.open(`/impersonate?token=${tokenRecord.id}`, '_blank')
+    } catch (err) {
+      alert('Gagal login sebagai petugas piket: ' + err.message)
+    } finally {
+      setIsLoggingInAsPiket(false)
+    }
+  }
 
   // Daftar siswa
   const [siswaList, setSiswaList] = useState([])
@@ -50,9 +130,36 @@ export default function AdminPresensiConfigSection() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
-    const [{ data: pengaturan }, { data: siswa }, { data: subsSiswa }, { data: subsOrtu }] = await Promise.all([
+    let siswa = []
+    let from = 0
+    let to = 999
+    let hasMore = true
+    while (hasMore) {
+      const { data, error } = await supabase.from('siswa_lengkap')
+        .select('nisn, nama_lengkap, kelas')
+        .eq('is_aktif', true)
+        .order('kelas')
+        .order('nama_lengkap')
+        .range(from, to)
+      if (error) {
+        console.error(error)
+        break
+      }
+      if (!data || data.length === 0) {
+        hasMore = false
+      } else {
+        siswa = [...siswa, ...data]
+        if (data.length < 1000) {
+          hasMore = false
+        } else {
+          from += 1000
+          to += 1000
+        }
+      }
+    }
+
+    const [{ data: pengaturan }, { data: subsSiswa }, { data: subsOrtu }] = await Promise.all([
       supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
-      supabase.from('siswa_lengkap').select('nisn, nama_lengkap, kelas').eq('is_aktif', true).order('kelas').order('nama_lengkap'),
       supabase.from('push_subscriptions').select('nisn'),
       supabase.from('push_subscriptions_ortu').select('nisn_anak')
     ])
@@ -60,8 +167,12 @@ export default function AdminPresensiConfigSection() {
       const map = {}
       pengaturan.forEach(p => { map[p.setting_key] = p.setting_value || '' })
       setSettings(prev => ({ ...prev, ...map }))
+      // Load multiple geofence areas
+      if (map['geofence_areas']) {
+        try { setGeofenceAreas(JSON.parse(map['geofence_areas'])) } catch { setGeofenceAreas([]) }
+      }
     }
-    if (siswa) setSiswaList(siswa)
+    setSiswaList(siswa)
     
     // Set status push notification
     const activeSiswaNisns = new Set((subsSiswa || []).map(s => s.nisn))
@@ -84,13 +195,17 @@ export default function AdminPresensiConfigSection() {
     setSaving(true)
     setSaveMsg('')
     const keys = [
-      'qr_interval_detik', 'jam_batas_hadir', 'presensi_qr_aktif',
+      'qr_interval_detik', 'jam_mulai_presensi', 'jam_batas_hadir', 'jam_batas_pulang',
+      'jadwal_otomatis_aktif', 'hari_aktif_presensi', 'presensi_qr_aktif',
       'selfie_required', 'notif_peringatan_aktif', 'jam_mulai_notif_belum_presensi',
       'notif_pengingat_interval_menit',
       'geofence_aktif', 'geofence_lat', 'geofence_lng', 'geofence_radius_meter',
       'kode_pembatalan_presensi'
     ]
-    await Promise.all(keys.map(k => saveSetting(k, settings[k])))
+    await Promise.all([
+      ...keys.map(k => saveSetting(k, settings[k])),
+      saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
+    ])
     setSaving(false)
     setSaveMsg('✅ Pengaturan disimpan!')
     setTimeout(() => setSaveMsg(''), 3000)
@@ -235,31 +350,33 @@ export default function AdminPresensiConfigSection() {
         <p className="text-sm text-slate-500 mt-1">Konfigurasi sistem presensi QR Code, geofencing lokasi, notifikasi web, dan pengingat siswa.</p>
       </div>
 
-      {/* Link TV */}
-      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-bold text-indigo-800">🖥️ Halaman Tampilan TV</p>
-          <p className="text-xs text-indigo-600 mt-0.5 font-mono break-all">{tvUrl}</p>
+      {/* Link TV + Petugas Piket */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-indigo-800">🖥️ Halaman Tampilan TV</p>
+            <p className="text-xs text-indigo-600 mt-0.5 font-mono break-all">{tvUrl}</p>
+          </div>
+          <a href={tvUrl} target="_blank" rel="noopener noreferrer"
+            className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors text-center block">
+            Buka di Tab Baru →
+          </a>
         </div>
-        <a href={tvUrl} target="_blank" rel="noopener noreferrer"
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors shrink-0 text-center">
-          Buka di Tab Baru →
-        </a>
-      </div>
-
-      {/* Statistik Hari Ini */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-black text-emerald-700">{statHariIni.hadir}</p>
-          <p className="text-xs font-bold text-emerald-600 mt-1">Sudah Masuk</p>
-        </div>
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-black text-blue-700">{statHariIni.pulang}</p>
-          <p className="text-xs font-bold text-blue-600 mt-1">Sudah Pulang</p>
-        </div>
-        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-center">
-          <p className="text-2xl font-black text-rose-700">{statHariIni.belum >= 0 ? statHariIni.belum : '—'}</p>
-          <p className="text-xs font-bold text-rose-600 mt-1">Belum Presensi</p>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-emerald-800">👮 Akun Petugas Piket</p>
+            <p className="text-xs text-emerald-600 mt-0.5">Masuk langsung ke akun guru/petugas piket (impersonate) untuk input presensi manual & kelola kehadiran siswa.</p>
+          </div>
+          <button 
+            onClick={handleLoginAsPiket}
+            disabled={isLoggingInAsPiket}
+            className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-bold rounded-xl transition-colors text-center flex items-center justify-center gap-2">
+            {isLoggingInAsPiket ? (
+              <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Menghubungkan...</>
+            ) : (
+              'Masuk Akun Petugas Piket →'
+            )}
+          </button>
         </div>
       </div>
 
@@ -291,15 +408,108 @@ export default function AdminPresensiConfigSection() {
           </div>
         </div>
 
-        {/* Jam Batas Hadir */}
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-2">Jam Batas Hadir <span className="text-slate-400 font-normal">(sebelum = Hadir, sesudah = Terlambat)</span></label>
-          <input type="time"
-            value={settings.jam_batas_hadir}
-            onChange={e => setSettings(p => ({ ...p, jam_batas_hadir: e.target.value }))}
-            className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
-          />
+        {/* Jadwal Otomatis Harian */}
+        <div className="border border-slate-200 rounded-xl p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">⏰ Jadwal Otomatis Harian</p>
+              <p className="text-xs text-slate-400 mt-0.5">Atur jam presensi otomatis. Saat jam batas pulang tercapai, presensi hari itu selesai otomatis.</p>
+            </div>
+            <ToggleSwitch value={settings.jadwal_otomatis_aktif} onChange={v => setSettings(p => ({ ...p, jadwal_otomatis_aktif: v }))} colorOn="bg-violet-500" />
+          </div>
+
+          {settings.jadwal_otomatis_aktif === 'true' && (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-800 flex items-start gap-2">
+              <span className="shrink-0 text-base">🗓️</span>
+              <span>Jadwal otomatis <strong>aktif</strong>. Presensi akan dimulai pukul <strong>{settings.jam_mulai_presensi}</strong> dan ditutup otomatis pukul <strong>{settings.jam_batas_pulang}</strong>. QR di layar TV akan menampilkan layar selesai setelahnya.</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Mulai Presensi</label>
+              <input type="time"
+                value={settings.jam_mulai_presensi}
+                onChange={e => setSettings(p => ({ ...p, jam_mulai_presensi: e.target.value }))}
+                className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
+              />
+              <p className="text-xs text-slate-400 mt-1">QR mulai aktif</p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Batas Hadir</label>
+              <input type="time"
+                value={settings.jam_batas_hadir}
+                onChange={e => setSettings(p => ({ ...p, jam_batas_hadir: e.target.value }))}
+                className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
+              />
+              <p className="text-xs text-slate-400 mt-1">Lewat ini = Terlambat</p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Batas Pulang</label>
+              <input type="time"
+                value={settings.jam_batas_pulang}
+                onChange={e => setSettings(p => ({ ...p, jam_batas_pulang: e.target.value }))}
+                className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
+              />
+              <p className="text-xs text-slate-400 mt-1">Presensi selesai otomatis</p>
+            </div>
+          </div>
+
+          {/* Hari Aktif Presensi */}
+          <div className="mt-4 border-t border-violet-100 pt-4">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Hari Aktif Presensi Otomatis</label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: 'Senin', val: '1' },
+                { label: 'Selasa', val: '2' },
+                { label: 'Rabu', val: '3' },
+                { label: 'Kamis', val: '4' },
+                { label: 'Jumat', val: '5' },
+                { label: 'Sabtu', val: '6' },
+                { label: 'Minggu', val: '0' },
+              ].map(day => {
+                const activeDays = (settings.hari_aktif_presensi || '1,2,3,4,5').split(',')
+                const isChecked = activeDays.includes(day.val)
+                return (
+                  <label key={day.val} className={`flex items-center gap-2 px-3 py-2 border rounded-xl cursor-pointer text-xs font-semibold select-none transition-all ${
+                    isChecked
+                      ? 'bg-violet-50 border-violet-300 text-violet-700 font-bold'
+                      : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        let newDays = [...activeDays]
+                        if (e.target.checked) {
+                          if (!newDays.includes(day.val)) newDays.push(day.val)
+                        } else {
+                          newDays = newDays.filter(d => d !== day.val)
+                        }
+                        setSettings(p => ({ ...p, hari_aktif_presensi: newDays.join(',') }))
+                      }}
+                      className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 h-3.5 w-3.5"
+                    />
+                    {day.label}
+                  </label>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1.5">Sistem presensi otomatis dan display TV QR hanya berjalan pada hari-hari yang dicentang di atas.</p>
+          </div>
         </div>
+
+        {/* Jam Batas Hadir Manual (standalone, when jadwal_otomatis is off) */}
+        {settings.jadwal_otomatis_aktif !== 'true' && (
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Jam Batas Hadir <span className="text-slate-400 font-normal">(sebelum = Hadir, sesudah = Terlambat)</span></label>
+            <input type="time"
+              value={settings.jam_batas_hadir}
+              onChange={e => setSettings(p => ({ ...p, jam_batas_hadir: e.target.value }))}
+              className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 w-full sm:w-64"
+            />
+          </div>
+        )}
 
         {/* Toggle Wajib Selfie */}
         <div className="flex items-center justify-between">
@@ -352,7 +562,7 @@ export default function AdminPresensiConfigSection() {
             {/* Koordinat Sekolah */}
             <div className="space-y-3">
               <p className="text-sm font-semibold text-slate-700">Koordinat Lokasi Sekolah</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Latitude</label>
                   <input
@@ -379,7 +589,7 @@ export default function AdminPresensiConfigSection() {
               <button
                 onClick={handleDetectLocation}
                 disabled={isDetectingLocation}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 disabled:text-slate-400 text-sm font-bold rounded-xl transition-colors border border-slate-200"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 disabled:text-slate-400 text-sm font-bold rounded-xl transition-colors border border-slate-200"
               >
                 {isDetectingLocation ? (
                   <><div className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />Mendeteksi lokasi...</>
@@ -413,19 +623,95 @@ export default function AdminPresensiConfigSection() {
               <label className="block text-sm font-semibold text-slate-700 mb-2">
                 Radius Toleransi: <span className="text-rose-600 font-black">{settings.geofence_radius_meter} meter</span>
               </label>
-              <input type="range" min="50" max="2000" step="50"
+              <input type="range" min="1" max="2000" step="1"
                 value={settings.geofence_radius_meter}
                 onChange={e => setSettings(p => ({ ...p, geofence_radius_meter: e.target.value }))}
                 className="w-full accent-rose-500"
               />
               <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>50m (ketat)</span>
+                <span>1m (sangat ketat)</span>
                 <span>500m (sedang)</span>
                 <span>2000m (longgar)</span>
               </div>
               <p className="text-xs text-slate-500 mt-2">
                 Siswa yang jaraknya lebih dari <strong>{settings.geofence_radius_meter} meter</strong> dari titik sekolah akan ditolak. Disarankan <strong>200–300 meter</strong> untuk keseimbangan antara keakuratan GPS dan toleransi sinyal.
               </p>
+            </div>
+
+            {/* Multiple Geofencing Areas */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-700">📍 Area Geofencing Tambahan</p>
+                <button
+                  onClick={() => setGeofenceAreas(prev => [...prev, { nama: '', lat: '', lng: '', radius: 200 }])}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
+                  Tambah Area
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">Siswa yang berada di <strong>salah satu</strong> area ini (OR) tetap dapat presensi, selain dari titik utama sekolah di atas.</p>
+              {geofenceAreas.length === 0 && (
+                <p className="text-xs text-slate-400 italic border border-dashed border-slate-200 rounded-xl p-3 text-center">Belum ada area tambahan. Klik "Tambah Area" untuk menambahkan.</p>
+              )}
+              {geofenceAreas.map((area, idx) => (
+                <div key={idx} className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-600">Area #{idx + 1}</p>
+                    <button
+                      onClick={() => setGeofenceAreas(prev => prev.filter((_, i) => i !== idx))}
+                      className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                      title="Hapus area ini"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Nama area (opsional, misal: Gedung Olahraga)"
+                    value={area.nama}
+                    onChange={e => setGeofenceAreas(prev => prev.map((a, i) => i === idx ? { ...a, nama: e.target.value } : a))}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                  />
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Latitude</label>
+                      <input type="text" placeholder="-6.1234" value={area.lat}
+                        onChange={e => setGeofenceAreas(prev => prev.map((a, i) => i === idx ? { ...a, lat: e.target.value } : a))}
+                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Longitude</label>
+                      <input type="text" placeholder="106.8901" value={area.lng}
+                        onChange={e => setGeofenceAreas(prev => prev.map((a, i) => i === idx ? { ...a, lng: e.target.value } : a))}
+                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Radius (m)</label>
+                      <input type="number" min="1" max="5000" placeholder="200" value={area.radius}
+                        onChange={e => setGeofenceAreas(prev => prev.map((a, i) => i === idx ? { ...a, radius: parseInt(e.target.value) || 200 } : a))}
+                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!navigator.geolocation) return
+                      navigator.geolocation.getCurrentPosition(
+                        pos => setGeofenceAreas(prev => prev.map((a, i) => i === idx ? { ...a, lat: pos.coords.latitude.toFixed(7), lng: pos.coords.longitude.toFixed(7) } : a)),
+                        () => alert('Gagal mendapatkan lokasi.'),
+                        { enableHighAccuracy: true, timeout: 10000 }
+                      )
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors border border-slate-200"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+                    Gunakan Lokasi Saya
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -480,7 +766,7 @@ export default function AdminPresensiConfigSection() {
           <input type="time"
             value={settings.jam_mulai_notif_belum_presensi}
             onChange={e => setSettings(p => ({ ...p, jam_mulai_notif_belum_presensi: e.target.value }))}
-            className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
+            className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 w-full sm:w-64"
           />
         </div>
 
@@ -515,14 +801,16 @@ export default function AdminPresensiConfigSection() {
 
         {/* Daftar Siswa */}
         <div className="border-t border-slate-100 pt-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <p className="text-sm font-bold text-slate-700">Daftar Siswa Aktif ({siswaList.length})</p>
             <input type="text" placeholder="Cari nama, NISN, kelas..."
               value={searchSiswa} onChange={e => setSearchSiswa(e.target.value)}
-              className="pl-3 pr-4 py-1.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none w-52 bg-slate-50"
+              className="pl-3 pr-4 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none w-full sm:w-64 bg-slate-50"
             />
           </div>
-          <div className="overflow-x-auto rounded-xl border border-slate-100">
+
+          {/* Desktop View (Table) */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-100">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs uppercase tracking-wider">
                 <tr>
@@ -562,6 +850,38 @@ export default function AdminPresensiConfigSection() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile View (Card List) */}
+          <div className="block md:hidden space-y-3">
+            {filteredSiswa.length === 0 ? (
+              <div className="p-8 text-center text-slate-400 text-sm bg-slate-50 rounded-xl border border-slate-100">Tidak ada siswa ditemukan.</div>
+            ) : filteredSiswa.map(s => (
+              <div key={s.nisn} className="bg-slate-50/50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <p className="font-bold text-slate-800 text-sm leading-snug">{s.nama_lengkap}</p>
+                    <p className="text-xs text-slate-400 font-mono mt-0.5">{s.nisn}</p>
+                  </div>
+                  <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100 shrink-0">{s.kelas}</span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                  <span className="text-slate-405 font-bold uppercase tracking-wider text-[10px]">Notifikasi HP</span>
+                  <div className="flex items-center gap-1.5">
+                    {activeSubs.siswa.has(s.nisn) ? (
+                      <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-[9px] font-bold border border-emerald-100">🔔 Siswa</span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 bg-slate-50 text-slate-400 rounded text-[9px] border border-slate-100">🔕 Siswa</span>
+                    )}
+                    {activeSubs.ortu.has(s.nisn) ? (
+                      <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-bold border border-amber-100">🔔 Ortu</span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 bg-slate-50 text-slate-400 rounded text-[9px] border border-slate-100">🔕 Ortu</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

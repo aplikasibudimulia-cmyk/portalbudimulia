@@ -34,11 +34,12 @@ export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua 
       // 3. Fetch Rekap Kehadiran (All Time / Semester Ini)
       const { data: presensi } = await supabase
         .from('presensi_harian')
-        .select('status')
+        .select('status, tipe')
         .eq('siswa_nisn', studentData.nisn)
       
-      const rekap = { H: 0, T: 0, S: 0, I: 0, A: 0, total: presensi?.length || 0 }
-      presensi?.forEach(p => {
+      const records = (presensi || []).filter(p => !p.tipe || p.tipe !== 'pulang')
+      const rekap = { H: 0, T: 0, S: 0, I: 0, A: 0, total: records.length }
+      records.forEach(p => {
         if (rekap[p.status] !== undefined) rekap[p.status]++
       })
       setRekapKehadiran(rekap)

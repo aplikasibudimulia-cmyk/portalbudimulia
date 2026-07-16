@@ -197,13 +197,56 @@ export default function LaporanPengumuman() {
 
         // Fetch students
         const activeTaId = typeData.ta_referensi_id
-        let studentQuery = supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
+        let studData = []
+        let from = 0
+        let to = 999
+        let hasMore = true
+
         if (activeTaId) {
-          studentQuery = supabase.from('enrollment')
-            .select('*, siswa_permanent(*), tahun_ajaran(nama, is_aktif)')
-            .eq('tahun_ajaran_id', activeTaId)
+          while (hasMore) {
+            const { data, error } = await supabase.from('enrollment')
+              .select('*, siswa_permanent(*), tahun_ajaran(nama, is_aktif)')
+              .eq('tahun_ajaran_id', activeTaId)
+              .range(from, to)
+            if (error) {
+              console.error(error)
+              break
+            }
+            if (!data || data.length === 0) {
+              hasMore = false
+            } else {
+              studData = [...studData, ...data]
+              if (data.length < 1000) {
+                hasMore = false
+              } else {
+                from += 1000
+                to += 1000
+              }
+            }
+          }
+        } else {
+          while (hasMore) {
+            const { data, error } = await supabase.from('siswa_lengkap')
+              .select('*')
+              .order('nama_lengkap')
+              .range(from, to)
+            if (error) {
+              console.error(error)
+              break
+            }
+            if (!data || data.length === 0) {
+              hasMore = false
+            } else {
+              studData = [...studData, ...data]
+              if (data.length < 1000) {
+                hasMore = false
+              } else {
+                from += 1000
+                to += 1000
+              }
+            }
+          }
         }
-        const { data: studData } = await studentQuery
 
         let finalStudents = []
         if (activeTaId && studData) {

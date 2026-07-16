@@ -14,6 +14,7 @@ import PresensiManualSiswa from './pages/PresensiManualSiswa'
 
 function App() {
   useEffect(() => {
+    // 1. Fetch Tema Warna
     const fetchTheme = async () => {
       const { data } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'tema_warna').maybeSingle()
       if (data && data.setting_value) {
@@ -21,6 +22,27 @@ function App() {
       }
     }
     fetchTheme()
+
+    // 2. Pemeliharaan Sesi Auth & Auto-Refresh Token Supabase secara Global
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'TOKEN_REFRESHED') {
+        console.log('Sesi diperbarui: Token Supabase berhasil di-refresh otomatis.')
+      }
+      if (event === 'SIGNED_OUT') {
+        console.warn('Sesi habis: Pengguna telah keluar.')
+        localStorage.removeItem('siswa_session')
+        localStorage.removeItem('guru_session')
+        localStorage.removeItem('orangtua_session')
+        const path = window.location.pathname
+        if (path !== '/' && path !== '/login' && path !== '/login-admin' && path !== '/presensi-tv') {
+          window.location.href = '/login'
+        }
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
   return (

@@ -11,6 +11,7 @@ import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import SiswaPoinSection from '../components/SiswaPoinSection'
 import SiswaRiwayatPresensi from '../components/SiswaRiwayatPresensi'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
+import SiswaJadwalSection from '../components/SiswaJadwalSection'
 
 function DashboardOrangTua() {
   const navigate = useNavigate()
@@ -113,11 +114,22 @@ function DashboardOrangTua() {
   const [showFeatureConfig, setShowFeatureConfig] = useState({
     presensi: true,
     nilai: true,
-    poin: true
+    poin: true,
+    poinTotal: true,
+    poinNegatif: true,
+    poinPositif: true,
+    poinLeaderboard: true,
+    poinTataTertib: true,
+    poinKatalog: true,
+    jadwal: true,
+    jadwalSemester: '2'
   })
 
   useEffect(() => {
     const init = async () => {
+      // Pastikan token Supabase diperbarui secara sinkron sebelum query data
+      await supabase.auth.getSession()
+
       const raw = localStorage.getItem('orangtua_session')
       if (!raw) {
         navigate('/')
@@ -161,7 +173,20 @@ function DashboardOrangTua() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
+        const newShowFeature = { 
+          presensi: true, 
+          nilai: true, 
+          poin: true, 
+          poinTotal: true, 
+          poinNegatif: true, 
+          poinPositif: true, 
+          poinLeaderboard: true, 
+          poinTataTertib: true, 
+          poinKatalog: true, 
+          kalender: true,
+          jadwal: true,
+          jadwalSemester: '2'
+        }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'link_grup_ortu') setLinkGrupOrtu(p.setting_value)
@@ -174,7 +199,15 @@ function DashboardOrangTua() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_leaderboard') newShowFeature.poinLeaderboard = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_tata_tertib') newShowFeature.poinTataTertib = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_katalog') newShowFeature.poinKatalog = p.setting_value === 'true'
           if (p.setting_key === 'show_calendar_ortu') newShowFeature.kalender = p.setting_value === 'true'
+          if (p.setting_key === 'show_jadwal_ortu') newShowFeature.jadwal = p.setting_value === 'true'
+          if (p.setting_key === 'jadwal_semester_aktif') newShowFeature.jadwalSemester = p.setting_value || '2'
         })
         setShowProfileConfig(newShowProfile)
         setShowFeatureConfig(newShowFeature)
@@ -396,7 +429,20 @@ function DashboardOrangTua() {
       const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
-        const newShowFeature = { presensi: true, nilai: true, poin: true, kalender: true }
+        const newShowFeature = { 
+          presensi: true, 
+          nilai: true, 
+          poin: true, 
+          poinTotal: true, 
+          poinNegatif: true, 
+          poinPositif: true, 
+          poinLeaderboard: true, 
+          poinTataTertib: true, 
+          poinKatalog: true, 
+          kalender: true,
+          jadwal: true,
+          jadwalSemester: '2'
+        }
         pengaturan.forEach(p => {
           if (p.setting_key === 'pengumuman_teks') setPengumuman(p.setting_value)
           if (p.setting_key === 'link_grup_ortu') setLinkGrupOrtu(p.setting_value)
@@ -409,7 +455,15 @@ function DashboardOrangTua() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_leaderboard') newShowFeature.poinLeaderboard = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_tata_tertib') newShowFeature.poinTataTertib = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_katalog') newShowFeature.poinKatalog = p.setting_value === 'true'
           if (p.setting_key === 'show_calendar_ortu') newShowFeature.kalender = p.setting_value === 'true'
+          if (p.setting_key === 'show_jadwal_ortu') newShowFeature.jadwal = p.setting_value === 'true'
+          if (p.setting_key === 'jadwal_semester_aktif') newShowFeature.jadwalSemester = p.setting_value || '2'
         })
         setShowProfileConfig(prev => {
           if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile
@@ -529,6 +583,19 @@ function DashboardOrangTua() {
     }
   }
 
+  const formatPhoneNumber = (phone) => {
+    if (!phone) return ''
+    let clean = String(phone).replace(/\D/g, '')
+    if (clean.startsWith('6208')) {
+      clean = '628' + clean.substring(4)
+    } else if (clean.startsWith('08')) {
+      clean = '628' + clean.substring(2)
+    } else if (clean.startsWith('8')) {
+      clean = '628' + clean.substring(1)
+    }
+    return clean
+  }
+
   const handleOpenEditBiodata = () => {
     setEditBiodataForm({
       nama_ortu: studentData?.nama_ortu || '',
@@ -547,11 +614,12 @@ function DashboardOrangTua() {
     setIsSavingBiodata(true)
 
     try {
+      const formattedWa = formatPhoneNumber(editBiodataForm.no_hp_ortu)
       const { error } = await supabase
         .from('siswa_permanent')
         .update({
           nama_ortu: editBiodataForm.nama_ortu.trim() || null,
-          no_hp_ortu: editBiodataForm.no_hp_ortu.trim() || null,
+          no_hp_ortu: formattedWa || null,
           email_ortu: editBiodataForm.email_ortu.trim() || null
         })
         .eq('nisn', studentData.nisn)
@@ -596,9 +664,37 @@ function DashboardOrangTua() {
   const currentMenuLabel = 
     selectedType === 'NILAI' ? 'Laporan Nilai Anak' : 
     selectedType === 'PRESENSI' ? 'Riwayat Presensi' : 
+    selectedType === 'POIN' ? 'Poin & Disiplin' : 
+    selectedType === 'JADWAL' ? 'Jadwal Pelajaran' : 
     selectedType === 'KALENDER' ? 'Kalender Akademik' : 
     selectedType ? selectedType.nama : 
     'Beranda Profil'
+
+  const isBiodataLengkap = studentData && studentData.nama_ortu && studentData.no_hp_ortu && studentData.email_ortu;
+
+  const biodataWarningBanner = studentData && !isBiodataLengkap && (
+    <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 animate-fade-in shadow-sm">
+      <div className="flex items-start gap-3">
+        <span className="p-2 bg-amber-100 text-amber-800 rounded-lg mt-0.5 sm:mt-0 shrink-0">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </span>
+        <div>
+          <h4 className="text-sm font-bold text-amber-900">Penting: Lengkapi Biodata Orang Tua!</h4>
+          <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+            Mohon isi <strong>Nama</strong>, <strong>Nomor HP / WhatsApp</strong>, dan <strong>Email</strong> Bapak/Ibu pada biodata agar sekolah dapat mengirimkan informasi penting secara tepat.
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={() => handleOpenEditBiodata()}
+        className="px-4.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm shrink-0 uppercase tracking-wider"
+      >
+        Lengkapi Sekarang
+      </button>
+    </div>
+  )
 
   const studentInfoCard = studentData && (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-fade-in mb-8 relative">
@@ -744,6 +840,36 @@ function DashboardOrangTua() {
                 </button>
               )}
 
+              {showFeatureConfig.poin && (
+                <button 
+                  onClick={() => { setSelectedType('POIN'); setSidebarOpen(false) }}
+                  title="Sistem Poin & Kedisiplinan Anak"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'POIN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'POIN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="8" r="7" />
+                    <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+                  </svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Poin & Disiplin</span>}
+                </button>
+              )}
+
+              {/* Jadwal Pelajaran */}
+              {showFeatureConfig.jadwal && (
+                <button 
+                  onClick={() => { setSelectedType('JADWAL'); setSidebarOpen(false) }}
+                  title="Jadwal Pelajaran Anak"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'JADWAL' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'JADWAL' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M3 9h18" />
+                    <path d="M9 21V9" />
+                  </svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
+                </button>
+              )}
+
               {/* Kalender Akademik */}
               {showFeatureConfig.kalender && (
                 <button 
@@ -834,7 +960,7 @@ function DashboardOrangTua() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50 dashboard-content-area">
         
         {/* Sticky Orange Notification Banner */}
         {!notifOrtuGranted && 'Notification' in window && (
@@ -866,6 +992,9 @@ function DashboardOrangTua() {
           <div className="w-full space-y-6">
 
 
+            {/* Banner Peringatan Biodata belum lengkap */}
+            {biodataWarningBanner}
+
             {/* Kartu Profil selalu muncul di atas */}
             {studentInfoCard}
 
@@ -876,6 +1005,25 @@ function DashboardOrangTua() {
               <SiswaNilaiSection studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
               <SiswaRiwayatPresensi studentData={studentData} />
+            ) : selectedType === 'POIN' ? (
+              <SiswaPoinSection 
+                siswaNisn={studentData?.nisn} 
+                activeTa={{ id: studentData?.tahun_ajaran_id }} 
+                showTabPoinSaya={showFeatureConfig.poinTotal || showFeatureConfig.poinNegatif || showFeatureConfig.poinPositif}
+                showPoinTotal={showFeatureConfig.poinTotal}
+                showPoinNegatif={showFeatureConfig.poinNegatif}
+                showPoinPositif={showFeatureConfig.poinPositif}
+                showTabLeaderboard={showFeatureConfig.poinLeaderboard}
+                showTabTataTertib={showFeatureConfig.poinTataTertib}
+                showTabKatalog={showFeatureConfig.poinKatalog}
+                showPointRecords={showFeatureConfig.detailPoin}
+              />
+            ) : selectedType === 'JADWAL' ? (
+              <SiswaJadwalSection 
+                kelas={studentData?.kelas}
+                activeTa={{ id: studentData?.tahun_ajaran_id }}
+                semester={showFeatureConfig.jadwalSemester}
+              />
             ) : selectedType === 'KALENDER' ? (
               <ProgramSekolahSection session={null} isAdmin={false} activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} />
             ) : (

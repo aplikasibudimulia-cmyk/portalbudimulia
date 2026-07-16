@@ -51,6 +51,7 @@ ALTER TABLE siswa_backup            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE siswa_permanent         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE student_points          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tahun_ajaran            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guru_kode_ta            ENABLE ROW LEVEL SECURITY;
 
 
 -- ============================================================
@@ -75,7 +76,7 @@ DECLARE
     'pengaturan','pengaturan_sekolah','point_catalog','point_records','presensi_harian',
     'push_subscriptions','push_subscriptions_ortu','qr_tokens','role_fitur','roles',
     'school_regulations','semester','sesi_presensi','siswa_backup','siswa_permanent',
-    'student_points','tahun_ajaran'
+    'student_points','tahun_ajaran','guru_kode_ta'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tables LOOP
@@ -84,6 +85,54 @@ BEGIN
     END LOOP;
   END LOOP;
 END $cleanup$;
+
+
+-- ============================================================
+-- BAGIAN 2.5: HAPUS POLICY BARU (AGAR SCRIPT BISA DIULANG)
+-- ============================================================
+
+DO $drop_new$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT policyname, tablename
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND policyname IN (
+        'service_only_siswa_permanent', 'service_only_siswa_backup', 'anon_read_akun',
+        'service_write_akun', 'authenticated_read_guru', 'service_write_guru',
+        'authenticated_read_guru_bk', 'service_write_guru_bk', 'authenticated_read_guru_kelas',
+        'service_write_guru_kelas', 'authenticated_read_guru_mapel', 'service_write_guru_mapel',
+        'authenticated_read_guru_role', 'service_write_guru_role', 'authenticated_read_enrollment',
+        'service_write_enrollment', 'authenticated_rw_presensi_harian', 'service_rw_presensi_harian',
+        'authenticated_read_sesi', 'service_write_sesi', 'authenticated_rw_qr_tokens',
+        'service_rw_qr_tokens', 'service_only_impersonate', 'authenticated_read_nilai_siswa',
+        'service_write_nilai_siswa', 'authenticated_read_nilai_komponen', 'service_write_nilai_komponen',
+        'authenticated_read_nilai_config', 'service_write_nilai_config', 'authenticated_read_student_points',
+        'service_write_student_points', 'authenticated_read_point_records', 'service_write_point_records',
+        'authenticated_read_point_catalog', 'service_write_point_catalog', 'authenticated_read_guidance_logs',
+        'service_write_guidance_logs', 'authenticated_read_guidance_stages', 'service_write_guidance_stages',
+        'authenticated_rw_notifikasi', 'service_rw_notifikasi', 'authenticated_rw_notifikasi_read',
+        'service_rw_notifikasi_read', 'anon_insert_push', 'authenticated_rw_push', 'service_rw_push',
+        'anon_insert_push_ortu', 'authenticated_rw_push_ortu', 'service_rw_push_ortu',
+        'authenticated_read_dokumen', 'service_write_dokumen', 'authenticated_read_kumpulan',
+        'service_write_kumpulan', 'authenticated_read_berkas', 'service_write_berkas',
+        'authenticated_read_foto', 'service_write_foto', 'authenticated_rw_guru_kode_ta',
+        'service_write_guru_kode_ta', 'all_insert_activity_log', 'service_read_activity_log',
+        'public_read_tahun_ajaran', 'service_write_tahun_ajaran', 'public_read_semester',
+        'service_write_semester', 'public_read_roles', 'service_write_roles',
+        'public_read_role_fitur', 'service_write_role_fitur', 'public_read_mata_pelajaran',
+        'service_write_mata_pelajaran', 'public_read_dokumen_type', 'service_write_dokumen_type',
+        'public_read_jenis_pengumuman', 'service_write_jenis_pengumuman', 'public_read_berita',
+        'service_write_berita', 'public_read_pengaturan_sekolah', 'service_write_pengaturan_sekolah',
+        'public_read_school_regulations', 'service_write_school_regulations',
+        'authenticated_read_pengaturan', 'service_write_pengaturan'
+      )
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
+  END LOOP;
+END $drop_new$;
 
 
 -- ============================================================
@@ -355,6 +404,15 @@ CREATE POLICY "authenticated_read_pengaturan"
   ON pengaturan FOR SELECT TO authenticated USING (true);
 CREATE POLICY "service_write_pengaturan"
   ON pengaturan FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- -------------------------------------------------------
+-- guru_kode_ta: authenticated bisa read & write
+-- (admin frontend butuh insert/delete langsung)
+-- -------------------------------------------------------
+CREATE POLICY "authenticated_rw_guru_kode_ta"
+  ON guru_kode_ta FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "service_write_guru_kode_ta"
+  ON guru_kode_ta FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ============================================================

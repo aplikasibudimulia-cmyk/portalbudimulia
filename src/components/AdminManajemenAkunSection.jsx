@@ -30,22 +30,122 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [selectedClassFilter, setSelectedClassFilter] = useState('all')
   const [summaryFilter, setSummaryFilter] = useState('all')
 
-  const getAvailableClasses = (taId) => {
-    if (!taId) return []
-    // Hanya tampilkan kelas yang tersedia di tahun ajaran aktif yang di-set admin
-    // (untuk konsistensi, filter siswa berdasarkan taId yang diberikan)
-    return [...new Set(students?.filter(s => s.tahun_ajaran_id === taId && s.kelas && s.kelas !== '-').map(s => s.kelas))].sort()
-  }
 
-  // Hanya kelas dari tahun ajaran aktif (activeTa)
+
+  // Hanya kelas dari tahun ajaran aktif (activeTa) - Gabungkan enrollment dengan master_kelas
   const getActiveClasses = () => {
     if (!activeTa?.id) return []
-    return [...new Set(students?.filter(s => s.tahun_ajaran_id === activeTa.id && s.kelas && s.kelas !== '-').map(s => s.kelas))].sort()
+    const enrollmentClasses = students?.filter(s => s.tahun_ajaran_id === activeTa.id && s.kelas && s.kelas !== '-').map(s => s.kelas) || []
+    const masterClasses = masterKelasList.map(mk => mk.nama_kelas)
+    return [...new Set([...enrollmentClasses, ...masterClasses])].sort()
+  }
+
+  const getAvailableClasses = (taId) => {
+    if (!taId) return []
+    const enrollmentClasses = students?.filter(s => s.tahun_ajaran_id === taId && s.kelas && s.kelas !== '-').map(s => s.kelas) || []
+    // Jika untuk TA aktif, tambahkan master_kelas
+    if (taId === activeTa?.id) {
+      const masterClasses = masterKelasList.map(mk => mk.nama_kelas)
+      return [...new Set([...enrollmentClasses, ...masterClasses])].sort()
+    }
+    return [...new Set(enrollmentClasses)].sort()
+  }
+
+  // Gabungkan kelas berisi siswa aktif (dari enrollment) dan kelas kosong manual
+  const getAllClassesList = () => {
+    if (!activeTa?.id) return []
+    const enrollmentClasses = students?.filter(s => s.tahun_ajaran_id === activeTa.id && s.kelas && s.kelas !== '-').map(s => s.kelas) || []
+    const uniqueEnrollment = [...new Set(enrollmentClasses)].sort()
+
+    const listEnrollment = uniqueEnrollment.map(cls => ({
+      id: `enroll-${cls}`,
+      nama_kelas: cls,
+      source: 'siswa',
+      is_deletable: false
+    }))
+
+    const listMaster = masterKelasList
+      .filter(mk => !uniqueEnrollment.includes(mk.nama_kelas))
+      .map(mk => ({
+        id: mk.id,
+        nama_kelas: mk.nama_kelas,
+        source: 'master',
+        is_deletable: true
+      }))
+
+    return [...listEnrollment, ...listMaster].sort((a, b) => a.nama_kelas.localeCompare(b.nama_kelas))
   }
   
   const [loading, setLoading] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
   const [progressText, setProgressText] = useState('')
+
+  const [masterKelasList, setMasterKelasList] = useState([])
+  const [newClassNameInput, setNewClassNameInput] = useState('')
+
+  const fetchMasterKelas = async () => {
+    if (!activeTa?.id) return
+    try {
+      const { data, error } = await supabase
+        .from('master_kelas')
+        .select('*')
+        .eq('tahun_ajaran_id', activeTa.id)
+        .order('nama_kelas')
+      if (error) throw error
+      setMasterKelasList(data || [])
+    } catch (err) {
+      console.error('Gagal fetch master kelas:', err)
+    }
+  }
+
+  const handleAddMasterKelas = async (e) => {
+    e.preventDefault()
+    if (!activeTa?.id || !newClassNameInput.trim()) return
+    setIsProcessing(true)
+    setProgressText('Menambahkan kelas baru...')
+    try {
+      const { error } = await supabase
+        .from('master_kelas')
+        .insert([{
+          tahun_ajaran_id: activeTa.id,
+          nama_kelas: newClassNameInput.trim().toUpperCase()
+        }])
+      if (error) {
+        if (error.code === '23505') {
+          alert('Kelas tersebut sudah terdaftar untuk Tahun Ajaran aktif.')
+        } else {
+          throw error
+        }
+      } else {
+        setNewClassNameInput('')
+        await fetchMasterKelas()
+      }
+    } catch (err) {
+      alert('Gagal menambah kelas: ' + err.message)
+    } finally {
+      setIsProcessing(false)
+      setProgressText('')
+    }
+  }
+
+  const handleDeleteMasterKelas = async (id) => {
+    if (!window.confirm('Hapus kelas ini? Tindakan ini tidak menghapus data siswa, melainkan hanya menghapus daftar kelas kosong dari list master.')) return
+    setIsProcessing(true)
+    setProgressText('Menghapus kelas...')
+    try {
+      const { error } = await supabase
+        .from('master_kelas')
+        .delete()
+        .eq('id', id)
+      if (error) throw error
+      await fetchMasterKelas()
+    } catch (err) {
+      alert('Gagal menghapus kelas: ' + err.message)
+    } finally {
+      setIsProcessing(false)
+      setProgressText('')
+    }
+  }
 
   // Modal Biodata (Unified for Create & Edit)
   const [showBiodataModal, setShowBiodataModal] = useState(false)
@@ -256,14 +356,112 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   // Modal Export Excel
   const [showExportModal, setShowExportModal] = useState(false)
 
+  // Modal Cetak Kartu Login
+  const [showPrintCardsModal, setShowPrintCardsModal] = useState(false)
+
   // Modal Reset Password
   const [showResetModal, setShowResetModal] = useState(false)
   const [resetData, setResetData] = useState(null)
+  const [resetMethod, setResetMethod] = useState('random')
+
+  // State untuk fetch credential real-time dari siswa_permanent
+  const [isProcessingPrint, setIsProcessingPrint] = useState(false)
+  const [siswaPermanentCredentials, setSiswaPermanentCredentials] = useState({})
+
+  // Helper to map class to a beautiful unique color set
+  const getClassColor = (kelas) => {
+    if (!kelas) return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', solidBg: 'bg-slate-600' }
+    const cleanClass = kelas.trim().toUpperCase()
+    let hash = 0
+    for (let i = 0; i < cleanClass.length; i++) {
+      hash = cleanClass.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    const index = Math.abs(hash) % 7
+    const colors = [
+      { bg: 'bg-indigo-50/90', text: 'text-indigo-800', border: 'border-indigo-200', solidBg: 'bg-indigo-600' },
+      { bg: 'bg-emerald-50/95', text: 'text-emerald-800', border: 'border-emerald-200', solidBg: 'bg-[#00877a]' }, // matches the teal/emerald from image
+      { bg: 'bg-amber-50/95', text: 'text-amber-800', border: 'border-amber-200', solidBg: 'bg-amber-500' },
+      { bg: 'bg-pink-50/90', text: 'text-pink-800', border: 'border-pink-200', solidBg: 'bg-pink-600' },
+      { bg: 'bg-sky-50/90', text: 'text-sky-800', border: 'border-sky-200', solidBg: 'bg-sky-500' },
+      { bg: 'bg-violet-50/90', text: 'text-violet-800', border: 'border-violet-200', solidBg: 'bg-violet-600' },
+      { bg: 'bg-teal-50/90', text: 'text-teal-800', border: 'border-teal-200', solidBg: 'bg-teal-650' }
+    ]
+    return colors[index]
+  }
+
+  // Pre-calculate attendance numbers based on sorted alphabet of students inside each class
+  const classAbsenMap = React.useMemo(() => {
+    const map = {}
+    const studentsByClass = {}
+    
+    // Group raw students
+    students.forEach(std => {
+      const k = std.kelas || '-'
+      if (!studentsByClass[k]) studentsByClass[k] = []
+      studentsByClass[k].push(std)
+    })
+    
+    // Sort each class group alphabetically and assign index
+    Object.keys(studentsByClass).forEach(k => {
+      studentsByClass[k].sort((a, b) => (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '', 'id'))
+      studentsByClass[k].forEach((std, index) => {
+        map[std.nisn] = index + 1
+      })
+    })
+    
+    return map
+  }, [students])
+
+  const handleOpenPrintCardsModal = async () => {
+    setIsProcessingPrint(true)
+    try {
+      const { data, error } = await supabase
+        .from('siswa_permanent')
+        .select('nisn, kode_akses, ortu_username, ortu_password')
+      
+      if (error) throw error
+      
+      if (data) {
+        const credsMap = {}
+        data.forEach(item => {
+          if (item.nisn) {
+            credsMap[item.nisn] = {
+              kode_akses: item.kode_akses,
+              ortu_username: item.ortu_username,
+              ortu_password: item.ortu_password
+            }
+          }
+        })
+        setSiswaPermanentCredentials(credsMap)
+      }
+      setShowPrintCardsModal(true)
+    } catch (err) {
+      console.error("Gagal memuat credential siswa_permanent:", err)
+      alert("Gagal memuat data login dari server. Silakan coba kembali.")
+    } finally {
+      setIsProcessingPrint(false)
+    }
+  }
+
+  const handleResetMethodChange = (method) => {
+    setResetMethod(method)
+    if (method === 'random') {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      let generatedPass = ''
+      for (let i = 0; i < 6; i++) {
+        generatedPass += chars.charAt(Math.floor(Math.random() * chars.length))
+      }
+      setResetData(prev => ({ ...prev, generatedPass }))
+    } else {
+      setResetData(prev => ({ ...prev, generatedPass: '' }))
+    }
+  }
 
   
   // Refs
   const csvInputRef = useRef(null)
   const csvSiswaInputRef = useRef(null)
+  const bulkUpdateNisnInputRef = useRef(null)
   const massPhotoInputRef = useRef(null)
   const individualPhotoInputRef = useRef(null)
   const [uploadingPhotoFor, setUploadingPhotoFor] = useState(null)
@@ -286,6 +484,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   const fetchData = async () => {
     setLoading(true)
+    if (activeTa?.id) {
+      await fetchMasterKelas()
+    }
+
+    if (activeTab === 'kelas') {
+      setLoading(false)
+      return
+    }
+
     // 1. Fetch Akun Pengguna for current tab
     const { data: akunData, error: akunError } = await supabase.from('akun_pengguna').select('id, username, role, status, foreign_id, created_at, updated_at').eq('role', activeTab)
     if (akunError) console.error('fetchData akunError:', akunError)
@@ -317,6 +524,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       console.log('Students raw data:', students?.length, students?.[0])
       console.log('activeTa:', activeTa, 'selectedTaFilter:', selectedTaFilter)
       
+
       // Create a unique list of students (sometimes enrollment causes duplicates if not grouped)
       const uniqueStudentsMap = new Map()
       students.forEach(s => {
@@ -360,7 +568,11 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           foto_url: foto?.cloudinary_url || null,
           hasAkun: !!akun,
           akun_id: akun?.id,
-          username: activeTab === 'orang_tua' ? (akun?.username || student.ortu_username || '(Belum punya akun)') : (akun?.username || '(Belum punya akun)'),
+          username: activeTab === 'orang_tua' 
+            ? (akun?.username || student.ortu_username || '(Belum punya akun)') 
+            : (activeTab === 'murid' 
+                ? (student.email_aktif || akun?.username || '(Belum punya akun)') 
+                : (akun?.username || '(Belum punya akun)')),
           password_exists: !!akun?.password,
           status: akun?.status || 'nonaktif',
           rawStudent: student
@@ -432,6 +644,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   // Backup data for cards before summary filter is applied
   const dataForCards = [...mergedData];
 
+
+
   // Apply Summary Filter
   if (summaryFilter !== 'all') {
     if (summaryFilter === 'with_akun') {
@@ -451,7 +665,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   }
 
 
-  const handleResetPassword = (row) => {
+  const handleResetPassword = async (row) => {
     if (!row.hasAkun || !row.akun_id) {
       alert("User ini belum memiliki akun. Silakan buat akun terlebih dahulu melalui modal edit data.");
       return;
@@ -465,11 +679,27 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     }
     
     let defaultWa = ""
-    if (activeTab === 'murid') defaultWa = row.rawStudent?.no_whatsapp || ""
-    else if (activeTab === 'orang_tua') defaultWa = row.rawStudent?.no_hp_ortu || row.rawStudent?.no_whatsapp || ""
-    else defaultWa = row.rawGuru?.no_hp || ""
+    let noHpSiswa = ""
+    if (activeTab === 'murid' || activeTab === 'orang_tua') {
+      // Tarik langsung dari siswa_permanent untuk jaminan data terbaru dan lengkap (no_hp_ortu & no_whatsapp)
+      const { data: permData } = await supabase
+        .from('siswa_permanent')
+        .select('no_whatsapp, no_hp_ortu')
+        .eq('nisn', row.foreign_id)
+        .maybeSingle()
+        
+      noHpSiswa = permData?.no_whatsapp || row.rawStudent?.no_whatsapp || ""
+      if (activeTab === 'murid') {
+        defaultWa = noHpSiswa
+      } else {
+        defaultWa = permData?.no_hp_ortu || row.rawStudent?.no_hp_ortu || ""
+      }
+    } else {
+      defaultWa = row.rawGuru?.no_hp || ""
+    }
     
-    setResetData({ row, generatedPass, waNumber: defaultWa })
+    setResetMethod('random')
+    setResetData({ row, generatedPass, waNumber: defaultWa, noHpSiswa })
     setShowResetModal(true)
   }
 
@@ -477,6 +707,11 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     if (!resetData) return
     const { row, generatedPass } = resetData
     
+    if (resetMethod === 'manual' && (!generatedPass || generatedPass.trim().length < 4)) {
+      alert("Untuk input manual, kode/password minimal berisi 4 karakter!")
+      return
+    }
+
     setIsProcessing(true)
     
     // Update Supabase akun_pengguna via secure database function
@@ -514,7 +749,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
 
         let message = ""
-        const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}`
+        let roleParam = 'siswa'
+        if (activeTab === 'orang_tua') roleParam = 'orang_tua'
+        else if (activeTab === 'guru') roleParam = 'guru'
+        const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
         if (activeTab === 'murid') {
           message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Kode Akses:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         } else if (activeTab === 'orang_tua') {
@@ -724,12 +962,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const formatPhoneNumber = (phone) => {
     if (!phone) return ''
     let clean = String(phone).replace(/\D/g, '')
-    if (clean.startsWith('08')) {
-      clean = '62' + clean.substring(1)
-    } else if (clean.startsWith('6208')) {
+    if (clean.startsWith('6208')) {
       clean = '628' + clean.substring(4)
+    } else if (clean.startsWith('08')) {
+      clean = '628' + clean.substring(2)
     } else if (clean.startsWith('8')) {
-      clean = '62' + clean
+      clean = '628' + clean.substring(1)
     }
     return clean
   }
@@ -831,7 +1069,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
         const guruPayload = { 
           kode: biodataForm.kode, 
-          nama_guru: biodataForm.nama
+          nama_guru: biodataForm.nama,
+          no_hp: formatPhoneNumber(biodataForm.no_hp) || null
         }
         // Sinkronkan user_name di tabel guru dengan username yang diisi admin (tanpa domain)
         if (biodataForm.username && biodataForm.username !== '(Belum punya akun)') {
@@ -884,6 +1123,28 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         if (bkInserts.length > 0) await supabase.from('guru_bk').insert(bkInserts)
 
         // Sync Mapel across ALL TAs
+        // Validasi: pastikan tidak ada kelas yang sudah dipakai guru lain untuk mapel yang sama
+        const conflictErrors = []
+        guruMapel.forEach(gm => {
+          gm.mapel_list.forEach(ml => {
+            if (!ml.mapel_id) return
+            ml.kelas_list.forEach(k => {
+              const conflict = guruList.find(g =>
+                g.id !== biodataForm.id &&
+                g.guru_mapel?.some(gMapel =>
+                  gMapel.tahun_ajaran_id === gm.tahun_ajaran_id &&
+                  gMapel.mata_pelajaran_id === ml.mapel_id &&
+                  gMapel.kelas === k
+                )
+              )
+              if (conflict) conflictErrors.push(`Kelas ${k} (TA: ${gm.tahun_ajaran}) sudah diampu oleh ${conflict.nama_guru}`)
+            })
+          })
+        })
+        if (conflictErrors.length > 0) {
+          throw new Error(`Konflik penugasan mapel:\n${conflictErrors.slice(0, 5).join('\n')}${conflictErrors.length > 5 ? `\n...dan ${conflictErrors.length - 5} konflik lainnya` : ''}`)
+        }
+
         await supabase.from('guru_mapel').delete().eq('guru_id', biodataForm.id)
         const mapelInserts = []
         guruMapel.forEach(gm => {
@@ -1162,6 +1423,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             'NISN': s.nisn,
             'NIPD': s.nipd || '',
             'Nama Lengkap': s.nama_lengkap,
+            'Jenis Kelamin': s.jenis_kelamin || '',
             'Username': s.username || '',
             'Password / Kode Akses': s.password_text || '',
             'Username Orang Tua': s.ortu_username || '',
@@ -1186,6 +1448,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           const roleNames = g.guru_role?.map(gr => rolesData?.find(r => r.id === gr.role_id)?.nama).filter(Boolean).join(', ') || ''
           const kelasAjar = g.guru_kelas?.map(gk => gk.kelas).join(', ') || ''
           return {
+            'ID Guru': g.id || '',
             'No': i + 1,
             'Kode Guru': g.kode || '',
             'Nama Guru': g.nama_guru || '',
@@ -1200,9 +1463,32 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         XLSX.utils.book_append_sheet(wb, wsGuru, 'Data Guru & Staff')
       }
 
+      if (choice === '4') {
+        const sortedFilteredMurid = [...students]
+          .filter(s => activeTa ? s.tahun_ajaran_id === activeTa.id : true)
+          .sort((a, b) => {
+            const classA = a.kelas || ''
+            const classB = b.kelas || ''
+            if (classA !== classB) return classA.localeCompare(classB)
+            return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+          })
+
+        const dataNisn = sortedFilteredMurid.map(s => {
+          return {
+            'NISN Lama': s.nisn,
+            'NISN Baru': '',
+            'Nama Siswa': s.nama_lengkap,
+            'Kelas': s.kelas || ''
+          }
+        })
+        const wsNisn = XLSX.utils.json_to_sheet(dataNisn)
+        XLSX.utils.book_append_sheet(wb, wsNisn, 'Template Migrasi NISN')
+      }
+
       let filename = 'Export_Data_Pengguna.xlsx'
       if (choice === '1') filename = 'Export_Data_Murid.xlsx'
       if (choice === '2') filename = 'Export_Data_Guru.xlsx'
+      if (choice === '4') filename = 'Template_Update_NISN.xlsx'
       XLSX.writeFile(wb, filename)
 
     } catch (err) {
@@ -1288,18 +1574,41 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       let successCount = 0, errorCount = 0
 
       for (const row of data) {
+        const id = String(row.id || row.ID || row['ID Guru'] || '').trim()
         const kode = String(row.kode || row.KODE || row['Kode Guru'] || '').trim()
         const nama = String(row.nama_guru || row['NAMA GURU'] || row.nama || row['Nama Guru'] || '').trim()
         const username = String(row.user_name || row.username || row.Username || row['Username'] || '').trim()
         const email = String(row.email || row.Email || row['Email'] || '').trim()
+        const no_hp = String(row.no_hp || row['No HP'] || row['NO HP'] || row['No. HP'] || row['NO. HP'] || '').trim()
         
         if (!kode || !nama) continue
         
         const payload = { kode, nama_guru: nama }
+        const cleanNoHp = formatPhoneNumber(no_hp)
+        if (cleanNoHp) payload.no_hp = cleanNoHp
+        
         const finalUsername = username || email
         if (finalUsername) payload.user_name = finalUsername
         
-        const { data: exist } = await supabase.from('guru').select('id').eq('kode', payload.kode).maybeSingle()
+        // Match existing record by ID (most reliable), then Kode, then Username, then Name
+        let exist = null
+        if (id) {
+          const { data: res } = await supabase.from('guru').select('id').eq('id', id).maybeSingle()
+          exist = res
+        }
+        if (!exist && kode) {
+          const { data: res } = await supabase.from('guru').select('id').eq('kode', kode).maybeSingle()
+          exist = res
+        }
+        if (!exist && finalUsername) {
+          const { data: res } = await supabase.from('guru').select('id').eq('user_name', finalUsername).maybeSingle()
+          exist = res
+        }
+        if (!exist && nama) {
+          const { data: res } = await supabase.from('guru').select('id').eq('nama_guru', nama).maybeSingle()
+          exist = res
+        }
+        
         let guruId
         
         const applyAkunPengguna = async (gId) => {
@@ -1356,81 +1665,258 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       if (!data.length) { alert("File Excel kosong"); setIsProcessing(false); return }
 
       let successCount = 0, errorCount = 0
+      const validRows = []
 
       for (const row of data) {
-        const nisn = String(row.nisn || row.NISN || '').trim()
-        const nama = String(row.nama_lengkap || row.nama || row['NAMA LENGKAP'] || row['NAMA'] || '').trim()
-        const kelas = String(row.kelas || row.KELAS || '').trim()
-        const telegram = String(row.telegram_ortu || row['TELEGRAM ORTU'] || row.telegram || '').trim()
-        const whatsapp = formatPhoneNumber(row.no_whatsapp || row['NO WHATSAPP'] || row.whatsapp || row.WA || '')
+        const nisn = String(row.nisn || row.NISN || row['Nisn'] || '').trim()
+        const nama = String(
+          row.nama_lengkap || 
+          row.nama || 
+          row['NAMA LENGKAP'] || 
+          row['Nama Lengkap'] || 
+          row['NAMA'] || 
+          row['Nama'] || 
+          ''
+        ).trim()
+        const kelas = String(
+          row.kelas || 
+          row.KELAS || 
+          row['Kelas'] || 
+          row['kelas sekarang'] || 
+          row['KELAS SEKARANG'] || 
+          row['Kelas Sekarang'] || 
+          ''
+        ).trim()
+        const telegram = String(
+          row.telegram_ortu || 
+          row['TELEGRAM ORTU'] || 
+          row['Telegram Ortu'] || 
+          row.telegram || 
+          row.Telegram || 
+          ''
+        ).trim()
+        const whatsapp = formatPhoneNumber(
+          row.no_whatsapp || 
+          row['NO WHATSAPP'] || 
+          row['No Whatsapp'] || 
+          row['NO. WHATSAPP'] || 
+          row['No. Whatsapp'] || 
+          row.whatsapp || 
+          row.Whatsapp || 
+          row['No Telp'] || 
+          row['No. Telp'] || 
+          row.no_telp || 
+          row.WA || 
+          row.wa || 
+          ''
+        )
+        const jkRaw = String(
+          row.jenis_kelamin ||
+          row['Jenis Kelamin'] ||
+          row['JENIS KELAMIN'] ||
+          row['jenis kelamin'] ||
+          row.JK ||
+          row.jk ||
+          ''
+        ).trim().toUpperCase()
+        const jk = jkRaw.startsWith('L') ? 'L' : jkRaw.startsWith('P') ? 'P' : null
 
-        if (!nisn || !nama) continue
-        
-        // Upsert Siswa Permanent
-        const payloadSiswa = { 
-          nisn, 
-          nama_lengkap: nama,
-          ...(telegram ? { telegram_ortu: telegram } : {}),
-          ...(whatsapp ? { no_whatsapp: whatsapp } : {})
+        if (nisn && nama) {
+          validRows.push({ nisn, nama, kelas, telegram, whatsapp, jk })
         }
-        
-        const { error: errSiswa } = await supabase.from('siswa_permanent').upsert(payloadSiswa, { onConflict: 'nisn' })
-        
-        if (errSiswa) {
-          errorCount++
+      }
+
+      if (validRows.length === 0) {
+        alert("File Excel kosong atau tidak ada data siswa valid.")
+        setIsProcessing(false)
+        return
+      }
+
+      // Step 1: Bulk Upsert Siswa Permanent
+      const payloadSiswaList = validRows.map(r => ({
+        nisn: r.nisn,
+        nama_lengkap: r.nama,
+        ...(r.telegram ? { telegram_ortu: r.telegram } : {}),
+        ...(r.whatsapp ? { no_whatsapp: r.whatsapp } : {}),
+        ...(r.jk !== null ? { jenis_kelamin: r.jk } : {})
+      }))
+
+      const { error: errSiswa } = await supabase.from('siswa_permanent').upsert(payloadSiswaList, { onConflict: 'nisn' })
+      if (errSiswa) {
+        throw new Error("Gagal menyimpan data siswa: " + errSiswa.message)
+      }
+
+      // Step 2: Bulk Upsert Enrollment (jika ada TA aktif)
+      const enrollmentPayloads = []
+      if (activeTa) {
+        for (const r of validRows) {
+          if (r.kelas && r.kelas !== '-') {
+            enrollmentPayloads.push({
+              kode: `${r.kelas}_${r.nisn}_${activeTa.id}`,
+              nisn: r.nisn,
+              kelas: r.kelas,
+              tahun_ajaran_id: activeTa.id
+            })
+          }
+        }
+      }
+
+      if (enrollmentPayloads.length > 0) {
+        const { error: errEnrol } = await supabase.from('enrollment').upsert(enrollmentPayloads, { onConflict: 'nisn,tahun_ajaran_id' })
+        if (errEnrol) {
+          console.error("Gagal melakukan enrollment:", errEnrol)
+        }
+      }
+
+      // Step 3: Dapatkan list NISN dan cek orang tua yang sudah memiliki akun
+      const importNisns = validRows.map(r => r.nisn)
+      const { data: existingOrtus, error: errFetchOrtu } = await supabase
+        .from('akun_pengguna')
+        .select('foreign_id')
+        .eq('role', 'orang_tua')
+        .in('foreign_id', importNisns)
+
+      if (errFetchOrtu) {
+        console.error("Gagal mengambil data akun ortu:", errFetchOrtu)
+      }
+
+      const existingOrtuSet = new Set((existingOrtus || []).map(o => o.foreign_id))
+
+      // Step 4: Loop untuk membuat akun orang tua HANYA yang belum memilikinya
+      for (const r of validRows) {
+        if (existingOrtuSet.has(r.nisn)) {
+          // Akun ortu sudah ada, skip reset agar hemat network call & tidak merusak login ortu yang sudah aktif
+          successCount++
           continue
         }
 
-        // Upsert Enrollment jika ada TA aktif dan Kelas
-        if (activeTa && kelas && kelas !== '-') {
-          const { error: errEnrol } = await supabase.from('enrollment').upsert({
-            kode: `${kelas}_${nisn}_${activeTa.id}`,
-            nisn: nisn,
-            kelas: kelas,
-            tahun_ajaran_id: activeTa.id
-          }, { onConflict: 'nisn,tahun_ajaran_id' })
-          if (errEnrol) console.error(errEnrol)
-        }
+        try {
+          const firstName = r.nama.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
+          const nisnLast3 = r.nisn.slice(-3)
+          const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
+          const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase()
 
-        // Auto-generate Akun Orang Tua during import
-        const firstName = nama.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
-        const nisnLast3 = nisn.slice(-3)
-        const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
-        const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
-        
-        // Cek apakah akun ortu untuk foreign_id ini sudah ada
-        const { data: existingOrtu } = await supabase
-          .from('akun_pengguna')
-          .select('id')
-          .eq('foreign_id', nisn)
-          .eq('role', 'orang_tua')
-          .maybeSingle()
-
-        if (existingOrtu) {
-          await supabase.from('akun_pengguna').update({ username: ortuUsername }).eq('id', existingOrtu.id)
-          await supabase.rpc('admin_reset_password', {
-            p_akun_id: existingOrtu.id,
-            p_new_password: ortuPassword
-          })
-        } else {
-          await supabase.rpc('admin_create_user', {
+          const { error: errCreate } = await supabase.rpc('admin_create_user', {
             p_username: ortuUsername,
             p_password: ortuPassword,
             p_role: 'orang_tua',
-            p_foreign_id: nisn,
+            p_foreign_id: r.nisn,
             p_status: 'aktif'
           })
-        }
-        await supabase.from('siswa_permanent').update({ ortu_username: ortuUsername, ortu_password: ortuPassword }).eq('nisn', nisn)
 
-        successCount++
+          if (errCreate) {
+            console.error(`Gagal membuat akun ortu untuk NISN ${r.nisn}:`, errCreate)
+            errorCount++
+          } else {
+            await supabase
+              .from('siswa_permanent')
+              .update({ ortu_username: ortuUsername, ortu_password: ortuPassword })
+              .eq('nisn', r.nisn)
+            successCount++
+          }
+        } catch (e) {
+          console.error(e)
+          errorCount++
+        }
       }
+
       alert(`Sinkronisasi Siswa selesai!\nBerhasil: ${successCount}\nGagal: ${errorCount}`)
     } catch (err) {
       alert('Gagal memproses file: ' + err.message)
     }
     setIsProcessing(false); setProgressText(''); fetchData(); onRefresh?.()
     if (csvSiswaInputRef.current) csvSiswaInputRef.current.value = ''
+  }
+
+  // --- EXCEL IMPORT (Bulk Update NISN) ---
+  const handleBulkUpdateNisn = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsProcessing(true); setProgressText("Memproses Update NISN Massal...")
+
+    try {
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer)
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const data = XLSX.utils.sheet_to_json(ws, { defval: '' })
+
+      if (!data.length) { 
+        alert("File Excel kosong")
+        setIsProcessing(false)
+        return 
+      }
+
+      let successCount = 0, errorCount = 0
+      const updates = []
+
+      for (const row of data) {
+        const oldNisn = String(
+          row.nisn_lama || 
+          row['nisn lama'] || 
+          row['NISN Lama'] || 
+          row['NISN LAMA'] || 
+          row.old_nisn || 
+          row.oldNisn || 
+          ''
+        ).trim()
+        
+        const newNisn = String(
+          row.nisn_baru || 
+          row['nisn baru'] || 
+          row['NISN Baru'] || 
+          row['NISN BARU'] || 
+          row.new_nisn || 
+          row.newNisn || 
+          ''
+        ).trim()
+
+        const nama = String(
+          row.nama_siswa || 
+          row['nama siswa'] || 
+          row['Nama Siswa'] || 
+          row.nama || 
+          row['Nama'] || 
+          row['nama_lengkap'] ||
+          row['Nama Lengkap'] ||
+          ''
+        ).trim()
+
+        if (oldNisn && newNisn && oldNisn !== newNisn) {
+          updates.push({ oldNisn, newNisn, nama })
+        }
+      }
+
+      if (updates.length === 0) {
+        alert("Tidak ada data migrasi NISN yang valid. Pastikan ada kolom 'NISN Lama' dan 'NISN Baru' dengan nilai yang berbeda.")
+        setIsProcessing(false)
+        return
+      }
+
+      for (const update of updates) {
+        setProgressText(`Mengupdate NISN ${update.nama}...`)
+        const { error } = await supabase.rpc('update_siswa_nisn', {
+          old_nisn: update.oldNisn,
+          new_nisn: update.newNisn
+        })
+
+        if (error) {
+          console.error(`Gagal mengupdate NISN untuk ${update.nama} (${update.oldNisn} -> ${update.newNisn}):`, error.message)
+          errorCount++
+        } else {
+          successCount++
+        }
+      }
+
+      alert(`Proses Update NISN Massal selesai!\nBerhasil: ${successCount}\nGagal: ${errorCount}`)
+    } catch (err) {
+      alert('Gagal memproses file: ' + err.message)
+    }
+
+    setIsProcessing(false)
+    setProgressText('')
+    fetchData()
+    onRefresh?.()
+    if (bulkUpdateNisnInputRef.current) bulkUpdateNisnInputRef.current.value = ''
   }
 
   // Helper for UI
@@ -1637,6 +2123,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       <input type="file" accept="image/*" multiple ref={massPhotoInputRef} className="hidden" onChange={handleMassPhotoUpload} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvInputRef} className="hidden" onChange={handleCsvImportGuru} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvSiswaInputRef} className="hidden" onChange={handleCsvImportSiswa} />
+      <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={bulkUpdateNisnInputRef} className="hidden" onChange={handleBulkUpdateNisn} />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
@@ -1650,9 +2137,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
               <IconUpload /> Import Excel Guru
             </button>
           ) : activeTab === 'murid' ? (
-            <button onClick={() => csvSiswaInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
-              <IconUpload /> Import Excel Siswa
-            </button>
+            <>
+              <button onClick={() => csvSiswaInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+                <IconUpload /> Import Excel Siswa
+              </button>
+              <button onClick={() => bulkUpdateNisnInputRef.current?.click()} className="px-3 py-2 bg-teal-50 border border-teal-200 text-teal-700 rounded-xl text-sm font-medium hover:bg-teal-100 flex items-center gap-2" title="Update NISN Siswa secara Massal dari Excel">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                Update NISN Massal (Excel)
+              </button>
+            </>
           ) : null}
           {activeTab === 'orang_tua' && (
             <button onClick={handleBulkGenerateOrtu} disabled={isProcessing} className="px-3 py-2 bg-violet-50 border border-violet-200 text-violet-700 rounded-xl text-sm font-medium hover:bg-violet-100 flex items-center gap-2 disabled:opacity-50">
@@ -1667,11 +2160,22 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             Export Data
           </button>
           {activeTab === 'murid' && (
-            <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
-              className="px-3 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-100 flex items-center gap-2 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M12 3v18"/><path d="m8 8-4 4 4 4"/><path d="m16 16 4-4-4-4"/></svg>
-              Rapihkan Kode (A-Z)
-            </button>
+            <>
+              <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
+                className="px-3 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-100 flex items-center gap-2 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M12 3v18"/><path d="m8 8-4 4 4 4"/><path d="m16 16 4-4-4-4"/></svg>
+                Rapihkan Kode (A-Z)
+              </button>
+              <button onClick={handleOpenPrintCardsModal} disabled={isProcessing || isProcessingPrint || mergedData.length === 0}
+                className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50" title="Cetak Kartu Login Siswa">
+                {isProcessingPrint ? (
+                  <div className="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></div>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                )}
+                {isProcessingPrint ? 'Memuat Data...' : `Cetak Kartu Login (${mergedData.length})`}
+              </button>
+            </>
           )}
           <button onClick={() => openBiodataModal()} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
             <IconPlus /> Buat Data Baru
@@ -1712,7 +2216,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         {[
           { id: 'murid', label: 'Murid', icon: <IconUsers className="w-4 h-4" /> },
           { id: 'orang_tua', label: 'Orang Tua', icon: <IconUsers className="w-4 h-4" /> },
-          { id: 'guru', label: 'Guru & Staff', icon: <IconKey className="w-4 h-4" /> }
+          { id: 'guru', label: 'Guru & Staff', icon: <IconKey className="w-4 h-4" /> },
+          { id: 'kelas', label: 'Daftar Kelas', icon: <IconUsers className="w-4 h-4" /> }
         ].map(tab => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSearch(''); setSelectedClassFilter('all') }}
             className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === tab.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -1722,21 +2227,23 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       </div>
 
       {/* Toolbar */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3 shrink-0">
-        <div className="relative flex-1">
-          <input type="text" placeholder="Cari nama, username, ID, atau kode..." value={search} onChange={(e) => setSearch(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        {(activeTab === 'murid' || activeTab === 'orang_tua') && (
-          <div className="flex items-center px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-semibold">
-            <span className="mr-2">TA:</span>
-            <select value={selectedTaFilter} onChange={(e) => { setSelectedTaFilter(e.target.value); setSelectedClassFilter('all') }} className="bg-transparent outline-none cursor-pointer">
-              <option value="all">Semua</option>
-              {tahunAjarans?.map(ta => <option key={ta.id} value={ta.nama}>{ta.nama}</option>)}
-            </select>
+      {activeTab !== 'kelas' && (
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3 shrink-0">
+          <div className="relative flex-1">
+            <input type="text" placeholder="Cari nama, username, ID, atau kode..." value={search} onChange={(e) => setSearch(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
-        )}
-      </div>
+          {(activeTab === 'murid' || activeTab === 'orang_tua') && (
+            <div className="flex items-center px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-semibold">
+              <span className="mr-2">TA:</span>
+              <select value={selectedTaFilter} onChange={(e) => { setSelectedTaFilter(e.target.value); setSelectedClassFilter('all') }} className="bg-transparent outline-none cursor-pointer">
+                <option value="all">Semua</option>
+                {tahunAjarans?.map(ta => <option key={ta.id} value={ta.nama}>{ta.nama}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Class Filter (Murid Only) */}
       {(activeTab === 'murid' || activeTab === 'orang_tua') && uniqueClasses.length > 0 && (
@@ -1754,6 +2261,70 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500 py-20">
             <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
             <p>{progressText || "Memuat data..."}</p>
+          </div>
+        ) : activeTab === 'kelas' ? (
+          <div className="p-6 space-y-6 overflow-auto flex-1">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 max-w-lg">
+              <h3 className="font-bold text-slate-800 text-sm mb-3">➕ Tambah Rombel Kelas Baru (Tahun Ajaran: {activeTa?.nama})</h3>
+              <form onSubmit={handleAddMasterKelas} className="flex gap-2">
+                <input 
+                  type="text"
+                  required
+                  placeholder="Misal: 7A, 7B, 8C..."
+                  value={newClassNameInput}
+                  onChange={e => setNewClassNameInput(e.target.value)}
+                  className="flex-1 px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                />
+                <button 
+                  type="submit" 
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95"
+                >
+                  Simpan Kelas
+                </button>
+              </form>
+            </div>
+
+            <div className="border border-slate-200 rounded-2xl overflow-hidden max-w-2xl bg-white shadow-xs">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="px-5 py-3.5 font-bold">No</th>
+                    <th className="px-5 py-3.5 font-bold">Nama Rombel / Kelas</th>
+                    <th className="px-5 py-3.5 font-bold">Tahun Ajaran</th>
+                    <th className="px-5 py-3.5 font-bold text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {getAllClassesList().length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="p-6 text-center text-slate-400 italic">Belum ada kelas yang didaftarkan.</td>
+                    </tr>
+                  ) : (
+                    getAllClassesList().map((clsItem, idx) => (
+                      <tr key={clsItem.id} className="hover:bg-slate-50/50">
+                        <td className="px-5 py-3 font-mono">{idx + 1}</td>
+                        <td className="px-5 py-3 font-bold text-slate-800">{clsItem.nama_kelas}</td>
+                        <td className="px-5 py-3 text-slate-600">{activeTa?.nama}</td>
+                        <td className="px-5 py-3 text-center">
+                          {clsItem.is_deletable ? (
+                            <button
+                              onClick={() => handleDeleteMasterKelas(clsItem.id)}
+                              className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-lg transition-all"
+                            >
+                              Hapus
+                            </button>
+                          ) : (
+                            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-bold rounded-md border border-emerald-100 text-[10px] uppercase tracking-wide">
+                              🟢 Murid Aktif
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : (
           <div className="overflow-auto flex-1">
@@ -2020,9 +2591,9 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                     ) : (
                       <>
                         <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1">Kode Guru (ID Permanen) *</label>
-                          <input required value={biodataForm.kode} onChange={e => setBiodataForm({...biodataForm, kode: e.target.value})} placeholder="g02026" className="w-full px-3 py-2 border rounded-2xl text-sm" />
-                          <p className="text-[10px] text-slate-400 mt-1">ID permanen guru (tidak berubah setiap tahun ajaran).</p>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">Kode Guru (Untuk Cetak Jadwal, misal: 8 atau 8.1) *</label>
+                          <input required value={biodataForm.kode} onChange={e => setBiodataForm({...biodataForm, kode: e.target.value})} placeholder="Misal: 8.1" className="w-full px-3 py-2 border rounded-2xl text-sm bg-white font-mono" />
+                          <p className="text-[10px] text-slate-400 mt-1">ID unik guru yang akan dicetak di lembar jadwal pelajaran (seperti 8, 8.1, dst).</p>
                         </div>
 
                         <div className="md:col-span-2 grid grid-cols-2 gap-4">
@@ -2477,10 +3048,22 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                         <span className="text-[10px] text-slate-500 font-medium">Pilih Kelas:</span>
                                         <div className="flex gap-2">
                                           <button type="button" onClick={() => {
-                                            const newGm = [...guruMapel];
-                                            newGm[gmIdx].mapel_list[idx].kelas_list = [...classesInThisTa];
-                                            setSortedGuruMapel(newGm);
-                                          }} className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium">Semua</button>
+                                             const newGm = [...guruMapel];
+                                             // Hanya pilih kelas yang TIDAK dilock guru lain untuk mapel yang sama
+                                             const availableOnly = classesInThisTa.filter(c => {
+                                               if (!ma.mapel_id) return true;
+                                               return !guruList.some(g =>
+                                                 g.id !== biodataForm.id &&
+                                                 g.guru_mapel?.some(gMapel =>
+                                                   gMapel.tahun_ajaran_id === gm.tahun_ajaran_id &&
+                                                   gMapel.mata_pelajaran_id === ma.mapel_id &&
+                                                   gMapel.kelas === c
+                                                 )
+                                               );
+                                             });
+                                             newGm[gmIdx].mapel_list[idx].kelas_list = availableOnly;
+                                             setSortedGuruMapel(newGm);
+                                           }} className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium">Semua</button>
                                           <span className="text-[10px] text-slate-300">|</span>
                                           <button type="button" onClick={() => {
                                             const newGm = [...guruMapel];
@@ -2620,6 +3203,248 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         document.body
       )}
 
+      {/* Cetak Kartu Login Modal */}
+      {showPrintCardsModal && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in" id="modal-cetak-kartu-root">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden animate-slide-up-scale">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                  Preview Cetak Kartu Login Siswa & Ortu
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">Mencetak {mergedData.length} kartu siswa yang saat ini ter-filter.</p>
+              </div>
+              <button onClick={() => setShowPrintCardsModal(false)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-2xl transition-colors">
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
+
+            {/* Modal Body / Scrollable Preview */}
+            <div className="flex-1 overflow-y-auto p-8 bg-slate-100" id="print-cards-area">
+              <style>{`
+                @media print {
+                  * {
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                    box-shadow: none !important;
+                    text-shadow: none !important;
+                  }
+                  @page {
+                    size: A4 portrait;
+                    margin: 0;
+                  }
+                  html, body {
+                    width: 210mm;
+                    height: 297mm;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: white !important;
+                  }
+                  body > *:not(#print-cards-wrap) {
+                    display: none !important;
+                  }
+                  #print-cards-wrap {
+                    display: block !important;
+                    width: 210mm !important;
+                    height: 297mm !important;
+                    padding: 10mm !important;
+                    box-sizing: border-box !important;
+                    background: white !important;
+                  }
+                  #print-cards-grid {
+                    display: grid !important;
+                    grid-template-columns: 95mm 95mm !important;
+                    grid-auto-rows: 135mm !important;
+                    gap: 8mm 6mm !important;
+                    width: 190mm !important;
+                    height: auto !important;
+                    margin: 0 auto !important;
+                  }
+                  .print-card-item {
+                    width: 95mm !important;
+                    height: 135mm !important;
+                    box-sizing: border-box !important;
+                    break-inside: avoid !important;
+                    page-break-inside: avoid !important;
+                    border: 1px solid #cbd5e1 !important;
+                    border-radius: 0px !important;
+                    box-shadow: none !important;
+                    background-color: white !important;
+                    background-image: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.02) 0%, transparent 80%), 
+                                      repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px) !important;
+                    position: relative !important;
+                  }
+                  /* Force page break after exactly 4 cards */
+                  .print-card-item:nth-child(4n) {
+                    page-break-after: always !important;
+                    break-after: page !important;
+                  }
+                }
+                
+                /* Screen Preview Background Pattern styling */
+                .print-card-item {
+                  border-radius: 0px !important;
+                  background-image: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.02) 0%, transparent 80%), 
+                                    repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px) !important;
+                }
+              `}</style>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto" id="print-cards-grid">
+                {mergedData.map((s, index) => {
+                  const classCol = getClassColor(s.kelas)
+                  
+                  // Credentials
+                  const studentPass = siswaPermanentCredentials[s.foreign_id]?.kode_akses || s.rawStudent?.kode_akses || s.password_text || s.raw_password || ''
+                  const ortuUser = siswaPermanentCredentials[s.foreign_id]?.ortu_username || s.rawStudent?.ortu_username || ''
+                  const ortuPass = siswaPermanentCredentials[s.foreign_id]?.ortu_password || s.rawStudent?.ortu_password || ''
+
+                  // Auto-login URLs for QR code (Login.jsx automatically parses u, p, r params)
+                  const studentLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(s.username || '')}&p=${encodeURIComponent(studentPass)}&r=siswa`
+                  const studentQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(studentLoginUrl)}`
+
+                  const ortuLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(ortuUser)}&p=${encodeURIComponent(ortuPass)}&r=ortu`
+                  const ortuQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(ortuLoginUrl)}`
+
+                  return (
+                    <div key={s.id || index} className="print-card-item bg-white border border-slate-200 rounded-none p-5 shadow-md relative overflow-hidden flex flex-col justify-between" style={{ minHeight: '460px', maxHeight: '480px' }}>
+                      {/* Geometric Background Shapes (Top Right) */}
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/60 -z-10" style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }} />
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-100/40 -z-10" style={{ clipPath: 'polygon(100% 0, 30% 0, 100% 70%)' }} />
+                      
+                      {/* Class & Absen Tag - Beautiful shape solid corner badge */}
+                      <div className={`absolute top-0 right-0 rounded-none px-5 py-2 text-[11px] font-black text-white shadow-sm z-10 ${classCol.solidBg}`}>
+                        {s.kelas || '-'} No. {classAbsenMap[s.foreign_id] || '-'}
+                      </div>
+
+                      {/* Header Section */}
+                      <div>
+                        <div className="flex items-center gap-4 border-b pb-2 border-slate-100 mb-3 pr-20">
+                          {/* Logo Wrapper */}
+                          <div className="shrink-0">
+                            <img src="/logo.jpg" alt="Logo SMP Budi Mulia" className="w-10 h-10 object-contain rounded-lg" />
+                          </div>
+                          
+                          {/* Title */}
+                          <div className="min-w-0">
+                            <h3 className="text-base font-black tracking-wide text-slate-800 leading-tight">
+                              KARTU <span className="text-indigo-600">AKSES</span> PORTAL
+                            </h3>
+                            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1 leading-none">
+                              SMP BUDI MULIA JAKARTA
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                        {/* Student Profile Block (Single Row: Name + Photo) */}
+                        <div className="flex gap-4 items-center mb-3">
+                          {/* Foto Siswa (Portrait with border) */}
+                          <div className={`relative rounded-2xl overflow-hidden border shrink-0 ${s.foto_url ? 'border-2 border-white shadow-md bg-blue-500' : 'border-slate-200 bg-white'}`} style={{ width: '70px', height: '90px' }}>
+                            {s.foto_url && (
+                              <img src={s.foto_url} alt={s.nama} className="w-full h-full object-cover" />
+                            )}
+                          </div>
+                          
+                          {/* Name Block */}
+                          <div className="flex-1 min-w-0 py-1">
+                            <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest leading-none mb-1.5">NAMA SISWA</span>
+                            <span className="block text-base font-black text-slate-800 truncate leading-tight">{s.nama}</span>
+                          </div>
+                        </div>
+
+                        {/* Access Login Siswa (Blue Accent Box) */}
+                        <div className="bg-[#f8fafc] border border-slate-100 border-l-4 border-l-blue-600 rounded-2xl p-3 mb-3 flex items-center justify-between gap-2 shadow-sm">
+                          <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
+                            <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
+                              <div className="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-blue-600">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                              </div>
+                              <span className="font-extrabold text-[9px] text-blue-600 uppercase tracking-wider">Akses Login Siswa</span>
+                            </div>
+                            <div className="min-w-0">
+                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username</span>
+                              <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{s.username || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Kode Akses / Pass</span>
+                              <span className="font-mono font-extrabold text-sm text-blue-600 leading-none block">{studentPass || '-'}</span>
+                            </div>
+                          </div>
+                          {s.username && s.username !== '(Belum punya akun)' && studentPass && (
+                            <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm">
+                              <img src={studentQrUrl} alt="QR Siswa" className="w-14 h-14 object-contain" />
+                              <span className="text-[8px] text-slate-400 font-bold mt-1 tracking-tight">Scan Login</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Access Login Orang Tua (Violet Accent Box) */}
+                        <div className="bg-[#fdfcff] border border-slate-100 border-l-4 border-l-violet-600 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
+                          <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
+                            <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
+                              <div className="w-4 h-4 rounded-full bg-violet-100 flex items-center justify-center shrink-0 text-violet-600">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                              </div>
+                              <span className="font-extrabold text-[9px] text-violet-600 uppercase tracking-wider">Akses Login Orang Tua</span>
+                            </div>
+                            <div className="min-w-0">
+                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username Ortu</span>
+                              <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{ortuUser || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Password Ortu</span>
+                              <span className="font-mono font-extrabold text-sm text-violet-600 leading-none block">{ortuPass || '-'}</span>
+                            </div>
+                          </div>
+                          {ortuUser && ortuUser !== '-' && ortuPass && ortuPass !== '-' && (
+                            <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-violet-200 shadow-sm">
+                              <img src={ortuQrUrl} alt="QR Ortu" className="w-14 h-14 object-contain" />
+                              <span className="text-[8px] text-violet-500 font-bold mt-1 tracking-tight">Scan Login</span>
+                            </div>
+                          )}
+                        </div>
+
+                      {/* Center text footer without shape */}
+                      <div className="text-center mt-4 text-[9px] text-slate-400 font-semibold tracking-wider flex items-center justify-center gap-1.5 shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-indigo-500/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        <span>Portal Akademik:</span>
+                        <span className="text-indigo-600 font-bold">edu.smpbudimuliajakarta.sch.id</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Modal Footer / Action */}
+            <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-3 shrink-0">
+              <button type="button" onClick={() => setShowPrintCardsModal(false)} className="px-4 py-2.5 text-sm font-semibold text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50">
+                Tutup
+              </button>
+              <button type="button" onClick={() => {
+                const el = document.getElementById('print-cards-grid')
+                const style = document.createElement('style')
+                style.innerHTML = `@media print { body > *:not(#print-cards-wrap) { display: none !important; } #print-cards-wrap { display: block !important; } }`
+                document.head.appendChild(style)
+                const wrap = document.createElement('div')
+                wrap.id = 'print-cards-wrap'
+                wrap.className = 'p-6 bg-white min-h-screen'
+                wrap.appendChild(el.cloneNode(true))
+                document.body.appendChild(wrap)
+                window.print()
+                document.body.removeChild(wrap)
+                document.head.removeChild(style)
+              }} className="px-6 py-2.5 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-md">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Cetak Sekarang ({mergedData.length} Kartu)
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Export Options Modal */}
       {showExportModal && createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
@@ -2667,6 +3492,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                     <p className="text-xs text-indigo-700/80 mt-0.5">Data murid dan guru akan dipisah dalam sheet berbeda</p>
                   </div>
                 </button>
+
+                <button onClick={() => handleExportExcel('4')} className="w-full flex items-start text-left gap-3 p-4 border border-slate-200 rounded-xl hover:border-teal-300 hover:bg-teal-50 transition-all group">
+                  <div className="p-2 bg-teal-100 text-teal-600 rounded-2xl group-hover:bg-teal-200 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-800 group-hover:text-teal-800">Template Update NISN (Murid)</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">Download template terisi Nama & NISN Lama untuk update massal</p>
+                  </div>
+                </button>
               </div>
             </div>
           </div>
@@ -2689,7 +3524,25 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             
             {/* Body */}
             <div className="p-6 text-left space-y-4">
-              <p className="text-sm text-slate-600 text-center mb-4">Sistem telah membuatkan kombinasi login baru untuk keamanan akun:</p>
+              <p className="text-sm text-slate-600 text-center mb-4">Pilih metode pembuatan sandi login baru untuk keamanan akun:</p>
+
+              {/* Opsi Metode Password */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handleResetMethodChange('random')}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${resetMethod === 'random' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-750'}`}
+                >
+                  🎲 Kode Acak
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleResetMethodChange('manual')}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${resetMethod === 'manual' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-750'}`}
+                >
+                  ✍️ Input Manual
+                </button>
+              </div>
               
               <div className="space-y-3">
                 {/* Username Row */}
@@ -2704,7 +3557,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       navigator.clipboard.writeText(resetData.row.username)
                       alert("Username berhasil disalin!")
                     }}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                    className="p-1.5 text-slate-400 hover:text-indigo-650 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
                     Salin
@@ -2712,23 +3565,38 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                 </div>
 
                 {/* Password Row */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">{activeTab === 'murid' ? 'Kode Akses' : 'Password'}</span>
-                    <span className="text-xs font-bold text-indigo-700 font-mono tracking-wider">{resetData.generatedPass}</span>
+                {resetMethod === 'random' ? (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                    <div>
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">{activeTab === 'murid' ? 'Kode Akses' : 'Password'}</span>
+                      <span className="text-xs font-bold text-indigo-700 font-mono tracking-wider">{resetData.generatedPass}</span>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(resetData.generatedPass)
+                        alert(`${activeTab === 'murid' ? 'Kode Akses' : 'Password'} berhasil disalin!`)
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-indigo-650 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                      Salin
+                    </button>
                   </div>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(resetData.generatedPass)
-                      alert(`${activeTab === 'murid' ? 'Kode Akses' : 'Password'} berhasil disalin!`)
-                    }}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                    Salin
-                  </button>
-                </div>
+                ) : (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                      {activeTab === 'murid' ? 'Ketik Kode Akses Baru' : 'Ketik Password Baru'}
+                    </span>
+                    <input
+                      type="text"
+                      value={resetData.generatedPass || ''}
+                      onChange={(e) => setResetData({ ...resetData, generatedPass: e.target.value })}
+                      placeholder="Minimal 4 karakter..."
+                      className="w-full text-xs font-bold text-indigo-700 font-mono tracking-wider bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Fast Auto-login Copy Button */}
@@ -2752,6 +3620,24 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                   </div>
                   <input type="text" value={resetData.waNumber || ''} onChange={(e) => setResetData({...resetData, waNumber: e.target.value})} className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Misal: 62812xxxx" />
                 </div>
+                
+                {activeTab === 'orang_tua' && !resetData.waNumber && (
+                  <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 animate-fade-in">
+                    <p className="text-[10px] text-amber-900 font-bold flex items-center gap-1 leading-tight">
+                      ⚠️ Nomor HP Orang Tua belum diisi! Silakan isi nomor secara manual.
+                    </p>
+                    {resetData.noHpSiswa && (
+                      <button
+                        type="button"
+                        onClick={() => setResetData({ ...resetData, waNumber: resetData.noHpSiswa })}
+                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold hover:underline block text-left leading-none"
+                      >
+                        👉 Hubungkan ke nomor HP Siswa ({resetData.noHpSiswa})
+                      </button>
+                    )}
+                  </div>
+                )}
+                
                 <p className="text-[10px] text-slate-500 mt-1">Kosongkan jika hanya ingin menyimpan tanpa mengirim WhatsApp.</p>
               </div>
               

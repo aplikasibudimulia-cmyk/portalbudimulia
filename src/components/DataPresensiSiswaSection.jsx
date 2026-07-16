@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
 
-export default function DataPresensiSiswaSection({ session, activeTa }) {
+export default function DataPresensiSiswaSection({ session, activeTa, isFullScreen, toggleFullScreen }) {
   const [tanggal, setTanggal] = useState(new Date().toLocaleDateString('en-CA'))
   const [semuaKelas, setSemuaKelas] = useState([])
   const [semuaSiswa, setSemuaSiswa] = useState([])
@@ -18,25 +18,152 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   const [linkGrupGuru, setLinkGrupGuru] = useState('')
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [tempLinkGrup, setTempLinkGrup] = useState('')
+  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(false)
+  const [jamMulaiPresensi, setJamMulaiPresensi] = useState('')
+  const [hariAktifPresensi, setHariAktifPresensi] = useState('1,2,3,4,5')
+  const [jamBatasPulang, setJamBatasPulang] = useState('')
+  const [isUnlocked, setIsUnlocked] = useState(false)
+  const isEditLocked = React.useMemo(() => {
+    return !sesiAktif && presensiHariIni.length > 0 && !isUnlocked
+  }, [sesiAktif, presensiHariIni.length, isUnlocked])
 
   const [isSaving, setIsSaving] = useState(false)
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
 
   useEffect(() => {
     fetchDashboardData()
+    setIsUnlocked(false)
   }, [tanggal, activeTa])
+
+  const latestFetchRef = React.useRef(null)
+  React.useEffect(() => {
+    latestFetchRef.current = fetchDashboardData
+  })
 
   useEffect(() => {
     const channel = supabase.channel(`realtime_presensi_harian_${tanggal}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `tanggal=eq.${tanggal}` }, () => {
-        fetchDashboardData(true)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian' }, (payload) => {
+        const record = payload.new || payload.old
+        if (record && record.tanggal === tanggal) {
+          latestFetchRef.current?.(true)
+        }
       })
       .subscribe()
     return () => supabase.removeChannel(channel)
   }, [tanggal])
 
+  // Fast-poll fallback (4s) to guarantee updates if websocket experiences RLS or channel errors
+  useEffect(() => {
+    const poll = setInterval(() => {
+      latestFetchRef.current?.(true)
+    }, 4000)
+    return () => clearInterval(poll)
+  }, [tanggal])
+
+  const isHariAktifHariIni = React.useMemo(() => {
+    if (!jadwalOtomatisAktif) return true
+    const dateObj = new Date(tanggal)
+    const dow = dateObj.getDay()
+    const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
+    return activeDays.includes(dow)
+  }, [tanggal, jadwalOtomatisAktif, hariAktifPresensi])
+
+  const isSebelumMulai = React.useMemo(() => {
+    if (!jadwalOtomatisAktif || !jamMulaiPresensi) return false
+    const dateObj = new Date(tanggal)
+    const dow = dateObj.getDay()
+    const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
+    if (!activeDays.includes(dow)) return false
+
+    const todayStr = new Date().toLocaleDateString('en-CA')
+    if (tanggal !== todayStr) return false
+
+    const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
+    const now = new Date()
+    const [nh, nm] = [now.getHours(), now.getMinutes()]
+    return nh < mh || (nh === mh && nm < mm)
+  }, [tanggal, jadwalOtomatisAktif, jamMulaiPresensi, hariAktifPresensi])
+
+  // Auto-start session when start time is reached on scheduled active days
+  useEffect(() => {
+    if (loading || sesiAktif || !jadwalOtomatisAktif || !jamMulaiPresensi) return
+
+    const checkAndAutoStart = async () => {
+      const todayDateStr = new Date().toLocaleDateString('en-CA')
+      if (tanggal !== todayDateStr) return // Only auto-start for today's date
+
+      const todayDow = new Date().getDay()
+      const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
+      if (!activeDays.includes(todayDow)) return
+
+      const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
+      const now = new Date()
+      const [nh, nm] = [now.getHours(), now.getMinutes()]
+      const timeHasArrived = nh > mh || (nh === mh && nm >= mm)
+
+      // Only auto-start if we haven't crossed the end time yet
+      let timeIsOver = false
+      if (jamBatasPulang) {
+        const [bh, bm] = jamBatasPulang.split(':').map(Number)
+        timeIsOver = nh > bh || (nh === bh && nm >= bm)
+      }
+
+      if (timeHasArrived && !timeIsOver) {
+        console.log('Jadwal otomatis aktif: Memulai sesi presensi hari ini...')
+        const { error } = await supabase
+          .from('sesi_presensi')
+          .insert({ tanggal: todayDateStr, dibuka_oleh: session?.id })
+        if (!error) {
+          setSesiAktif(true)
+          try {
+            await supabase.functions.invoke('presensi-reminder', {
+              body: { action: 'session_started' }
+            })
+          } catch (err) {
+            console.warn('Gagal mengirim notif sesi dimulai:', err)
+          }
+        }
+      }
+    }
+
+    checkAndAutoStart()
+    const interval = setInterval(checkAndAutoStart, 10000)
+    return () => clearInterval(interval)
+  }, [loading, sesiAktif, jadwalOtomatisAktif, jamMulaiPresensi, jamBatasPulang, hariAktifPresensi, tanggal, session?.id])
+
+  // Auto-end session when jam_batas_pulang is reached
+  useEffect(() => {
+    if (loading || !sesiAktif || !jadwalOtomatisAktif || !jamBatasPulang) return
+
+    const checkAndAutoEnd = async () => {
+      const todayDateStr = new Date().toLocaleDateString('en-CA')
+      if (tanggal !== todayDateStr) return
+
+      const todayDow = new Date().getDay()
+      const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
+      if (!activeDays.includes(todayDow)) return
+
+      const [bh, bm] = jamBatasPulang.split(':').map(Number)
+      const now = new Date()
+      const [nh, nm] = [now.getHours(), now.getMinutes()]
+      const timeHasPassed = nh > bh || (nh === bh && nm >= bm)
+
+      if (timeHasPassed) {
+        console.log('Jadwal otomatis aktif: Waktu batas pulang tercapai. Mengakhiri sesi presensi otomatis...')
+        const { error } = await supabase.from('sesi_presensi').delete().eq('tanggal', todayDateStr)
+        if (!error) {
+          setSesiAktif(false)
+        }
+      }
+    }
+
+    checkAndAutoEnd()
+    const interval = setInterval(checkAndAutoEnd, 10000)
+    return () => clearInterval(interval)
+  }, [loading, sesiAktif, jadwalOtomatisAktif, jamBatasPulang, hariAktifPresensi, tanggal, session?.id])
+
   const fetchDashboardData = async (isRealtime = false) => {
-    setLoading(true)
+    if (!isRealtime) setLoading(true)
     try {
       const { data: siswaData } = await supabase
         .from('siswa_lengkap')
@@ -61,14 +188,29 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         .maybeSingle()
       setSesiAktif(!!sesiData)
 
-      const { data: pengData } = await supabase
+      const { data: pengDataList } = await supabase
         .from('pengaturan_sekolah')
-        .select('setting_value')
-        .eq('setting_key', 'link_grup_guru')
-        .maybeSingle()
-      if (pengData && !isRealtime) {
-        setLinkGrupGuru(pengData.setting_value)
-        setTempLinkGrup(pengData.setting_value)
+        .select('setting_key, setting_value')
+        .in('setting_key', ['link_grup_guru', 'jadwal_otomatis_aktif', 'jam_mulai_presensi', 'hari_aktif_presensi', 'jam_batas_pulang'])
+      if (pengDataList) {
+        const map = {}
+        pengDataList.forEach(p => { map[p.setting_key] = p.setting_value })
+        if (map['link_grup_guru'] !== undefined && !isRealtime) {
+          setLinkGrupGuru(map['link_grup_guru'] || '')
+          setTempLinkGrup(map['link_grup_guru'] || '')
+        }
+        if (map['jadwal_otomatis_aktif'] !== undefined) {
+          setJadwalOtomatisAktif(map['jadwal_otomatis_aktif'] === 'true')
+        }
+        if (map['jam_mulai_presensi'] !== undefined) {
+          setJamMulaiPresensi(map['jam_mulai_presensi'])
+        }
+        if (map['hari_aktif_presensi'] !== undefined) {
+          setHariAktifPresensi(map['hari_aktif_presensi'])
+        }
+        if (map['jam_batas_pulang'] !== undefined) {
+          setJamBatasPulang(map['jam_batas_pulang'])
+        }
       }
 
       const { data: presensiDataDB } = await supabase
@@ -77,7 +219,8 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         .eq('tanggal', tanggal)
       
       if (presensiDataDB) {
-        setPresensiHariIni(presensiDataDB)
+        const filteredMasuk = presensiDataDB.filter(r => !r.tipe || r.tipe !== 'pulang')
+        setPresensiHariIni(filteredMasuk)
         
         // Sync presensiData (state form) jika sedang membuka kelas
         if (selectedKelas && siswaData) {
@@ -86,7 +229,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
           setPresensiData(prev => {
             const newData = isRealtime ? { ...prev } : {}
              classStudents.forEach(s => {
-              const rec = presensiDataDB.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
+              const rec = filteredMasuk.find(r => r.siswa_nisn === s.nisn)
               if (rec) {
                 // Saat realtime: QR scan selalu diapply (tidak boleh ditimpa manual)
                 // Jika bukan realtime (reload penuh), atau siswa belum ada di form: selalu set
@@ -130,7 +273,41 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
     }
   }
 
+  const handleRequestUnlock = async () => {
+    try {
+      const { data: codeSetting, error: getErr } = await supabase
+        .from('pengaturan_sekolah')
+        .select('setting_value')
+        .eq('setting_key', 'kode_pembatalan_presensi')
+        .maybeSingle()
+
+      if (getErr) throw getErr
+
+      const expectedCode = codeSetting?.setting_value || '123456'
+      
+      const pinInput = window.prompt('Masukkan KODE VERIFIKASI ADMIN untuk membuka kunci edit presensi:')
+      if (pinInput === null) return false
+
+      if (pinInput !== expectedCode) {
+        alert('Kode verifikasi salah! Akses edit ditolak.')
+        return false
+      }
+
+      setIsUnlocked(true)
+      alert('🔓 Akses edit berhasil dibuka secara manual!')
+      return true
+    } catch (err) {
+      console.error(err)
+      alert('Gagal memverifikasi kode: ' + err.message)
+      return false
+    }
+  }
+
   const handleStatusChange = async (nisn, status) => {
+    if (isEditLocked) {
+      const unlocked = await handleRequestUnlock()
+      if (!unlocked) return
+    }
     const currentMetode = presensiData[nisn]?.metode
     if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
       alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
@@ -191,6 +368,10 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   }
 
   const handleTimeChange = async (nisn, time) => {
+    if (isEditLocked) {
+      const unlocked = await handleRequestUnlock()
+      if (!unlocked) return
+    }
     const currentMetode = presensiData[nisn]?.metode
     if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
       alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
@@ -229,6 +410,10 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
   }
 
   const handleBulkPresensi = async (status) => {
+    if (isEditLocked) {
+      const unlocked = await handleRequestUnlock()
+      if (!unlocked) return
+    }
     const confirmed = await requestConfirm({
       title: 'Set Status Semua Siswa?',
       message: `Set semua siswa yang tampil menjadi ${status === 'kosong' ? 'KOSONG (hapus presensi)' : status}?`,
@@ -354,6 +539,19 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
 
       setIsSaving(true)
       
+      // Dapatkan daftar file selfie hari ini dari database sebelum menghapus
+      const { data: recordsForToday } = await supabase.from('presensi_harian')
+        .select('selfie_url')
+        .eq('tanggal', tanggal)
+      
+      const filesToDelete = (recordsForToday || [])
+        .map(r => r.selfie_url)
+        .filter(Boolean)
+        .map(url => {
+          const urlParts = url.split('/')
+          return urlParts[urlParts.length - 1].split('?')[0] // remove query parameters if any
+        })
+
       // Hapus data presensi harian hari ini
       const { error: delPresensiErr } = await supabase
         .from('presensi_harian')
@@ -361,6 +559,11 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         .eq('tanggal', tanggal)
       
       if (delPresensiErr) throw delPresensiErr
+
+      // Hapus file-file selfie dari storage jika ada
+      if (filesToDelete.length > 0) {
+        await supabase.storage.from('selfie-presensi').remove(filesToDelete)
+      }
 
       // Hapus sesi presensi hari ini jika ada
       await supabase.from('sesi_presensi').delete().eq('tanggal', tanggal)
@@ -440,24 +643,7 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
     <div className="animate-fade-in font-sans text-slate-800 flex-1 flex flex-col min-h-0 h-full">
       {ConfirmModalComponent}
       
-      {/* Top Header */}
-      <div className="shrink-0 mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Data Presensi Siswa</h2>
-          <p className="text-sm text-slate-500 font-medium mt-1">Input dan validasi kehadiran siswa per kelas secara mendetail.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowSettingsModal(true)} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-transparent hover:border-indigo-100" title="Pengaturan Laporan WA">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-          </button>
-          <input 
-            type="date" 
-            value={tanggal}
-            onChange={(e) => setTanggal(e.target.value)}
-            className="px-4 py-2 bg-white border-none rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer"
-          />
-        </div>
-      </div>
+      {/* Top Header Removed, controls merged into Pilih Kelas section below */}
 
       {showSettingsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
@@ -487,9 +673,41 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
       <div className="flex-1 min-h-0 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Class Selection Area */}
         <div className="shrink-0 border-b border-slate-100 bg-slate-50 p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-            <h3 className="font-bold text-slate-800 text-sm">Pilih Kelas</h3>
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+              <h3 className="font-bold text-slate-800 text-sm">Pilih Kelas</h3>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              {/* Settings button */}
+              <button onClick={() => setShowSettingsModal(true)} className="p-2 text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-colors shadow-sm" title="Pengaturan Laporan WA">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              </button>
+
+              {/* Date Input */}
+              <input 
+                type="date" 
+                value={tanggal}
+                onChange={(e) => setTanggal(e.target.value)}
+                className="px-3.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm cursor-pointer"
+              />
+
+              {/* Fullscreen Button */}
+              {toggleFullScreen && (
+                <button 
+                  onClick={toggleFullScreen}
+                  className="p-2.5 text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all duration-300 shadow-sm flex items-center justify-center" 
+                  title={isFullScreen ? "Keluar Layar Penuh" : "Layar Penuh"}
+                >
+                  {isFullScreen ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
             {semuaKelas.map(c => {
@@ -520,53 +738,60 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
         {/* Detail Area */}
         {selectedKelas ? (
           <div className="flex-1 flex flex-col min-h-0">
-            {!sesiAktif ? (
-              presensiHariIni.length > 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
-                  <div className="w-20 h-20 bg-emerald-50 border border-emerald-100 rounded-full flex items-center justify-center mb-6 text-emerald-500 shadow-sm animate-pulse">
-                    <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Hari Ini Telah Selesai</h3>
-                  <p className="text-sm text-slate-500 mb-8 max-w-md">
-                    Seluruh data kehadiran hari ini telah tercatat dan disimpan dengan aman. Anda dapat melanjutkan kembali sesi presensi agar siswa dapat scan QR kembali, atau membatalkan seluruh data presensi hari ini.
-                  </p>
-                  <div className="flex flex-col sm:flex-row items-center gap-4">
-                    <button 
-                      onClick={handleMulaiSesi} 
-                      disabled={isSaving} 
-                      className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      Lanjutkan Presensi Hari Ini
+            {!sesiAktif && presensiHariIni.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
+                {isHariAktifHariIni ? (
+                  isSebelumMulai ? (
+                    <>
+                      <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
+                        <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-800 mb-2">Presensi Belum Mulai</h3>
+                      <p className="text-sm text-slate-500 mb-8 max-w-sm">Sesi presensi otomatis hari ini belum dimulai (dijadwalkan pukul <strong>{jamMulaiPresensi}</strong>). Namun, Anda tetap dapat memulainya secara manual.</p>
+                      <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                        {isSaving ? (
+                          <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
+                        ) : (
+                          <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Manual</>
+                        )}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
+                        <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Belum Dimulai</h3>
+                      <p className="text-sm text-slate-505 mb-8 max-w-sm">Anda harus memulai sesi hari ini terlebih dahulu agar siswa dapat melakukan scan QR, dan Anda dapat menginput presensi.</p>
+                      <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                        {isSaving ? (
+                          <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
+                        ) : (
+                          <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Hari Ini</>
+                        )}
+                      </button>
+                    </>
+                  )
+                ) : (
+                  <>
+                    <div className="w-20 h-20 bg-amber-50 border border-amber-100 rounded-full flex items-center justify-center mb-6 text-amber-500 shadow-sm">
+                      <span className="text-3xl select-none">🏖️</span>
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Hari Bebas Presensi</h3>
+                    <p className="text-sm text-slate-505 mb-2 max-w-md font-medium text-slate-600">Presensi otomatis tidak dijadwalkan untuk hari ini.</p>
+                    <p className="text-xs text-slate-400 mb-8 max-w-sm">Jika diperlukan presensi khusus (misalnya kegiatan hari libur/ekskul), Anda tetap dapat memulai sesi secara manual.</p>
+                    <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                      {isSaving ? (
+                        <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
+                      ) : (
+                        <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Manual</>
+                      )}
                     </button>
-                    <button 
-                      onClick={handleBatalkanPresensi} 
-                      disabled={isSaving} 
-                      className="px-6 py-3 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-xl border border-rose-200 hover:border-rose-300 transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                      Batalkan Presensi Hari Ini
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-10 bg-slate-50/50">
-                  <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm">
-                    <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Sesi Presensi Belum Dimulai</h3>
-                  <p className="text-sm text-slate-500 mb-8 max-w-sm">Anda harus memulai sesi hari ini terlebih dahulu agar siswa dapat melakukan scan QR, dan Anda dapat menginput presensi.</p>
-                  <button onClick={handleMulaiSesi} disabled={isSaving} className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                    {isSaving ? (
-                      <><svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Memulai...</>
-                    ) : (
-                      <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Mulai Presensi Hari Ini</>
-                    )}
-                  </button>
-                </div>
-              )
+                  </>
+                )}
+              </div>
             ) : (
-            <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
+              <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
               <div className="p-4 sm:p-6 border-b border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <h3 className="font-bold text-lg text-slate-800">Presensi Kelas {selectedKelas}</h3>
@@ -633,6 +858,75 @@ export default function DataPresensiSiswaSection({ session, activeTa }) {
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {!sesiAktif && presensiHariIni.length > 0 && (
+                <div className={`p-4 mx-6 my-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
+                  isEditLocked 
+                    ? 'bg-amber-50 border-amber-200 text-amber-800' 
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{isEditLocked ? '🔒' : '🔓'}</span>
+                    <div>
+                      <h4 className="font-bold text-sm">
+                        {isEditLocked 
+                          ? 'Sesi Presensi Hari Ini Telah Selesai (Terkunci)' 
+                          : 'Akses Edit Dibuka (PIN Admin Terverifikasi)'}
+                      </h4>
+                      <p className="text-xs mt-0.5 opacity-90">
+                        {isEditLocked 
+                          ? 'Seluruh data presensi hari ini terkunci dari perubahan manual. Gunakan PIN Admin untuk membuka kunci.' 
+                          : 'Anda dapat mengedit data presensi secara manual sekarang. Sesi presensi tetap dalam kondisi selesai.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    {isEditLocked ? (
+                      <>
+                        <button
+                          onClick={handleRequestUnlock}
+                          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h16.5a2.25 2.25 0 002.25-2.25V12.75A2.25 2.25 0 0020.25 10.5H3.75A2.25 2.25 0 001.5 12.75v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                          Buka Kunci Edit
+                        </button>
+                        <button
+                          onClick={handleMulaiSesi}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5"
+                        >
+                          Lanjutkan Sesi
+                        </button>
+                        <button
+                          onClick={handleBatalkanPresensi}
+                          className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-xs transition-all border border-rose-200"
+                        >
+                          Batalkan Presensi
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => setIsUnlocked(false)}
+                          className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5"
+                        >
+                          🔒 Kunci Kembali
+                        </button>
+                        <button
+                          onClick={handleMulaiSesi}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5"
+                        >
+                          Lanjutkan Sesi
+                        </button>
+                        <button
+                          onClick={handleBatalkanPresensi}
+                          className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-xs transition-all border border-rose-200"
+                        >
+                          Batalkan Presensi
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-sm border-b border-slate-200 text-slate-500 text-xs">
                   <tr>

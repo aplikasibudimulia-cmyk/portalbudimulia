@@ -28,6 +28,10 @@ import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
 import AdminPersonalisasiSection from '../components/AdminPersonalisasiSection'
 import GuruDokumenSection from '../components/GuruDokumenSection'
 import CollapsibleSection from '../components/CollapsibleSection'
+import GuruBKKonsultasiSection from '../components/GuruBKKonsultasiSection'
+import BKDashboardSection from '../components/BKDashboardSection'
+import SiswaJadwalSection from '../components/SiswaJadwalSection'
+import PengacakTempatDudukSection from '../components/PengacakTempatDudukSection'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -367,9 +371,9 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   filteredStudents.sort((a, b) => (a.nama_lengkap || '').localeCompare(b.nama_lengkap || ''))
 
   return (
-    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem)] md:h-[calc(100vh-4rem)]">
+    <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem)] md:h-[calc(100vh-3rem)]">
       {ConfirmModalComponent}
-      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 shrink-0">
+      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 shrink-0 hidden">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">{type.nama}</h2>
           <p className="text-slate-500 text-sm mt-1">Kelola dokumen pengumuman untuk siswa Anda</p>
@@ -712,6 +716,66 @@ export default function DashboardGuru() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
+  const [hideSidebar, setHideSidebar] = useState(false)
+
+  const toggleMenuFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen()
+        .then(() => {
+          setHideSidebar(true);
+        })
+        .catch(err => {
+          setHideSidebar(true);
+        });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen()
+          .catch(err => {
+            setHideSidebar(false);
+          });
+      }
+    }
+  }
+
+  const toggleAppFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen()
+        .then(() => {
+          setHideSidebar(false);
+        })
+        .catch(err => {
+          // fallback
+        });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen()
+          .catch(err => {
+            // fallback
+          });
+      }
+    }
+  }
+
+  useEffect(() => {
+    const handleFs = () => {
+      const active = !!document.fullscreenElement;
+      setIsNativeFullScreen(active);
+      if (!active) {
+        setHideSidebar(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFs);
+    document.addEventListener('webkitfullscreenchange', handleFs);
+    document.addEventListener('mozfullscreenchange', handleFs);
+    document.addEventListener('MSFullscreenChange', handleFs);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFs);
+      document.removeEventListener('webkitfullscreenchange', handleFs);
+      document.removeEventListener('mozfullscreenchange', handleFs);
+      document.removeEventListener('MSFullscreenChange', handleFs);
+    };
+  }, []);
   const [showCalendarGuru, setShowCalendarGuru] = useState(true)
   const [fitur, setFitur] = useState(new Set())
   const [fiturAkses, setFiturAkses] = useState({})
@@ -788,6 +852,8 @@ export default function DashboardGuru() {
   const [programBulanIni, setProgramBulanIni] = useState([])
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [selectedDateEvents, setSelectedDateEvents] = useState([])
+  const [selectedKelas, setSelectedKelas] = useState('7A')
+  const [jadwalSemester, setJadwalSemester] = useState('2')
 
   // States for delegated Admin panels
   const [allStudents, setAllStudents] = useState([])
@@ -804,8 +870,29 @@ export default function DashboardGuru() {
   const fetchAdminData = async () => {
     setAdminDataLoading(true)
     try {
-      const { data: stdData } = await supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
-      if (stdData) setAllStudents(stdData)
+      let allData = []
+      let from = 0
+      let to = 999
+      let hasMore = true
+      while (hasMore) {
+        const { data: stdData, error } = await supabase.from('siswa_lengkap').select('*').order('nama_lengkap').range(from, to)
+        if (error) {
+          console.error(error)
+          break
+        }
+        if (!stdData || stdData.length === 0) {
+          hasMore = false
+        } else {
+          allData = [...allData, ...stdData]
+          if (stdData.length < 1000) {
+            hasMore = false
+          } else {
+            from += 1000
+            to += 1000
+          }
+        }
+      }
+      setAllStudents(allData)
 
       const { data: fotoData } = await supabase.from('foto').select('*, tahun_ajaran:tahun_ajaran_id(nama)')
       if (fotoData) setAllFotos(fotoData)
@@ -857,7 +944,7 @@ export default function DashboardGuru() {
       'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
       'pengaturan_poin', 'dashboard_eksekutif', 'program_sekolah', 
       'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
-      'dokumen_guru',
+      'dokumen_guru', 'konsultasi_bk', 'pengacak_duduk', 'jadwal_pelajaran',
       // Delegated Admin Menus
       'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 
       'presensi_qr', 'konfigurasi'
@@ -869,6 +956,13 @@ export default function DashboardGuru() {
       }
     }
   }, [menuTypes, activeMenu, loading])
+
+  useEffect(() => {
+    const refreshSession = async () => {
+      await supabase.auth.getSession()
+    }
+    refreshSession()
+  }, [])
 
   useEffect(() => {
     const rawSession = localStorage.getItem('guru_session')
@@ -927,7 +1021,7 @@ export default function DashboardGuru() {
     // 0. Refresh Guru Session Data
     const { data: freshGuru } = await supabase
       .from('guru')
-      .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
+      .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_bk(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
       .eq('id', userData.id)
       .single()
 
@@ -941,16 +1035,26 @@ export default function DashboardGuru() {
         foto_url: freshGuru.foto_url,
         roles: freshGuru.guru_role.map(r => ({ id: r.role_id, nama: r.roles?.nama })),
         kelas: freshGuru.guru_kelas,
+        bk_kelas: freshGuru.guru_bk ? [...new Set(freshGuru.guru_bk.map(b => b.kelas).filter(Boolean))] : [],
         guru_mapel_raw: freshGuru.guru_mapel,
         mapels: freshGuru.guru_mapel ? Array.from(new Set(freshGuru.guru_mapel.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))) : []
       }
       setSession(activeSession)
       localStorage.setItem('guru_session', JSON.stringify(activeSession))
+      
+      // Default selectedKelas to teacher's own Wali Kelas assignment if available
+      if (activeSession.kelas && activeSession.kelas[0]?.kelas) {
+        setSelectedKelas(activeSession.kelas[0].kelas)
+      }
     }
 
     // Fetch Kalender Akademik visibility settings for Guru
     const { data: sch } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'show_calendar_guru').maybeSingle()
     setShowCalendarGuru(sch ? sch.setting_value !== 'false' : true)
+
+    // Fetch active schedule semester config
+    const { data: semData } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'jadwal_semester_aktif').maybeSingle()
+    setJadwalSemester(semData ? semData.setting_value || '2' : '2')
 
     // 1. Fetch features
     let currentFitur = new Set()
@@ -996,21 +1100,41 @@ export default function DashboardGuru() {
     ]))
 
     if (allAssignedClasses.length > 0) {
-      const { data: siswaData } = await supabase.from('siswa_lengkap')
-        .select('*')
-        .in('kelas', allAssignedClasses)
-        .order('nama_lengkap')
-
-      if (siswaData) {
-        setStudents(siswaData)
-
-        // For default tabs, only show active TA students
-        const activeWaliClasses = allWaliAssignments.filter(k => activeTaData && k.tahun_ajaran_id == activeTaData.id).map(k => k.kelas)
-        const activeMapelClasses = allMapelAssignments.filter(m => activeTaData && m.tahun_ajaran_id == activeTaData.id).map(m => m.kelas)
-
-        setWaliStudents(siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeWaliClasses.includes(s.kelas)))
-        setMapelStudents(siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeMapelClasses.includes(s.kelas)))
+      let allData = []
+      let from = 0
+      let to = 999
+      let hasMore = true
+      while (hasMore) {
+        const { data: siswaData, error } = await supabase.from('siswa_lengkap')
+          .select('*')
+          .in('kelas', allAssignedClasses)
+          .order('nama_lengkap')
+          .range(from, to)
+        if (error) {
+          console.error(error)
+          break
+        }
+        if (!siswaData || siswaData.length === 0) {
+          hasMore = false
+        } else {
+          allData = [...allData, ...siswaData]
+          if (siswaData.length < 1000) {
+            hasMore = false
+          } else {
+            from += 1000
+            to += 1000
+          }
+        }
       }
+
+      setStudents(allData)
+
+      // For default tabs, only show active TA students
+      const activeWaliClasses = allWaliAssignments.filter(k => activeTaData && k.tahun_ajaran_id == activeTaData.id).map(k => k.kelas)
+      const activeMapelClasses = allMapelAssignments.filter(m => activeTaData && m.tahun_ajaran_id == activeTaData.id).map(m => m.kelas)
+
+      setWaliStudents(allData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeWaliClasses.includes(s.kelas)))
+      setMapelStudents(allData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeMapelClasses.includes(s.kelas)))
 
       const { data: fotoData } = await supabase.from('foto').select('*')
       if (fotoData) setFotos(fotoData)
@@ -1053,7 +1177,7 @@ export default function DashboardGuru() {
         }
         
         // Filter total siswa perwalian aktif
-        const totalWaliStudents = siswaData ? siswaData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && s.kelas === activeWali.kelas).length : 0
+        const totalWaliStudents = allData ? allData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && s.kelas === activeWali.kelas).length : 0
         
         setWaliKehadiran({
           hadir, sakit, izin, alpa,
@@ -1231,8 +1355,11 @@ export default function DashboardGuru() {
         <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
-        }`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:z-auto 
+        ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} 
+        ${sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
+        ${hideSidebar ? 'md:hidden md:w-0 overflow-hidden' : 'md:translate-x-0'}
+        `}>
         <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
             <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
@@ -1306,6 +1433,13 @@ export default function DashboardGuru() {
                       <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Wali Kelas</span>}
                     </button>
                   )}
+                  {fitur.has('lihat_data_siswa') && session.kelas?.length > 0 && (
+                    <button title="Pengacak Tempat Duduk" onClick={() => { setActiveMenu('pengacak_duduk'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengacak_duduk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengacak Tempat Duduk</span>}
+                    </button>
+                  )}
                   {fitur.has('lihat_data_siswa') && session.guru_mapel_raw?.length > 0 && (
                     <button title="Siswa Mata Pelajaran" onClick={() => { setActiveMenu('siswa_mapel'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'siswa_mapel' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -1325,6 +1459,16 @@ export default function DashboardGuru() {
                       {!sidebarCollapsed && <span className="animate-fade-in truncate">Program Sekolah</span>}
                     </button>
                   )}
+                  <button title="Jadwal Pelajaran" onClick={() => { setActiveMenu('jadwal_pelajaran'); setSidebarOpen(false); }}
+                    className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'jadwal_pelajaran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                    <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
+                  </button>
                   {fitur.has('akses_denah_kehadiran') && (
                     <button title="Denah Kehadiran" onClick={() => { setActiveMenu('denah_kehadiran'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -1414,7 +1558,7 @@ export default function DashboardGuru() {
           )}
 
           {/* Group: SISTEM POIN & KESISWAAN */}
-          {(fitur.has('lihat_tata_tertib') || fitur.has('lihat_katalog_poin') || fitur.has('lihat_tahap_pembinaan') || fitur.has('catat_poin') || fitur.has('kelola_poin_siswa') || fitur.has('akses_rekap_poin')) && (
+          {(fitur.has('lihat_tata_tertib') || fitur.has('lihat_katalog_poin') || fitur.has('lihat_tahap_pembinaan') || fitur.has('catat_poin') || fitur.has('kelola_poin_siswa') || fitur.has('akses_rekap_poin') || session.roles?.some(r => r.nama?.toLowerCase() === 'bk' || r.nama?.toLowerCase().includes('bimbingan'))) && (
             <>
               <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, sistemPoin: !prev.sistemPoin }))}
                 className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
@@ -1467,6 +1611,13 @@ export default function DashboardGuru() {
                       {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
                     </button>
                   )}
+                  {session.roles?.some(r => r.nama?.toLowerCase() === 'bk' || r.nama?.toLowerCase().includes('bimbingan')) && (
+                    <button title="Jadwal Konsultasi BK" onClick={() => { setActiveMenu('konsultasi_bk'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konsultasi_bk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Konsultasi BK</span>}
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -1515,7 +1666,7 @@ export default function DashboardGuru() {
           </button>
         </nav>
 
-        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-2">
+        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-3">
           {fitur.has('kelola_role_akses') && (
             <button title="Manajemen Role & Akses" onClick={() => { setActiveMenu('manajemen_role'); setSidebarOpen(false); }}
               className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_role' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -1531,20 +1682,63 @@ export default function DashboardGuru() {
             </button>
           )}
 
-          <button onClick={cycleFont}
-            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
-            {!sidebarCollapsed && <span className="animate-fade-in truncate">Font: {currentFont === 'jakarta' ? 'Plus Jakarta' : currentFont === 'ubuntu' ? 'Ubuntu' : 'Bricolage'}</span>}
-          </button>
-          <button onClick={handleLogout}
-            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
-            <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}
-          </button>
+          {/* Profile Card */}
+          <div 
+            onClick={() => setActiveMenu('profil')}
+            className={`flex items-center gap-3 p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-350 transition-all duration-300 cursor-pointer ${sidebarCollapsed ? 'justify-center' : ''}`}
+            title="Profil Saya"
+          >
+            <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-150 text-indigo-700 font-bold flex items-center justify-center shrink-0 overflow-hidden shadow-sm text-sm">
+              {session.foto_url ? <img src={session.foto_url} alt="Profile" className="w-full h-full object-cover" /> : session.nama_guru.charAt(0)}
+            </div>
+            {!sidebarCollapsed && (
+              <div className="text-left min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-800 truncate leading-tight">{session.nama_guru}</p>
+                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider truncate mt-0.5">{session.roles.map(r => r.nama).join(', ')}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons row */}
+          <div className={`flex gap-2 ${sidebarCollapsed ? 'flex-col items-center' : 'items-center'}`}>
+            <button onClick={cycleFont} title={`Font: ${currentFont}`}
+              className={`flex items-center justify-center rounded-xl text-xs font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors py-2.5 ${sidebarCollapsed ? "w-10 h-10 px-0" : "flex-1 px-3"}`}>
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
+              {!sidebarCollapsed && <span className="ml-1.5 truncate">Font</span>}
+            </button>
+
+            {/* App Fullscreen Button */}
+            <button onClick={toggleAppFullScreen} title={isNativeFullScreen ? "Keluar Layar Penuh Aplikasi" : "Layar Penuh Aplikasi"}
+              className={`w-10 h-10 flex items-center justify-center rounded-xl border transition-colors shrink-0 ${isNativeFullScreen && !hideSidebar ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+              {isNativeFullScreen && !hideSidebar ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h-4"/></svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              )}
+            </button>
+
+            {/* Notification Bell */}
+            <button onClick={() => setShowNotifPanel(true)} title="Notifikasi"
+              className="relative w-10 h-10 flex items-center justify-center rounded-xl text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors shrink-0">
+              <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-white animate-pulse">
+                  {unreadNotifCount}
+                </span>
+              )}
+            </button>
+
+            {/* Logout */}
+            <button onClick={handleLogout} title="Keluar Sesi"
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-rose-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors shrink-0">
+              <IconLogout />
+            </button>
+          </div>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm md:hidden">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
               <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -1587,17 +1781,35 @@ export default function DashboardGuru() {
           </div>
         </header>
 
-        <div className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col ${activeMenu === 'dashboard' && session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0)
+        <div className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col dashboard-content-area ${activeMenu === 'dashboard' && session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0)
             ? 'min-h-0 overflow-hidden'
             : 'overflow-y-auto'
           }`}>
-          <div className="w-full flex-1 flex flex-col min-h-0">
+          <div className="w-full flex-1 flex flex-col min-h-0 relative">
+            {/* Global Floating Full Screen Button */}
+            {activeMenu !== 'data_presensi_siswa' && (
+              <div className="absolute top-0 right-0 z-30 hidden md:block">
+                <button 
+                  onClick={toggleMenuFullScreen}
+                  className="p-2 bg-white hover:bg-slate-50 text-slate-500 hover:text-indigo-600 rounded-xl border border-slate-200 shadow-sm transition-all duration-300 flex items-center justify-center"
+                  title={isNativeFullScreen && hideSidebar ? "Keluar Layar Penuh" : "Layar Penuh"}
+                >
+                  {isNativeFullScreen && hideSidebar ? (
+                    <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h-4"/></svg>
+                  ) : (
+                    <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v-4m0 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+                  )}
+                </button>
+              </div>
+            )}
             {activeMenu === 'dashboard' && (
               <>
                 {session.roles.some(r => r.nama.toLowerCase().includes('kepala sekolah')) ? (
                   <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
                 ) : session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
                   <PiketDashboardSection session={session} activeTa={activeTa} />
+                ) : session.roles.some(r => r.nama?.toLowerCase() === 'bk' || r.nama?.toLowerCase().includes('bimbingan')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0) ? (
+                  <BKDashboardSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
                 ) : (
                   <div className="animate-slide-up flex flex-col gap-8">
                     <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-xl p-6 md:p-10 shadow-lg text-white relative overflow-hidden">
@@ -1827,11 +2039,18 @@ export default function DashboardGuru() {
               </>
             )}
 
+            {activeMenu === 'pengacak_duduk' && fitur.has('lihat_data_siswa') && session.kelas?.length > 0 && (
+              <PengacakTempatDudukSection
+                waliStudents={waliStudents}
+                activeTaData={activeTa}
+                session={session}
+              />
+            )}
+
             {activeMenu === 'siswa_wali' && fitur.has('lihat_data_siswa') && (
-              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-4rem)]">
+              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)]">
                 <div className="mb-6 shrink-0">
-                  <h2 className="text-2xl font-bold text-slate-900">Siswa Wali Kelas</h2>
-                  <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas perwalian Anda: <strong>{waliClassesStr}</strong></p>
+                  <p className="text-slate-500 text-sm font-semibold">Kelas Perwalian: <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold text-xs border border-indigo-100">{waliClassesStr}</span></p>
                 </div>
 
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 shrink-0">
@@ -1920,14 +2139,18 @@ export default function DashboardGuru() {
             )}
 
             {activeMenu === 'data_presensi_siswa' && fitur.has('kelola_presensi_sekolah') && (
-              <DataPresensiSiswaSection session={session} activeTa={activeTa} />
+              <DataPresensiSiswaSection 
+                session={session} 
+                activeTa={activeTa} 
+                isFullScreen={hideSidebar}
+                toggleFullScreen={toggleMenuFullScreen}
+              />
             )}
 
             {activeMenu === 'siswa_mapel' && fitur.has('lihat_data_siswa') && (
-              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-4rem)]">
+              <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)]">
                 <div className="mb-6 shrink-0">
-                  <h2 className="text-2xl font-bold text-slate-900">Siswa Mata Pelajaran</h2>
-                  <p className="text-slate-500 text-sm mt-1">Daftar siswa pada kelas mata pelajaran Anda: <strong>{mapelClassesStr}</strong></p>
+                  <p className="text-slate-500 text-sm font-semibold">Kelas Mata Pelajaran: <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold text-xs border border-indigo-100">{mapelClassesStr}</span></p>
                 </div>
 
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 shrink-0">
@@ -2079,8 +2302,46 @@ export default function DashboardGuru() {
               <ProgramSekolahSection session={session} activeTa={activeTa} isAdmin={fiturAkses['kelola_kalender_akademik'] === 'edit'} />
             )}
 
+            {activeMenu === 'jadwal_pelajaran' && (
+              <div className="space-y-6">
+                {/* Control Panel */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">📅 Jadwal Pelajaran Kelas</h2>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Pilih kelas di bawah ini untuk melihat jadwal pelajaran lengkap berdasarkan semester aktif.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label htmlFor="kelas-select" className="text-xs font-bold text-slate-600">Pilih Kelas:</label>
+                    <select
+                      id="kelas-select"
+                      value={selectedKelas}
+                      onChange={(e) => setSelectedKelas(e.target.value)}
+                      className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      {['7A', '7B', '7C', '7D', '8A', '8B', '8C', '8D', '9A', '9B', '9C', '9D'].map(k => (
+                        <option key={k} value={k}>Kelas {k}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Redesigned Excel-styled schedule table component */}
+                <SiswaJadwalSection 
+                  kelas={selectedKelas} 
+                  activeTa={activeTa} 
+                  semester={parseInt(jadwalSemester) || 2} 
+                />
+              </div>
+            )}
+
             {activeMenu === 'rekap_poin' && fitur.has('akses_rekap_poin') && (
               <RekapPoinSiswaSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'konsultasi_bk' && session.roles?.some(r => r.nama?.toLowerCase() === 'bk' || r.nama?.toLowerCase().includes('bimbingan')) && (
+              <GuruBKKonsultasiSection session={session} />
             )}
 
             {activeMenu === 'denah_kehadiran' && fitur.has('akses_denah_kehadiran') && (
@@ -2106,7 +2367,7 @@ export default function DashboardGuru() {
 
             {activeMenu === 'password' && (
               <div className="animate-slide-up max-w-md">
-                <div className="mb-6">
+                <div className="mb-6 hidden">
                   <h2 className="text-2xl font-bold text-slate-900">Ubah Sandi</h2>
                   <p className="text-slate-500 text-sm mt-1">Ubah kata sandi login Anda secara berkala demi keamanan</p>
                 </div>
@@ -2184,7 +2445,7 @@ export default function DashboardGuru() {
 
             {activeMenu === 'konfigurasi' && fitur.has('kelola_konfigurasi_sistem') && (
               <div className="animate-slide-up">
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-6 hidden">
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">Pengaturan Sistem</h2>
                     <p className="text-slate-500 text-sm mt-1">Konfigurasi data siswa dan informasi pengumuman</p>
@@ -2263,9 +2524,9 @@ export default function DashboardGuru() {
 
             {activeMenu === 'profil' && (
               <div className="animate-slide-up max-w-3xl">
-                <div className="mb-6">
+                <div className="mb-6 hidden">
                   <h2 className="text-2xl font-bold text-slate-900">Profil Saya</h2>
-                  <p className="text-slate-500 text-sm mt-1">Informasi lengkap data diri dan penugasan Anda.</p>
+                  <p className="text-slate-500 text-sm mt-1">Informasi lengkap data diri and penugasan Anda.</p>
                 </div>
 
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

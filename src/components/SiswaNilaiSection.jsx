@@ -129,7 +129,7 @@ export default function SiswaNilaiSection({ studentData }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in flex flex-col" style={{ maxHeight: 'calc(100vh - 120px)' }}>
       <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 bg-white z-10 sticky top-0">
-        <div>
+        <div className="hidden">
           <h2 className="text-xl font-bold text-slate-800">Nilai Saya</h2>
           <p className="text-sm text-slate-500 mt-1">Daftar nilai mata pelajaran Anda per semester.</p>
         </div>

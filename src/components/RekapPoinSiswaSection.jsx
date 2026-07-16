@@ -194,14 +194,9 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       setBreakdownData(catList)
 
       // 6. Peringkat Siswa Pelanggaran Terbanyak
-      // Diambil langsung dari student_points yang memiliki total_poin terkecil (artinya pelanggaran terbesar)
+      // Hanya siswa yang total_poin < poin_default (benar-benar memiliki pelanggaran)
       let siswaQuery = supabase.from('student_points')
-        .select(`
-          nisn,
-          total_poin,
-          tahap_pembinaan_aktif,
-          siswa_lengkap (nama_lengkap)
-        `)
+        .select('nisn, total_poin, poin_default, tahap_pembinaan_aktif')
         .eq('tahun_ajaran_id', activeTa.id)
         .order('total_poin', { ascending: true })
 
@@ -209,7 +204,11 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         siswaQuery = siswaQuery.eq('semester', semester)
       }
 
-      const { data: sPoints } = await siswaQuery.limit(10)
+      const { data: sPointsRaw } = await siswaQuery.limit(50)
+      // Filter client-side: hanya siswa yang poinnya BENAR-BENAR berkurang dari default
+      const sPoints = (sPointsRaw || [])
+        .filter(sp => sp.total_poin < (sp.poin_default ?? 100))
+        .slice(0, 10)
 
       // Fetch nama tahap pembinaan untuk peringkat
       const { data: stages } = await supabase.from('guidance_stages').select('id, nama_tahap')
@@ -225,9 +224,21 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         return acc
       }, {})
 
+      // Fetch nama siswa secara terpisah (bukan embedded join) untuk menghindari duplikasi dari VIEW
+      const rankNisns = sPoints.map(sp => sp.nisn)
+      let siswaNameMap = {}
+      if (rankNisns.length > 0) {
+        const { data: siswaNames } = await supabase.from('siswa_lengkap')
+          .select('nisn, nama_lengkap')
+          .in('nisn', rankNisns)
+        ;(siswaNames || []).forEach(s => {
+          siswaNameMap[s.nisn] = s.nama_lengkap
+        })
+      }
+
       const sRank = (sPoints || []).map(sp => ({
         nisn: sp.nisn,
-        nama: sp.siswa_lengkap?.nama_lengkap || 'Tidak Diketahui',
+        nama: siswaNameMap[sp.nisn] || 'Tidak Diketahui',
         kelas: enrolMap[sp.nisn] || '—',
         poin: sp.total_poin,
         tahap: stageMap[sp.tahap_pembinaan_aktif] || 'Normal'
@@ -281,11 +292,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       } else if (drillLevel === 2 && drillKelas) {
         // LEVEL 2: Daftar Siswa di Kelas Terpilih
         const { data: sPoints } = await supabase.from('student_points')
-          .select(`
-            nisn,
-            total_poin,
-            siswa_lengkap (nama_lengkap)
-          `)
+          .select('nisn, total_poin')
           .eq('tahun_ajaran_id', activeTa.id)
           .eq('semester', semester)
 
@@ -312,11 +319,23 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           }
         })
 
-        const list = (sPoints || [])
-          .filter(sp => classNisns.has(sp.nisn))
+        // Fetch nama siswa secara terpisah untuk menghindari duplikasi dari VIEW
+        const filteredSPoints = (sPoints || []).filter(sp => classNisns.has(sp.nisn))
+        const drillNisns = filteredSPoints.map(sp => sp.nisn)
+        let drillNameMap = {}
+        if (drillNisns.length > 0) {
+          const { data: drillNames } = await supabase.from('siswa_lengkap')
+            .select('nisn, nama_lengkap')
+            .in('nisn', drillNisns)
+          ;(drillNames || []).forEach(s => {
+            drillNameMap[s.nisn] = s.nama_lengkap
+          })
+        }
+
+        const list = filteredSPoints
           .map(sp => ({
             nisn: sp.nisn,
-            nama: sp.siswa_lengkap?.nama_lengkap || 'Siswa Tanpa Nama',
+            nama: drillNameMap[sp.nisn] || 'Siswa Tanpa Nama',
             total_poin: sp.total_poin,
             pelanggaran: pelMap[sp.nisn] || 0,
             prestasi: presMap[sp.nisn] || 0
@@ -442,10 +461,11 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       </div>
 
       {/* Filter Card */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+        {/* Baris 1: Periode + Semester/Rentang */}
+        <div className="flex flex-wrap gap-3 items-end">
           {/* Pilihan Periode */}
-          <div>
+          <div className="min-w-[160px]">
             <label className="block text-xs font-bold text-slate-600 mb-1.5">Periode Evaluasi</label>
             <select
               value={periode}
@@ -460,16 +480,16 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             </select>
           </div>
 
-          {/* Rincian Kustom / Semester */}
+          {/* Rentang Kustom */}
           {periode === 'custom' && (
-            <div className="md:col-span-2 grid grid-cols-2 gap-3">
+            <>
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1.5">Tanggal Mulai</label>
                 <input
                   type="date"
                   value={startDate}
                   onChange={e => setStartDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
               <div>
@@ -478,14 +498,15 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
                   type="date"
                   value={endDate}
                   onChange={e => setEndDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
-            </div>
+            </>
           )}
 
+          {/* Semester */}
           {periode === 'semester' && (
-            <div>
+            <div className="min-w-[180px]">
               <label className="block text-xs font-bold text-slate-600 mb-1.5">Semester</label>
               <select
                 value={semester}
@@ -499,42 +520,58 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             </div>
           )}
 
-          {/* Filter Kelas (Checklist/Multi-select Sederhana) */}
-          <div className="relative">
-            <label className="block text-xs font-bold text-slate-600 mb-1.5">Filter Kelas</label>
-            <div className="border border-slate-200 rounded-xl px-3 py-2 text-sm max-h-24 overflow-y-auto bg-slate-50 space-y-1">
-              {allClasses.map(k => (
-                <label key={k} className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={selectedClasses.includes(k)}
-                    onChange={e => {
-                      if (e.target.checked) {
-                        setSelectedClasses(prev => [...prev, k])
-                      } else {
-                        setSelectedClasses(prev => prev.filter(c => c !== k))
-                      }
-                    }}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                  />
-                  {k}
-                </label>
-              ))}
-            </div>
-          </div>
-
           {/* Tombol Refresh */}
-          <div>
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 font-bold rounded-xl text-sm transition-all border border-slate-200 flex items-center gap-2 shrink-0"
+          >
+            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3m-3-3v8" />
+            </svg>
+            Segarkan
+          </button>
+        </div>
+
+        {/* Baris 2: Filter Kelas sebagai Pill Horizontal */}
+        <div>
+          <label className="block text-xs font-bold text-slate-600 mb-2">Filter Kelas</label>
+          <div className="flex flex-wrap gap-1.5">
+            {/* Tombol "Semua" */}
             <button
-              onClick={fetchData}
-              disabled={loading}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 font-bold rounded-xl text-sm transition-all border border-slate-200 flex items-center justify-center gap-2"
+              type="button"
+              onClick={() => setSelectedClasses([])}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                selectedClasses.length === 0
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+              }`}
             >
-              <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3m0 0l3 3m-3-3v8" />
-              </svg>
-              Segarkan Data
+              Semua Kelas
             </button>
+            {allClasses.map(k => {
+              const isSelected = selectedClasses.includes(k)
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedClasses(prev => prev.filter(c => c !== k))
+                    } else {
+                      setSelectedClasses(prev => [...prev, k])
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                    isSelected
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                  }`}
+                >
+                  {k}
+                </button>
+              )
+            })}
           </div>
         </div>
       </div>

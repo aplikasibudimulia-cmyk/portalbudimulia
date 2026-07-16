@@ -118,3 +118,18 @@ body {
   border-bottom: 6px solid var(--theme-500);
   min-height: 100vh;
 }
+
+/* Hide Top Section Headings/Subtitles in Dashboards (Teacher, Student, Parent) */
+.dashboard-content-area .mb-6.shrink-0 > div:first-child > h2,
+.dashboard-content-area .mb-6.shrink-0 > div:first-child > p,
+.dashboard-content-area .mb-6 > h2:first-child,
+.dashboard-content-area .mb-6 > h2:first-child + p,
+.dashboard-content-area .mb-6 > div > h2:first-child,
+.dashboard-content-area .mb-6 > div > h2:first-child + p,
+.dashboard-content-area .shrink-0.mb-6 > div:first-child > h2,
+.dashboard-content-area .shrink-0.mb-6 > div:first-child > p,
+.dashboard-content-area div.animate-slide-up > div.mb-6.shrink-0:first-child,
+.dashboard-content-area div.animate-fade-in > div.shrink-0.mb-6:first-child > div:first-child,
+.dashboard-content-area div.animate-fade-in > div.flex.flex-col.sm:flex-row.justify-between > div:first-child {
+  display: none !important;
+}

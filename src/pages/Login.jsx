@@ -14,16 +14,22 @@ function Login() {
       const params = new URLSearchParams(window.location.search)
       return {
         u: params.get('u')?.trim() || '',
-        p: params.get('p')?.trim() || ''
+        p: params.get('p')?.trim() || '',
+        r: params.get('r')?.trim() || ''
       }
     } catch (e) {
-      return { u: '', p: '' }
+      return { u: '', p: '', r: '' }
     }
   }
 
   const initialParams = getUrlParams()
 
-  const [loginRole, setLoginRole] = useState('Siswa')
+  const [loginRole, setLoginRole] = useState(() => {
+    const r = initialParams.r.toLowerCase()
+    if (r === 'guru' || r === 'staff') return 'Guru / Staff'
+    if (r === 'orang_tua' || r === 'ortu') return 'Orang Tua'
+    return 'Siswa'
+  })
   const [username, setUsername] = useState(initialParams.u)
   const [password, setPassword] = useState(initialParams.p)
   const [loading, setLoading] = useState(false)
@@ -118,10 +124,17 @@ function Login() {
         const urlParams = new URLSearchParams(cleanText.substring(cleanText.indexOf('?')))
         const uParam = urlParams.get('u')
         const pParam = urlParams.get('p')
+        const rParam = urlParams.get('r')
         if (uParam && pParam) {
           e.preventDefault()
           setUsername(uParam.trim())
           setPassword(pParam.trim())
+          if (rParam) {
+            const r = rParam.toLowerCase().trim()
+            if (r === 'guru' || r === 'staff') setLoginRole('Guru / Staff')
+            else if (r === 'orang_tua' || r === 'ortu') setLoginRole('Orang Tua')
+            else setLoginRole('Siswa')
+          }
           return
         }
       } catch (err) {
@@ -163,12 +176,12 @@ function Login() {
     try {
       // 1. Autentikasi menggunakan Supabase Auth (Mengamankan Session Client)
       let emailToSignIn = username.trim().toLowerCase()
-      if (!emailToSignIn.includes('@')) {
-        emailToSignIn = emailToSignIn + '@ebudimulia.local'
-      }
+      // emailToSignIn dipakai oleh fn_login untuk matching di akun_pengguna (bisa pakai Gmail / username pendek)
+      // authEmail: semua akun di auth.users disimpan dengan @ebudimulia.local (strip domain asli)
+      const authEmail = emailToSignIn.split('@')[0] + '@ebudimulia.local'
 
       const { error: authError } = await supabase.auth.signInWithPassword({
-        email: emailToSignIn,
+        email: authEmail,
         password: password.trim()
       })
 

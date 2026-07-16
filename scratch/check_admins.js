@@ -20,12 +20,18 @@ for (const line of envLines) {
 
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-async function check() {
-  console.log("Checking Admin accounts in public.akun_pengguna...")
-  
-  // We can select role = 'admin' using fn_login or another method if RLS is on,
-  // but wait, we can create a temporary function to list all admin accounts and call it!
-  const { data, error } = await supabase.rpc('get_auth_triggers') // let's see if we can query it via a SQL function
+async function run() {
+  console.log("Querying admins from akun_pengguna...")
+  const { data, error } = await supabase
+    .from('akun_pengguna')
+    .select('id, username, role, status')
+    .eq('role', 'admin')
+
+  if (error) {
+    console.error("Error fetching admins:", error.message)
+  } else {
+    console.log("Admin accounts in DB:", data)
+  }
 }
 
-check()
+run()
