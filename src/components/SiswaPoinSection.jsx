@@ -310,9 +310,6 @@ export default function SiswaPoinSection({
                                 </td>
                                 <td className="py-3.5 px-5">
                                   <div className="flex items-center gap-1.5">
-                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${isMinus ? 'bg-red-50 text-red-700 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
-                                      {rec.kode_katalog || 'KODE'}
-                                    </span>
                                     <span className="font-semibold text-slate-800">{rec.jenis || 'Jenis Catatan'}</span>
                                   </div>
                                 </td>
@@ -353,12 +350,9 @@ export default function SiswaPoinSection({
                               }))
                             }}
                           >
-                            {/* Baris Atas: Jenis & Kode (Kiri), Poin (Kanan) */}
+                            {/* Baris Atas: Jenis (Kiri), Poin (Kanan) */}
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border shrink-0 ${isMinus ? 'bg-red-50 text-red-700 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
-                                  {rec.kode_katalog || 'KODE'}
-                                </span>
                                 <span className="font-semibold text-slate-800 text-xs truncate">{rec.jenis || 'Jenis Catatan'}</span>
                               </div>
                               <div className="shrink-0">

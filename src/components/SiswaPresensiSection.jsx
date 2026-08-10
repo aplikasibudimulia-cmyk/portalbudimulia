@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useConfirm } from '../utils/useConfirm'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification } from '../utils/pushNotif'
+import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
 import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
 
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
@@ -41,6 +42,7 @@ export default function SiswaPresensiSection({ studentData }) {
   const [presensiPulang, setPresensiPulang] = useState(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
+  const [cameraError, setCameraError] = useState('')
   const [selfieSrc, setSelfieSrc] = useState(null)
   const [selfieBlob, setSelfieBlob] = useState(null)
   const [scannedToken, setScannedToken] = useState(null)
@@ -54,6 +56,9 @@ export default function SiswaPresensiSection({ studentData }) {
   const [jamMulaiPresensi, setJamMulaiPresensi] = useState('')
   const [hariAktifPresensi, setHariAktifPresensi] = useState('1,2,3,4,5')
   const [jamBatasPulang, setJamBatasPulang] = useState('')
+  const [presensiMasukMode, setPresensiMasukMode] = useState('qr') // 'qr' | 'geofence' | 'both'
+  const [presensiPulangAktif, setPresensiPulangAktif] = useState(false)
+  const [selectedMode, setSelectedMode] = useState(null) // null | 'qr' | 'geofence'
   const [notifGranted, setNotifGranted] = useState(isNotifGranted())
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [geofenceConfig, setGeofenceConfig] = useState({
@@ -65,8 +70,10 @@ export default function SiswaPresensiSection({ studentData }) {
   const [geofenceAreas, setGeofenceAreas] = useState([]) // multiple extra areas
 
   const scannerRef = useRef(null)
-  const selfieInputRef = useRef(null)
+  const selfieFileInputRef = useRef(null)
+  const qrFileInputRef = useRef(null)
   const videoRef = useRef(null)
+  const selectedModeRef = useRef(null) // ref agar tidak stale di async callbacks
 
   const today = new Date().toLocaleDateString('en-CA')
 
@@ -106,8 +113,13 @@ export default function SiswaPresensiSection({ studentData }) {
       setHariAktifPresensi(har)
       const pul = settings.find(s => s.setting_key === 'jam_batas_pulang')?.setting_value || ''
       setJamBatasPulang(pul)
+      const pulAktifVal = settings ? settings.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value : null
+      const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
+      setPresensiPulangAktif(pulAktif || !!sesi)
       const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
       setSelfieRequired(selfieReq !== 'false')
+      const mMode = settings.find(s => s.setting_key === 'presensi_masuk_mode')?.setting_value || 'qr'
+      setPresensiMasukMode(mMode)
 
       // Geofence config
       const geoAktif = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
@@ -185,15 +197,85 @@ export default function SiswaPresensiSection({ studentData }) {
 
   // Realtime update
   useEffect(() => {
-    const channel = supabase
+    const channel1 = supabase
       .channel(`presensi-siswa-${studentData.nisn}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'presensi_harian',
         filter: `siswa_nisn=eq.${studentData.nisn}`
       }, () => { loadStatus() })
       .subscribe()
-    return () => supabase.removeChannel(channel)
+
+    const channel2 = supabase
+      .channel(`pengaturan-sekolah-siswa`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'pengaturan_sekolah'
+      }, () => { loadStatus() })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel1)
+      supabase.removeChannel(channel2)
+    }
   }, [studentData.nisn, loadStatus])
+
+  const handleMulaiPresensiQR = () => {
+    selectedModeRef.current = 'qr'
+    setSelectedMode('qr')
+    startScanner()
+  }
+
+  const handleMulaiPresensiGeofence = () => {
+    selectedModeRef.current = 'geofence'
+    setSelectedMode('geofence')
+    setErrorMsg('')
+    if (selfieRequired) {
+      setStep(STEP.SELFIE)
+    } else {
+      doSubmit(null, null, null, 'geofence')
+    }
+  }
+
+  const handleMulaiPresensi = (modeOverride) => {
+    if (tipeAktif === TIPE.MASUK) {
+      // Jika hanya geofence aktif, atau dipilih geofence
+      const hanyaGeofence = !qrAktif && geofenceConfig.aktif
+      const dipilihGeofence = modeOverride === 'geofence'
+
+      if (hanyaGeofence || dipilihGeofence) {
+        handleMulaiPresensiGeofence()
+      } else {
+        selectedModeRef.current = 'qr'
+        setSelectedMode('qr')
+        startScanner()
+      }
+    } else {
+      // Presensi Pulang
+      if (presensiPulang) {
+        setErrorMsg('Anda sudah melakukan presensi pulang hari ini.')
+        setStep(STEP.ERROR)
+        return
+      }
+      if (!presensiMasuk) {
+        setErrorMsg('Anda belum melakukan presensi masuk hari ini.')
+        setStep(STEP.ERROR)
+        return
+      }
+      const statusMasuk = presensiMasuk.status
+      if (['S', 'I', 'A'].includes(statusMasuk)) {
+        setErrorMsg('Presensi pulang tidak tersedia karena status presensi Anda hari ini adalah Sakit, Izin, atau Alpha.')
+        setStep(STEP.ERROR)
+        return
+      }
+      if (!presensiPulangAktif) {
+        setErrorMsg('Sesi presensi pulang belum dibuka oleh Petugas Piket / Admin. Silakan tunggu hingga petugas mengaktifkan sesi pulang.')
+        setStep(STEP.ERROR)
+        return
+      }
+      // Langsung menuju kamera selfie tanpa QR code scanner!
+      setErrorMsg('')
+      setStep(STEP.SELFIE)
+    }
+  }
 
 
   // === QR Scanner ===
@@ -210,25 +292,32 @@ export default function SiswaPresensiSection({ studentData }) {
     }
     setStep(STEP.SCANNING)
     setErrorMsg('')
+    setCameraError('')
 
     setTimeout(async () => {
       try {
         const html5QrCode = new Html5Qrcode('qr-reader')
         scannerRef.current = html5QrCode
-        await html5QrCode.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 240, height: 240 } },
-          async (decodedText) => {
-            await html5QrCode.stop()
-            scannerRef.current = null
-            handleQRScanned(decodedText)
-          },
-          () => {}
-        )
+        
+        const qrConfig = { fps: 10, qrbox: { width: 240, height: 240 } }
+        const qrSuccessCallback = async (decodedText) => {
+          await html5QrCode.stop()
+          scannerRef.current = null
+          handleQRScanned(decodedText)
+        }
+
+        try {
+          await html5QrCode.start({ facingMode: 'environment' }, qrConfig, qrSuccessCallback, () => {})
+        } catch {
+          try {
+            await html5QrCode.start({ facingMode: 'user' }, qrConfig, qrSuccessCallback, () => {})
+          } catch {
+            await html5QrCode.start({ facingMode: { exact: 'environment' } }, qrConfig, qrSuccessCallback, () => {})
+          }
+        }
       } catch (err) {
-        const errorDetail = typeof err === 'string' ? err : (err?.name || err?.message || 'Unknown error')
-        setStep(STEP.ERROR)
-        setErrorMsg(`Tidak dapat mengakses kamera: ${errorDetail}. Pastikan browser memiliki izin.`)
+        console.warn('Scanner error:', err)
+        setCameraError('Kamera langsung browser tidak dapat dibuka. Silakan gunakan opsi foto/upload QR di bawah.')
       }
     }, 100)
   }
@@ -239,6 +328,37 @@ export default function SiswaPresensiSection({ studentData }) {
       scannerRef.current = null
     }
     setStep(STEP.IDLE)
+  }
+
+  const handleQRFileSelect = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      setStep(STEP.SUBMITTING)
+      if (scannerRef.current) {
+        try { await scannerRef.current.stop() } catch {}
+        scannerRef.current = null
+      }
+
+      const tempId = 'qr-temp-' + Date.now()
+      const tempDiv = document.createElement('div')
+      tempDiv.id = tempId
+      tempDiv.style.display = 'none'
+      document.body.appendChild(tempDiv)
+
+      const html5QrCode = new Html5Qrcode(tempId)
+      const decodedText = await html5QrCode.scanFile(file, false)
+      try { await html5QrCode.clear() } catch {}
+      document.body.removeChild(tempDiv)
+
+      handleQRScanned(decodedText)
+    } catch (err) {
+      console.error('Gagal scan file QR:', err)
+      setStep(STEP.ERROR)
+      setErrorMsg('QR Code tidak terdeteksi dari foto. Pastikan gambar QR Code terlihat jelas dan terang.')
+    } finally {
+      if (e.target) e.target.value = ''
+    }
   }
 
   const handleQRScanned = async (raw) => {
@@ -277,12 +397,17 @@ export default function SiswaPresensiSection({ studentData }) {
   useEffect(() => {
     let currentStream = null
     const startCam = async () => {
+      setCameraError('')
       try {
-        const ms = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 } } })
+        const ms = await getCameraStream('user')
         currentStream = ms
-        if (videoRef.current) videoRef.current.srcObject = ms
+        if (videoRef.current) {
+          videoRef.current.srcObject = ms
+          videoRef.current.play().catch(() => {})
+        }
       } catch (err) {
         console.warn('Camera error:', err)
+        setCameraError(err.userMessage || 'Kamera tidak dapat diakses langsung oleh browser.')
       }
     }
 
@@ -297,27 +422,64 @@ export default function SiswaPresensiSection({ studentData }) {
     }
   }, [step, selfieSrc])
 
+  const handleSelfieFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const { dataUrl, blob } = await processFileToSelfie(file)
+      setSelfieSrc(dataUrl)
+      setSelfieBlob(blob)
+    } catch (err) {
+      setErrorMsg('Gagal memproses foto selfie: ' + err.message)
+    } finally {
+      if (e.target) e.target.value = ''
+    }
+  }
+
   const takeSnapshot = () => {
     if (!videoRef.current) return
-    const video = videoRef.current
-    const canvas = document.createElement('canvas')
-    
-    // Handle cases where video dimensions aren't ready yet
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
-    
-    const ctx = canvas.getContext('2d')
-    // Mirror the canvas so the saved photo looks exactly like the video preview
-    ctx.translate(canvas.width, 0)
-    ctx.scale(-1, 1)
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    
-    canvas.toBlob((blob) => {
-      if (blob) {
-        setSelfieBlob(blob)
-        setSelfieSrc(URL.createObjectURL(blob))
+    try {
+      const video = videoRef.current
+      const origW = video.videoWidth || 640
+      const origH = video.videoHeight || 480
+      
+      // Auto-compress & downscale proportionally (Max dimension: 640px)
+      const maxDim = 640
+      let targetW = origW
+      let targetH = origH
+
+      if (origW > maxDim || origH > maxDim) {
+        if (origW > origH) {
+          targetW = maxDim
+          targetH = Math.round((origH / origW) * maxDim)
+        } else {
+          targetH = maxDim
+          targetW = Math.round((origW / origH) * maxDim)
+        }
       }
-    }, 'image/jpeg', 0.8)
+
+      const canvas = document.createElement('canvas')
+      canvas.width = targetW
+      canvas.height = targetH
+
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Canvas context tidak tersedia')
+
+      // Mirror the canvas so the saved photo looks exactly like the video preview
+      ctx.translate(targetW, 0)
+      ctx.scale(-1, 1)
+      ctx.drawImage(video, 0, 0, targetW, targetH)
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          setSelfieBlob(blob)
+          setSelfieSrc(URL.createObjectURL(blob))
+        }
+      }, 'image/jpeg', 0.75)
+    } catch (err) {
+      console.error('Error saat mengambil foto selfie:', err)
+      setErrorMsg('Gagal mengambil foto. Silakan tekan tombol selfie sekali lagi.')
+    }
   }
 
   // === Upload Selfie ke Supabase Storage ===
@@ -371,40 +533,81 @@ export default function SiswaPresensiSection({ studentData }) {
         body: JSON.stringify(payload),
       }).catch(err => console.warn('[notify-ortu] Fetch error:', err))
 
+      // 3. Kirim LINE Push Notification via Supabase Edge Function line-notify
+      fetch(`${supabaseUrl}/functions/v1/line-notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          nisn,
+          nama: namaLengkap,
+          kelas,
+          status,
+          waktu,
+          tipe,
+          fotoUrl: selfieUrl,
+          keterangan: payload.lokasi || '-'
+        }),
+      }).catch(err => console.warn('[line-notify] Fetch error:', err))
+
     } catch (err) {
       console.warn('Gagal kirim notif ke orangtua:', err)
     }
   }
 
   // === Core Submit ===
-  const doSubmit = async (selfieB, selfieSrcLocal, token) => {
+  const doSubmit = async (selfieB, selfieSrcLocal, token, modeKirim) => {
+    // modeKirim: 'qr' | 'geofence' | undefined (auto-detect dari selectedMode)
     setStep(STEP.SUBMITTING)
     try {
-      // 1. Minta izin lokasi & dapatkan koordinat
-      if (!("geolocation" in navigator)) {
-        throw new Error('Fitur Geolocation tidak didukung di browser ini.');
+      // 1. Dapatkan koordinat (opsional / soft-check)
+      let coords = '0,0';
+      let accuracy = 0;
+      try {
+        if ("geolocation" in navigator) {
+          const getPos = () => new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (p) => resolve(p),
+              () => {
+                navigator.geolocation.getCurrentPosition(
+                  (p2) => resolve(p2),
+                  () => resolve(null),
+                  { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 }
+                );
+              },
+              { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+            );
+          });
+          const pos = await getPos();
+          if (pos && pos.coords) {
+            coords = `${pos.coords.latitude},${pos.coords.longitude}`;
+            accuracy = Math.round(pos.coords.accuracy);
+          }
+        }
+      } catch (err) {
+        // Lokasi diabaikan sesuai pengaturan
       }
 
-      const { coords, accuracy } = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            // Anti-Fake GPS / Mock location detection
-            if (pos.mocked || pos.coords.accuracy === 0) {
-              reject(new Error('Peringatan Keamanan: Terdeteksi penggunaan Fake GPS / Lokasi Palsu! Silakan nonaktifkan aplikasi pemalsu lokasi Anda.'));
-              return;
-            }
-            resolve({
-              coords: `${pos.coords.latitude},${pos.coords.longitude}`,
-              accuracy: Math.round(pos.coords.accuracy)
-            });
-          },
-          (err) => reject(new Error('Izin lokasi ditolak. Anda wajib memberikan izin lokasi di browser Anda untuk melakukan presensi.')),
-          { enableHighAccuracy: true, timeout: 8000 }
-        );
-      });
+      // ===== GEOFENCING CHECK =====
+      // Gunakan ref (bukan state) agar tidak stale di async callback QR scanner
+      const modeYangDipakai = modeKirim || selectedModeRef.current
+      const isGeofenceRequired = (geofenceConfig.aktif || presensiMasukMode === 'geofence') && modeYangDipakai !== 'qr'
+      if (isGeofenceRequired) {
+        if (!window.isSecureContext && window.location.protocol === 'http:') {
+          setStep(STEP.ERROR)
+          setErrorMsg('Presensi ditolak. Akses GPS diblokir oleh browser karena website dibuka menggunakan HTTP (tidak aman). Silakan buka menggunakan HTTPS: https://' + window.location.host + window.location.pathname)
+          return
+        }
 
-      // ===== GEOFENCING CHECK (OR logic: primary point + extra areas) =====
-      if (geofenceConfig.aktif) {
+        if (coords === '0,0') {
+          setStep(STEP.ERROR)
+          setErrorMsg('Presensi ditolak. Gagal mendapatkan lokasi GPS HP Anda. Pastikan Izin Lokasi diizinkan di browser HP Anda dan fitur GPS HP telah diaktifkan.')
+          return
+        }
+
         const [userLat, userLng] = coords.split(',').map(Number);
 
         // Build all areas to check: primary + extra
@@ -468,7 +671,7 @@ export default function SiswaPresensiSection({ studentData }) {
       const { error: insertErr } = await supabase.from('presensi_harian').insert({
         tanggal: today,
         tahun_ajaran_id: studentData.tahun_ajaran_id || null,
-        kelas: studentData.kelas,
+        kelas: studentData.kelas || '-',
         siswa_nisn: studentData.nisn,
         status: statusOtomatis,
         waktu: jamSekarang,
@@ -519,7 +722,7 @@ export default function SiswaPresensiSection({ studentData }) {
 
   const handleSubmit = async () => {
     if (selfieRequired && !selfieSrc) { setErrorMsg('Selfie belum diambil'); return }
-    await doSubmit(selfieBlob, selfieSrc, scannedToken)
+    await doSubmit(selfieBlob, selfieSrc, scannedToken, selectedMode)
   }
 
   const reset = () => {
@@ -528,6 +731,8 @@ export default function SiswaPresensiSection({ studentData }) {
     setSelfieSrc(null)
     setSelfieBlob(null)
     setScannedToken(null)
+    setSelectedMode(null)
+    selectedModeRef.current = null
   }
 
   const handleResetTesting = async () => {
@@ -766,7 +971,7 @@ export default function SiswaPresensiSection({ studentData }) {
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}
             </div>
-          ) : !sesiAktif ? (
+          ) : !(tipeAktif === TIPE.PULANG ? (presensiPulangAktif || sesiAktif) : sesiAktif) ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
               <div className="w-24 h-24 rounded-full bg-slate-50 border-2 border-slate-100 flex items-center justify-center mb-5">
                 <svg className="w-12 h-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -779,28 +984,155 @@ export default function SiswaPresensiSection({ studentData }) {
             </div>
           ) : step === STEP.IDLE && !isDone ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex flex-col items-center text-center">
-              <div className="w-24 h-24 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center mb-5">
-                <svg className="w-12 h-12 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                  <rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/>
-                </svg>
-              </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">
-                {tipeAktif === TIPE.MASUK ? 'Presensi Masuk' : 'Presensi Pulang'}
-              </h3>
-              <p className="text-sm text-slate-500 mb-6">
-                {tipeAktif === TIPE.MASUK
-                  ? 'Scan QR Code dari layar TV di pintu masuk sekolah.'
-                  : 'Scan QR Code dari layar TV untuk konfirmasi pulang.'}
-              </p>
-              <button
-                onClick={startScanner}
-                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-200 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                Scan QR — {tipeAktif === TIPE.MASUK ? 'Masuk' : 'Pulang'}
-              </button>
-              <p className="text-xs text-slate-400 mt-3">Jam batas hadir: <strong>{jamBatasHadir}</strong></p>
+              {tipeAktif === TIPE.MASUK ? (
+                (() => {
+                  const keduanyaAktif = qrAktif && geofenceConfig.aktif
+                  const hanyaGeofence = !qrAktif && geofenceConfig.aktif
+
+                  if (keduanyaAktif) {
+                    // ─── Dual Mode: Tampilkan dua pilihan tombol ───
+                    return (
+                      <>
+                        <div className="w-24 h-24 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center mb-5">
+                          <span className="text-4xl select-none">📋</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">Presensi Masuk</h3>
+                        <p className="text-sm text-slate-500 mb-5 max-w-sm">
+                          Pilih metode presensi yang ingin Anda gunakan hari ini.
+                        </p>
+                        <div className="flex flex-col gap-3 w-full">
+                          {/* Tombol Scan QR */}
+                          <button
+                            onClick={handleMulaiPresensiQR}
+                            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-200 flex items-center justify-center gap-2"
+                          >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                            Scan QR Code
+                          </button>
+                          {/* Tombol Geofencing */}
+                          <button
+                            onClick={handleMulaiPresensiGeofence}
+                            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-emerald-200 flex items-center justify-center gap-2"
+                          >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            Presensi dengan Lokasi GPS
+                          </button>
+                        </div>
+                        <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-xl text-left w-full">
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            <strong className="text-indigo-700">📷 Scan QR Code</strong> — Scan QR dari layar TV di pintu masuk sekolah, lalu selfie.<br/>
+                            <strong className="text-emerald-700">📍 Presensi GPS</strong> — Langsung selfie, lokasi Anda otomatis diverifikasi terhadap area sekolah.
+                          </p>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-3">Jam batas hadir: <strong>{jamBatasHadir}</strong></p>
+                      </>
+                    )
+                  }
+
+                  if (hanyaGeofence) {
+                    // ─── Hanya Geofencing ───
+                    return (
+                      <>
+                        <div className="w-24 h-24 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center mb-5">
+                          <span className="text-4xl select-none">📍</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">Presensi Masuk</h3>
+                        <p className="text-sm text-slate-500 mb-6 max-w-sm">
+                          Pastikan Anda berada di area sekolah, lalu tekan tombol di bawah untuk ambil foto selfie.
+                        </p>
+                        <button
+                          onClick={handleMulaiPresensiGeofence}
+                          className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-emerald-200 flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                          Presensi Masuk (Verifikasi GPS & Selfie)
+                        </button>
+                        <p className="text-xs text-slate-400 mt-3">Jam batas hadir: <strong>{jamBatasHadir}</strong></p>
+                      </>
+                    )
+                  }
+
+                  // ─── Hanya QR (default) ───
+                  return (
+                    <>
+                      <div className="w-24 h-24 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center mb-5">
+                        <svg className="w-12 h-12 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                          <rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/>
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-800 mb-1">Presensi Masuk</h3>
+                      <p className="text-sm text-slate-500 mb-6 max-w-sm">
+                        Scan QR Code dari layar TV di pintu masuk sekolah.
+                      </p>
+                      <button
+                        onClick={() => handleMulaiPresensi('qr')}
+                        className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-200 flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                        Scan QR — Masuk
+                      </button>
+                      <p className="text-xs text-slate-400 mt-3">Jam batas hadir: <strong>{jamBatasHadir}</strong></p>
+                    </>
+                  )
+                })()
+              ) : (
+                /* Mode Presensi Pulang */
+                (() => {
+                  const statusMasuk = presensiMasuk?.status
+                  const isSakitIzinAlpa = ['S', 'I', 'A'].includes(statusMasuk)
+
+                  if (isSakitIzinAlpa) {
+                    return (
+                      <>
+                        <div className="w-20 h-20 rounded-full bg-amber-50 border-2 border-amber-200 flex items-center justify-center mb-4">
+                          <span className="text-3xl">ℹ️</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">Presensi Pulang Tidak Berlaku</h3>
+                        <p className="text-sm text-slate-500 mb-4 max-w-sm">
+                          Status presensi Anda hari ini tercatat sebagai <strong className="text-amber-700">{STATUS_LABELS[statusMasuk] || statusMasuk}</strong>. Presensi pulang hanya berlaku untuk siswa yang hadir di sekolah.
+                        </p>
+                      </>
+                    )
+                  }
+
+                  if (!presensiPulangAktif) {
+                    return (
+                      <>
+                        <div className="w-20 h-20 rounded-full bg-slate-100 border-2 border-slate-200 flex items-center justify-center mb-4">
+                          <span className="text-3xl">🔒</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">Sesi Presensi Pulang Belum Dibuka</h3>
+                        <p className="text-sm text-slate-500 mb-4 max-w-sm">
+                          Sesi presensi pulang belum diaktifkan oleh Guru Piket atau Admin. Silakan tunggu hingga jam kepulangan dimulai.
+                        </p>
+                        <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-xl font-medium">
+                          💡 Saat sesi dibuka oleh piket, tombol foto selfie pulang akan otomatis muncul di sini.
+                        </div>
+                      </>
+                    )
+                  }
+
+                  return (
+                    <>
+                      <div className="w-20 h-20 rounded-full bg-blue-50 border-2 border-blue-200 flex items-center justify-center mb-4">
+                        <span className="text-3xl">🏠</span>
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-800 mb-1">Presensi Pulang</h3>
+                      <p className="text-sm text-slate-500 mb-6 max-w-sm">
+                        Sesi presensi pulang telah dibuka! Klik tombol di bawah untuk langsung melakukan foto selfie kepulangan.
+                      </p>
+                      <button
+                        onClick={handleMulaiPresensi}
+                        className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-md shadow-blue-200 flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        Ambil Foto Selfie Pulang
+                      </button>
+                    </>
+                  )
+                })()
+              )}
 
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
@@ -814,42 +1146,132 @@ export default function SiswaPresensiSection({ studentData }) {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
               </div>
-              <div className="p-4">
-                <p className="text-sm text-slate-500 text-center mb-3">Arahkan kamera ke QR Code di layar TV sekolah</p>
-                <div id="qr-reader" className="rounded-xl overflow-hidden border border-slate-100" style={{ minHeight: 280 }} />
-                <button onClick={stopScanner} className="w-full mt-3 py-2.5 text-sm font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200">Batal</button>
+              <div className="p-4 flex flex-col items-center gap-3">
+                <p className="text-sm text-slate-500 text-center">Arahkan kamera ke QR Code di layar TV sekolah</p>
+
+                {/* Live Scanner — tampil langsung */}
+                <div id="qr-reader" className="w-full rounded-xl overflow-hidden border border-slate-100" style={{ minHeight: 260 }} />
+
+                {/* Input file untuk fallback foto */}
+                <input
+                  ref={qrFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={handleQRFileSelect}
+                />
+
+                {/* Jika kamera live gagal (mis. HTTP), tampilkan tombol foto */}
+                {cameraError && (
+                  <div className="w-full p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl flex flex-col gap-2">
+                    <p className="font-bold">⚠️ Kamera langsung tidak tersedia</p>
+                    <p className="text-amber-700">{cameraError}</p>
+                    <button
+                      type="button"
+                      onClick={() => qrFileInputRef.current?.click()}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0118.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                      Alternatif: Foto QR via Kamera HP
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex gap-2 w-full">
+                  {!cameraError && (
+                    <button
+                      type="button"
+                      onClick={() => qrFileInputRef.current?.click()}
+                      className="flex-1 py-2.5 px-3 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 active:scale-95 rounded-xl transition-all border border-indigo-200 flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0118.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                      📷 Foto QR via HP
+                    </button>
+                  )}
+                  <button onClick={stopScanner} className="flex-1 py-2.5 text-xs font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200">
+                    Batal
+                  </button>
+                </div>
               </div>
             </div>
           ) : step === STEP.SELFIE ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-100">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
-                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+                {/* Badge kontekstual sesuai mode */}
+                {tipeAktif === TIPE.MASUK && selectedMode === 'qr' && (
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-600">QR berhasil discan</span>
                   </div>
-                  <span className="text-xs font-bold text-emerald-600">QR berhasil discan</span>
-                </div>
+                )}
+                {tipeAktif === TIPE.MASUK && selectedMode === 'geofence' && (
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-600">Lokasi GPS akan diverifikasi saat kirim</span>
+                  </div>
+                )}
                 <h3 className="font-bold text-slate-800">Ambil Selfie</h3>
               </div>
+
+              <input
+                ref={selfieFileInputRef}
+                type="file"
+                accept="image/*"
+                capture="user"
+                className="hidden"
+                onChange={handleSelfieFileChange}
+              />
+
               <div className="p-5 flex flex-col items-center gap-4">
                 {selfieSrc ? (
+                  /* ─── Foto sudah diambil ─── */
                   <div className="relative">
                     <img src={selfieSrc} alt="Selfie" className="w-48 h-48 rounded-full object-cover border-4 border-indigo-200 shadow-md" />
-                    <button onClick={() => { setSelfieSrc(null) }}
-                      className="absolute bottom-2 right-2 w-8 h-8 bg-white rounded-full shadow-md flex items-center justify-center border border-slate-200 hover:bg-slate-50 transition-colors">
-                      <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                    <button onClick={() => { setSelfieSrc(null); setSelfieBlob(null); }}
+                      className="absolute bottom-2 right-2 w-9 h-9 bg-white rounded-full shadow-md flex items-center justify-center border border-slate-200 hover:bg-slate-50 transition-colors"
+                      title="Foto Ulang"
+                    >
+                      <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                     </button>
                   </div>
                 ) : (
-                  <div className="relative w-48 h-48 rounded-full bg-slate-100 border-4 border-slate-200 overflow-hidden flex flex-col items-center justify-center group shadow-inner">
-                    <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover transform -scale-x-100" />
-                    <button onClick={takeSnapshot} className="absolute bottom-3 bg-white/90 backdrop-blur text-indigo-700 px-4 py-1.5 rounded-full text-xs font-bold shadow-md hover:bg-indigo-50 border border-indigo-100 transition-colors z-10 flex items-center gap-1.5">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
-                      Jepret
+                  /* ─── Belum ada foto ─── */
+                  <div className="flex flex-col items-center w-full gap-3">
+
+                    {/* Tombol utama: Kamera HP via input capture — paling reliable di semua perangkat */}
+                    <button
+                      type="button"
+                      onClick={() => selfieFileInputRef.current?.click()}
+                      className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold rounded-2xl transition-all shadow-lg shadow-indigo-200 flex items-center justify-center gap-3 text-sm"
+                    >
+                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                        <circle cx="12" cy="13" r="3"/>
+                      </svg>
+                      Buka Kamera & Selfie
                     </button>
+
+                    {/* Kamera inline browser — opsional, muncul jika berhasil */}
+                    {!cameraError && (
+                      <div className="w-full flex flex-col items-center gap-2">
+                        <p className="text-[11px] text-slate-400">atau gunakan preview kamera di bawah ini:</p>
+                        <div className="relative w-44 h-44 rounded-full bg-slate-100 border-4 border-slate-200 overflow-hidden flex flex-col items-center justify-center shadow-inner">
+                          <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover transform -scale-x-100" />
+                          <button onClick={takeSnapshot} className="absolute bottom-3 bg-white/90 backdrop-blur text-indigo-700 px-4 py-1.5 rounded-full text-xs font-bold shadow-md hover:bg-indigo-50 border border-indigo-100 transition-colors z-10 flex items-center gap-1.5">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3"/></svg>
+                            Jepret
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-                <p className="text-xs text-slate-400 text-center px-4">Arahkan wajah ke layar lalu tekan tombol <strong>Jepret</strong> untuk foto bukti kehadiran.</p>
+                <p className="text-xs text-slate-400 text-center px-4">Arahkan wajah ke kamera sebagai bukti kehadiran.</p>
                 <div className="flex gap-3 w-full">
                   <button onClick={reset} className="flex-1 py-2.5 text-sm font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors">Batal</button>
                   <button onClick={handleSubmit} disabled={selfieRequired && !selfieSrc}
@@ -859,6 +1281,7 @@ export default function SiswaPresensiSection({ studentData }) {
                 </div>
               </div>
             </div>
+
           ) : step === STEP.SUBMITTING ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-12 flex flex-col items-center text-center">
               <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-4" />

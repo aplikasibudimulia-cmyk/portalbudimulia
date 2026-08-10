@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
-import * as XLSX from 'xlsx'
 import TemplateGenerator from '../components/TemplateGenerator'
 import AdminRoleSection from '../components/AdminRoleSection'
 import AdminGuruSection from '../components/AdminGuruSection'
@@ -14,6 +13,7 @@ import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
 import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
 import AdminBeritaSection from '../components/AdminBeritaSection'
 import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
+import AdminLineConfigSection from '../components/AdminLineConfigSection'
 import AdminVerifikasiModal from '../components/AdminVerifikasiModal'
 import AdminSemesterSection from '../components/AdminSemesterSection'
 import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
@@ -32,6 +32,9 @@ import PengumumanResmiSection from '../components/PengumumanResmiSection'
 import GuruDokumenSection from '../components/GuruDokumenSection'
 import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
 import AdminBKKonsultasiSection from '../components/AdminBKKonsultasiSection'
+import AdminPrestasiSection from '../components/AdminPrestasiSection'
+import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
+import LaporanKeterlambatanSection from '../components/LaporanKeterlambatanSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 import { useConfirm } from '../utils/useConfirm'
@@ -408,7 +411,8 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
     }
   }
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
+    const XLSX = await import('xlsx')
     const sortedFiltered = [...students].sort((a, b) => {
       const classA = a.kelas || ''
       const classB = b.kelas || ''
@@ -1458,7 +1462,8 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     onRefresh()
   }
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
+    const XLSX = await import('xlsx')
     const sortedFiltered = [...filtered].sort((a, b) => {
       const classA = a.kelas || ''
       const classB = b.kelas || ''
@@ -1793,6 +1798,7 @@ function Admin() {
   })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState(null)
+  const [pendingPengajuanCount, setPendingPengajuanCount] = useState(0)
 
   const [currentFont, setCurrentFont] = useState(() => {
     return localStorage.getItem('app_font') || 'jakarta'
@@ -1856,6 +1862,22 @@ function Admin() {
   const [pendingMenu, setPendingMenu] = useState(null)
 
   const activeTa = tahunAjarans.find(t => t.is_aktif)
+
+  useEffect(() => {
+    if (!activeTa?.id) return
+    const fetchPendingCount = async () => {
+      const { count } = await supabase.from('pengajuan_poin_positif')
+        .select('id', { count: 'exact', head: true })
+        .eq('tahun_ajaran_id', activeTa.id).eq('status', 'pending')
+      setPendingPengajuanCount(count || 0)
+    }
+    fetchPendingCount()
+    // Realtime subscription
+    const channel = supabase.channel('pengajuan-poin-count')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengajuan_poin_positif' }, fetchPendingCount)
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [activeTa?.id])
 
   const uniqueStudentCount = new Set(students.map(s => s.nisn).filter(Boolean)).size
 
@@ -1966,10 +1988,32 @@ function Admin() {
   const fetchStudents = async () => {
     setStudentsLoading(true)
     
-    const studentsData = await fetchAllRows(() => 
+    const studentsData = (await fetchAllRows(() => 
       supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
-    )
-    if (studentsData) setStudents(studentsData)
+    )) || []
+
+    // Fetch all siswa_permanent to ensure newly created or un-enrolled students are included
+    const { data: permStudents } = await supabase.from('siswa_permanent').select('*').order('nama_lengkap')
+    if (permStudents) {
+      const existingNisns = new Set(studentsData.map(s => String(s.nisn || s.id).trim()))
+      permStudents.forEach(p => {
+        const nisnStr = String(p.nisn || '').trim()
+        if (nisnStr && !existingNisns.has(nisnStr)) {
+          studentsData.push({
+            ...p,
+            id: nisnStr,
+            nisn: nisnStr,
+            nama_lengkap: p.nama_lengkap,
+            kelas: '-',
+            tahun_ajaran: '-',
+            tahun_ajaran_id: null,
+            is_aktif: true
+          })
+        }
+      })
+    }
+
+    setStudents(studentsData)
     
     // Fetch ALL enrollments for the class target list in modals
     const enrData = await fetchAllRows(() => 
@@ -2021,7 +2065,7 @@ function Admin() {
     fetchTahunAjarans()
   }
 
-  const handleExportDatabase = () => {
+  const handleExportDatabase = async () => {
     if (!activeTa) {
       alert("Silakan aktifkan tahun ajaran di menu Konfigurasi terlebih dahulu.")
       return
@@ -2064,6 +2108,7 @@ function Admin() {
       }
     })
 
+    const XLSX = await import('xlsx')
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.json_to_sheet(dataToExport)
     XLSX.utils.book_append_sheet(wb, ws, 'Data Siswa')
@@ -2085,6 +2130,7 @@ function Admin() {
     setLastSyncDetails(null)
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -2269,7 +2315,8 @@ function Admin() {
   }
 
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplateFormatSiswa = async () => {
+    const XLSX = await import('xlsx')
     const headers = [['NO ABSEN', 'NISN', 'NIPD', 'NAMA LENGKAP', 'KELAS', 'EMAIL AKTIF', 'NO. WHATSAPP', 'KODE AKSES', 'TAHUN LULUS']]
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet(headers)
@@ -2356,15 +2403,25 @@ function Admin() {
     })
     if (!confirmed) return
     setIsProcessing(true)
-    await supabase.from('berkas_pengumuman').delete().eq('kode_siswa', s.kode)
+    const nisn = s.nisn
+    await Promise.all([
+      supabase.from('berkas_pengumuman').delete().eq('kode_siswa', s.kode),
+      supabase.from('presensi_harian').delete().eq('siswa_nisn', nisn),
+      supabase.from('point_records').delete().eq('nisn', nisn),
+      supabase.from('student_points').delete().eq('nisn', nisn),
+      supabase.from('nilai_siswa').delete().eq('siswa_nisn', nisn),
+      supabase.from('bk_konsultasi').delete().eq('siswa_nisn', nisn),
+      supabase.from('impersonate_tokens').delete().eq('target_user_id', nisn),
+      supabase.from('akun_pengguna').delete().eq('foreign_id', nisn)
+    ])
     const { data: enrollData } = await supabase.from('enrollment').select('tahun_ajaran_id').eq('kode', s.kode).single()
     if (enrollData) {
-      await supabase.from('foto').delete().match({ nisn: s.nisn, tahun_ajaran_id: enrollData.tahun_ajaran_id })
+      await supabase.from('foto').delete().match({ nisn: nisn, tahun_ajaran_id: enrollData.tahun_ajaran_id })
     }
     await supabase.from('enrollment').delete().eq('kode', s.kode)
-    const { count } = await supabase.from('enrollment').select('*', { count: 'exact', head: true }).eq('nisn', s.nisn)
+    const { count } = await supabase.from('enrollment').select('*', { count: 'exact', head: true }).eq('nisn', nisn)
     if (count === 0) {
-      await supabase.from('siswa_permanent').delete().eq('nisn', s.nisn)
+      await supabase.from('siswa_permanent').delete().eq('nisn', nisn)
     }
     setIsProcessing(false)
     fetchStudents()
@@ -2457,7 +2514,7 @@ function Admin() {
     fetchMenuTypes()
   }
 
-  const handleLogout = async () => { await supabase.auth.signOut(); navigate('/') }
+  const handleLogout = async () => { window.__ebudimuliaExplicitLogout = true; await supabase.auth.signOut(); navigate('/') }
 
   const activeType = menuTypes.find(t => t.id === activeMenu)
   const getTypeStudents = (type) => {
@@ -2517,7 +2574,7 @@ function Admin() {
       }`}>
         <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
             {!sidebarCollapsed && (
               <div className="animate-fade-in truncate">
                 <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
@@ -2582,6 +2639,11 @@ function Admin() {
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi QR Code</span>}
               </button>
+              <button title="Laporan Keterlambatan" onClick={() => handleMenuNavigation('laporan_keterlambatan')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'laporan_keterlambatan' ? 'bg-amber-50 text-amber-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Laporan Keterlambatan</span>}
+              </button>
               <button title="Denah Kehadiran" onClick={() => handleMenuNavigation('denah_kehadiran')}
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
@@ -2609,6 +2671,11 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'notifikasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi Siswa</span>}
+              </button>
+              <button title="Notifikasi LINE" onClick={() => handleMenuNavigation('line_config')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'line_config' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <span className="w-5 h-5 shrink-0 flex items-center justify-center text-sm font-black text-emerald-600">🟢</span>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi LINE</span>}
               </button>
               <button title="Kelola Pengumuman" onClick={() => handleMenuNavigation('kelola_pengumuman')}
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kelola_pengumuman' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -2676,6 +2743,33 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konsultasi_bk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Konsultasi BK</span>}
+              </button>
+              <button title="Prestasi & Lomba Siswa" onClick={() => handleMenuNavigation('prestasi_siswa')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'prestasi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Prestasi & Lomba</span>}
+              </button>
+              {/* Pengajuan Poin Positif */}
+              <button title="Pengajuan Poin Positif" onClick={() => handleMenuNavigation('pengajuan_poin')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengajuan_poin' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5 relative' : 'gap-3 px-3 py-2.5'}`}>
+                <div className="relative shrink-0">
+                  <svg className="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                  {pendingPengajuanCount > 0 && sidebarCollapsed && (
+                    <span className="absolute -top-1 -right-1 bg-emerald-500 text-white text-[8px] font-black px-1 py-0.5 rounded-full ring-1 ring-white min-w-[14px] text-center animate-pulse">
+                      {pendingPengajuanCount > 99 ? '99+' : pendingPengajuanCount}
+                    </span>
+                  )}
+                </div>
+                {!sidebarCollapsed && (
+                  <span className="animate-fade-in truncate font-semibold flex items-center gap-1.5 flex-1">
+                    Pengajuan Poin
+                    {pendingPengajuanCount > 0 && (
+                      <span className="ml-auto bg-emerald-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                        {pendingPengajuanCount > 99 ? '99+' : pendingPengajuanCount}
+                      </span>
+                    )}
+                  </span>
+                )}
               </button>
             </div>
           )}
@@ -2800,7 +2894,7 @@ function Admin() {
       </button>
 
       <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50">
-        <div className="md:hidden p-4 border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20">
+        <div className="md:hidden p-4 border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20 print:hidden">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
             <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
@@ -2823,6 +2917,10 @@ function Admin() {
 
           {activeMenu === 'notifikasi' && (
             <AdminNotifikasiSection />
+          )}
+
+          {activeMenu === 'line_config' && (
+            <AdminLineConfigSection />
           )}
 
           {activeMenu === 'manajemen_akun' && (
@@ -2864,6 +2962,10 @@ function Admin() {
             <DenahKehadiranSection session={session} activeTa={activeTa} isAdmin={true} />
           )}
 
+          {activeMenu === 'laporan_keterlambatan' && (
+            <LaporanKeterlambatanSection />
+          )}
+
           {activeMenu === 'pengumuman_resmi_kepsek' && (
             <PengumumanResmiSection session={session} activeTa={activeTa} />
           )}
@@ -2899,6 +3001,14 @@ function Admin() {
 
           {activeMenu === 'pengaturan_poin' && (
             <AdminPengaturanPoinSection activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'prestasi_siswa' && (
+            <AdminPrestasiSection session={session} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'pengajuan_poin' && (
+            <AdminPengajuanPoinSection session={session} activeTa={activeTa} readOnly={false} />
           )}
 
           {activeMenu === 'konfigurasi' && (
@@ -2996,7 +3106,7 @@ function Admin() {
                     </svg>
                     {csvSyncing ? 'Memproses...' : 'Upload Data Baru (CSV)'}
                   </button>
-                  <button onClick={handleDownloadTemplate}
+                  <button onClick={handleDownloadTemplateFormatSiswa}
                     className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-600 transition-colors">
                     Unduh Format CSV
                   </button>

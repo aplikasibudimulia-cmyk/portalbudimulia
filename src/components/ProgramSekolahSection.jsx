@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import TagInput from './TagInput'
-import { jsPDF } from 'jspdf'
-import html2canvas from 'html2canvas'
-import * as XLSX from 'xlsx'
 
+// Helper untuk mem-parse tanggal YYYY-MM-DD secara aman dan konsisten lintas browser
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null
+  const cleanStr = String(dateStr).split('T')[0].split(' ')[0].trim()
+  const parts = cleanStr.split('-')
+  if (parts.length < 3) return null
+  const y = parseInt(parts[0], 10)
+  const m = parseInt(parts[1], 10) - 1
+  const d = parseInt(parts[2], 10)
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return null
+  return new Date(y, m, d)
+}
 
 export default function ProgramSekolahSection({ session, isAdmin = false, activeTa }) {
   const [programs, setPrograms] = useState([])
@@ -129,6 +138,9 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
   const generatePosterPDF = async () => {
     setIsGenerating(true)
     try {
+      const { jsPDF } = await import('jspdf')
+      const html2canvas = (await import('html2canvas')).default
+
       const pdf = new jsPDF('p', 'mm', 'a4')
       const imgWidth = 210
 
@@ -460,7 +472,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
 
   const excelInputRef = useRef(null)
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    const XLSX = await import('xlsx')
     const headers = [
       'ID Kegiatan',
       'Nama Program / Kegiatan',
@@ -528,6 +541,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
     setLoading(true)
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -558,6 +572,9 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
       const tarMap = new Map(latestTars?.map(t => [t.nama.toLowerCase().trim(), t.id]) || [])
       const guruMap = new Map(latestGurus?.map(g => [g.nama_guru.toLowerCase().trim(), g.id]) || [])
 
+      console.log('IMPORT DEBUG - latestCats:', latestCats, 'errCats:', errCats)
+      console.log('IMPORT DEBUG - catMap keys:', Array.from(catMap.keys()))
+
       for (const row of data) {
         const nama = String(row['Nama Program / Kegiatan'] || row['nama'] || '').trim()
         const start = String(row['Tanggal Mulai (YYYY-MM-DD)'] || row['tanggal_mulai'] || '').trim()
@@ -576,18 +593,18 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
           if (catMap.has(key)) {
             catId = catMap.get(key)
           } else {
-            const { data: newCat, error: catInsErr } = await supabase.from('program_sekolah_kategori').insert([{ nama: catName }]).select().single()
-            if (newCat) {
-              catId = newCat.id
+            // Cek ke DB dulu sebelum insert untuk mencegah 409 Conflict di console
+            const { data: existingCat } = await supabase.from('program_sekolah_kategori').select('id').eq('nama', catName).maybeSingle()
+            if (existingCat) {
+              catId = existingCat.id
               catMap.set(key, catId)
             } else {
-              // Fallback jika insert conflict/error (misal: RLS atau unique constraint)
-              const { data: existingCat } = await supabase.from('program_sekolah_kategori').select('id').eq('nama', catName).maybeSingle()
-              if (existingCat) {
-                catId = existingCat.id
+              const { data: newCat, error: catInsErr } = await supabase.from('program_sekolah_kategori').insert([{ nama: catName }]).select().single()
+              if (newCat) {
+                catId = newCat.id
                 catMap.set(key, catId)
               } else {
-                console.warn(`Gagal mencocokkan/membuat kategori: "${catName}"`, catInsErr)
+                console.warn(`Gagal membuat kategori: "${catName}"`, catInsErr)
               }
             }
           }
@@ -601,18 +618,18 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
           if (locMap.has(key)) {
             locId = locMap.get(key)
           } else {
-            const { data: newLoc, error: locInsErr } = await supabase.from('program_sekolah_lokasi').insert([{ nama: locName }]).select().single()
-            if (newLoc) {
-              locId = newLoc.id
+            // Cek ke DB dulu sebelum insert untuk mencegah 409 Conflict di console
+            const { data: existingLoc } = await supabase.from('program_sekolah_lokasi').select('id').eq('nama', locName).maybeSingle()
+            if (existingLoc) {
+              locId = existingLoc.id
               locMap.set(key, locId)
             } else {
-              // Fallback
-              const { data: existingLoc } = await supabase.from('program_sekolah_lokasi').select('id').eq('nama', locName).maybeSingle()
-              if (existingLoc) {
-                locId = existingLoc.id
+              const { data: newLoc, error: locInsErr } = await supabase.from('program_sekolah_lokasi').insert([{ nama: locName }]).select().single()
+              if (newLoc) {
+                locId = newLoc.id
                 locMap.set(key, locId)
               } else {
-                console.warn(`Gagal mencocokkan/membuat lokasi: "${locName}"`, locInsErr)
+                console.warn(`Gagal membuat lokasi: "${locName}"`, locInsErr)
               }
             }
           }
@@ -638,23 +655,24 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
         const idKegiatan = row['ID Kegiatan'] || row['id']
         let progId = null
 
-        // Cek apakah update atau insert baru
+        // Persiapkan payload dengan ID jika ada (untuk update/upsert)
+        const upsertPayload = { ...payload }
         if (idKegiatan && idKegiatan.length === 36) {
-          const { error: updateErr } = await supabase.from('program_sekolah').update(payload).eq('id', idKegiatan)
-          if (!updateErr) {
-            progId = idKegiatan
-          } else {
-            console.error(`Gagal update program "${nama}":`, updateErr.message)
-          }
+          upsertPayload.id = idKegiatan
         }
 
-        if (!progId) {
-          const { data: newProg, error: insertErr } = await supabase.from('program_sekolah').insert([payload]).select().single()
-          if (newProg && !insertErr) {
-            progId = newProg.id
-          } else if (insertErr) {
-            console.error(`Gagal insert program "${nama}":`, insertErr.message)
-          }
+        const { data: newProg, error: upsertErr } = await supabase
+          .from('program_sekolah')
+          .upsert([upsertPayload])
+          .select()
+          .single()
+
+        if (newProg && !upsertErr) {
+          progId = newProg.id
+        } else {
+          console.error(`Gagal menyimpan program "${nama}":`, upsertErr?.message)
+          errorCount++
+          continue
         }
 
         if (progId) {
@@ -677,18 +695,18 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
               if (tarMap.has(key)) {
                 tId = tarMap.get(key)
               } else {
-                const { data: newTar, error: tarInsErr } = await supabase.from('program_sekolah_target_peserta').insert([{ nama: tName }]).select().single()
-                if (newTar) {
-                  tId = newTar.id
+                // Cek ke DB dulu sebelum insert untuk mencegah 409 Conflict di console
+                const { data: existingTar } = await supabase.from('program_sekolah_target_peserta').select('id').eq('nama', tName).maybeSingle()
+                if (existingTar) {
+                  tId = existingTar.id
                   tarMap.set(key, tId)
                 } else {
-                  // Fallback
-                  const { data: existingTar } = await supabase.from('program_sekolah_target_peserta').select('id').eq('nama', tName).maybeSingle()
-                  if (existingTar) {
-                    tId = existingTar.id
+                  const { data: newTar, error: tarInsErr } = await supabase.from('program_sekolah_target_peserta').insert([{ nama: tName }]).select().single()
+                  if (newTar) {
+                    tId = newTar.id
                     tarMap.set(key, tId)
                   } else {
-                    console.warn(`Gagal mencocokkan/membuat target peserta: "${tName}"`, tarInsErr)
+                    console.warn(`Gagal membuat target peserta: "${tName}"`, tarInsErr)
                   }
                 }
               }
@@ -794,9 +812,9 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
 
   const formatTanggalPelaksanaan = (startStr, endStr) => {
     if (!startStr) return '-'
-    // Parsing with T00:00 to prevent local timezone offsets issues
-    const start = new Date(startStr + 'T00:00')
-    const end = endStr ? new Date(endStr + 'T00:00') : start
+    const start = parseLocalDate(startStr)
+    const end = endStr ? parseLocalDate(endStr) : start
+    if (!start || !end) return '-'
     
     const optionsDay = { day: 'numeric' }
     const optionsFull = { day: 'numeric', month: 'long', year: 'numeric' }
@@ -1227,14 +1245,13 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
 
   // Mencari program pada tanggal tertentu (mendukung rentang multi-hari)
   const getProgramsForDate = (dateStr) => {
-    const targetDate = new Date(dateStr)
-    targetDate.setHours(0, 0, 0, 0)
+    const targetDate = parseLocalDate(dateStr)
+    if (!targetDate) return []
 
     return getFilteredPrograms().filter(p => {
-      const start = new Date(p.tanggal_mulai)
-      start.setHours(0, 0, 0, 0)
-      const end = new Date(p.tanggal_selesai)
-      end.setHours(0, 0, 0, 0)
+      const start = parseLocalDate(p.tanggal_mulai)
+      const end = parseLocalDate(p.tanggal_selesai) || start
+      if (!start || !end) return false
       return targetDate >= start && targetDate <= end
     })
   }
@@ -1245,8 +1262,9 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
     
     // Saring berdasarkan bulan aktif atau tanggal terpilih
     const currentMonthProgs = filtered.filter(p => {
-      const start = new Date(p.tanggal_mulai)
-      const end = new Date(p.tanggal_selesai)
+      const start = parseLocalDate(p.tanggal_mulai)
+      const end = parseLocalDate(p.tanggal_selesai) || start
+      if (!start || !end) return false
       const startOfView = new Date(year, month, 1)
       const endOfView = new Date(year, month + 1, 0)
       return (start <= endOfView && end >= startOfView)
@@ -1419,8 +1437,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
 
             // Programs that START in this month
             const monthProgs = filteredAll.filter(p => {
-              const s = new Date(p.tanggal_mulai + 'T00:00')
-              return s.getMonth() === def.m && s.getFullYear() === def.y
+              const s = parseLocalDate(p.tanggal_mulai)
+              return s && s.getMonth() === def.m && s.getFullYear() === def.y
             })
 
             return (
@@ -1484,7 +1502,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                             onClick={e => e.stopPropagation()}
                           >
                             <div className="flex items-center justify-between px-4 py-3 border-b border-indigo-100" style={{ background:'#eef2ff' }}>
-                              <span className="text-[13px] font-black text-indigo-700">📅 {new Date(dateStr+'T00:00').toLocaleDateString('id-ID',{day:'numeric',month:'long'})}</span>
+                              <span className="text-[13px] font-black text-indigo-700">📅 {parseLocalDate(dateStr)?.toLocaleDateString('id-ID',{day:'numeric',month:'long'})}</span>
                               <button onClick={() => setInlinePanelDate(null)} className="text-slate-400 hover:text-slate-700 text-xl font-bold leading-none">&times;</button>
                             </div>
                             {dayProgs.length > 0 && (
@@ -1549,8 +1567,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                   ) : (
                     <div className="space-y-1">
                       {monthProgs.map(p => {
-                        const ds = new Date(p.tanggal_mulai+'T00:00').getDate()
-                        const de = new Date(p.tanggal_selesai+'T00:00').getDate()
+                        const ds = parseLocalDate(p.tanggal_mulai)?.getDate()
+                        const de = parseLocalDate(p.tanggal_selesai)?.getDate()
                         const lbl = ds === de ? `${ds}` : `${ds}-${de}`
                         const col = p.categories?.[0]?.category?.warna || '#6366f1'
                         return (
@@ -1650,7 +1668,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
               {/* Panel header */}
               <div className="flex items-center justify-between px-3 py-2 bg-indigo-50 border-b border-indigo-100">
                 <span className="text-[11px] font-bold text-indigo-700">
-                  📅 {new Date(dateStr + 'T00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'long' })}
+                  📅 {parseLocalDate(dateStr)?.toLocaleDateString('id-ID', { day: 'numeric', month: 'long' })}
                 </span>
                 <button
                   onClick={() => setInlinePanelDate(null)}
@@ -2435,8 +2453,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                   for (let i = 0; i < firstDay; i++) daysArray.push(null)
                   for (let d = 1; d <= totalDays; d++) daysArray.push(d)
                   const monthProgs = programs.filter(p => {
-                    const start = new Date(p.tanggal_mulai)
-                    return start.getMonth() === def.m && start.getFullYear() === def.y
+                    const start = parseLocalDate(p.tanggal_mulai)
+                    return start && start.getMonth() === def.m && start.getFullYear() === def.y
                   })
 
                   return (
@@ -2492,8 +2510,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                         ) : (
                           <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
                             {monthProgs.map(p => {
-                              const ds = new Date(p.tanggal_mulai).getDate()
-                              const de = new Date(p.tanggal_selesai).getDate()
+                              const ds = parseLocalDate(p.tanggal_mulai)?.getDate()
+                              const de = parseLocalDate(p.tanggal_selesai)?.getDate()
                               const lbl = ds === de ? `${ds}` : `${ds}-${de}`
                               const col = p.categories?.[0]?.category?.warna || '#6366f1'
                               return (
@@ -2643,8 +2661,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                   for (let i = 0; i < firstDay; i++) daysArray.push(null)
                   for (let d = 1; d <= totalDays; d++) daysArray.push(d)
                   const monthProgs = programs.filter(p => {
-                    const start = new Date(p.tanggal_mulai)
-                    return start.getMonth() === def.m && start.getFullYear() === def.y
+                    const start = parseLocalDate(p.tanggal_mulai)
+                    return start && start.getMonth() === def.m && start.getFullYear() === def.y
                   })
 
                   return (
@@ -2700,8 +2718,8 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
                         ) : (
                           <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
                             {monthProgs.map(p => {
-                              const ds = new Date(p.tanggal_mulai).getDate()
-                              const de = new Date(p.tanggal_selesai).getDate()
+                              const ds = parseLocalDate(p.tanggal_mulai)?.getDate()
+                              const de = parseLocalDate(p.tanggal_selesai)?.getDate()
                               const lbl = ds === de ? `${ds}` : `${ds}-${de}`
                               const col = p.categories?.[0]?.category?.warna || '#6366f1'
                               return (

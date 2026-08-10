@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import * as XLSX from 'xlsx'
 
 export default function AdminJadwalPelajaranSection({ session, activeTa }) {
   // Tabs & Views
@@ -1918,6 +1917,7 @@ export default function AdminJadwalPelajaranSection({ session, activeTa }) {
                         setSaving(true)
                         
                         try {
+                          const XLSX = await import('xlsx')
                           const reader = new FileReader()
                           reader.onload = async (evt) => {
                             try {

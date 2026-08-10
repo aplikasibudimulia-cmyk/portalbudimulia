@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
-import ExcelJS from 'exceljs'
-import { saveAs } from 'file-saver'
 
 const EMPTY_FORM = { nama_tahap: '', batas_poin: '', tindakan: '', penanggung_jawab: '', urutan: '' }
 
@@ -80,6 +78,8 @@ export default function AdminTahapPembinaanSection({ readOnly = false }) {
 
   // ─── EXPORT ───────────────────────────────────────────────
   const handleExport = async () => {
+    const ExcelJS = await import('exceljs')
+    const { saveAs } = await import('file-saver')
     const wb = new ExcelJS.Workbook()
     const ws = wb.addWorksheet('Tahap Pembinaan')
     ws.columns = [
@@ -105,6 +105,7 @@ export default function AdminTahapPembinaanSection({ readOnly = false }) {
   const handleImportFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return
     setImportLoading(true)
+    const ExcelJS = await import('exceljs')
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(await file.arrayBuffer())
     const ws = wb.worksheets[0]
@@ -138,6 +139,8 @@ export default function AdminTahapPembinaanSection({ readOnly = false }) {
   }
 
   const handleDownloadTemplate = async () => {
+    const ExcelJS = await import('exceljs')
+    const { saveAs } = await import('file-saver')
     const wb = new ExcelJS.Workbook()
     const ws = wb.addWorksheet('Template Tahap Pembinaan')
     ws.columns = [

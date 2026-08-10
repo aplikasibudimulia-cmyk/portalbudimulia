@@ -1,3 +1,55 @@
+# ── MIME Types (fix "Invalid or unexpected token" di hosting) ──────────────
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType application/json .json
+  AddType image/svg+xml .svg
+  AddType application/wasm .wasm
+  AddType font/woff .woff
+  AddType font/woff2 .woff2
+</IfModule>
+
+# ── Encoding ────────────────────────────────────────────────────────────────
+AddDefaultCharset UTF-8
+
+# ── Compression ─────────────────────────────────────────────────────────────
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+</IfModule>
+
+# ── Cache control ───────────────────────────────────────────────────────────
+<IfModule mod_expires.c>
+  ExpiresActive On
+  # index.html: JANGAN di-cache (agar browser selalu ambil HTML terbaru)
+  ExpiresByType text/html "access plus 0 seconds"
+  # Aset statis: cache 1 tahun (nama file sudah berisi hash, aman)
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/jpg "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+# ── No-cache untuk index.html ────────────────────────────────────────────────
+<IfModule mod_headers.c>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+</IfModule>
+
+# ── HTTPS Redirect (wajib agar kamera/GPS bisa diakses di HP) ───────────────
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# ── SPA Routing (React Router untuk Hostinger / LiteSpeed / Apache) ──────────
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
@@ -5,5 +57,9 @@
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteCond %{REQUEST_FILENAME} !-l
-  RewriteRule . /index.html [L]
+  RewriteRule ^ /index.html [L]
+</IfModule>
+
+<IfModule !mod_rewrite.c>
+  FallbackResource /index.html
 </IfModule>

@@ -10,10 +10,23 @@ try {
 
   console.log(`Successfully read Excel file. Total rows: ${data.length}`)
   if (data.length > 0) {
-    console.log('Columns found:', Object.keys(data[0]))
-    console.log('First 5 rows:')
-    console.log(data.slice(0, 5))
-    
+    const ids = data.map(r => r['ID Kegiatan'] || r['id'] || '').filter(Boolean)
+    const uniqIds = [...new Set(ids)]
+    console.log('Total non-empty IDs in Excel:', ids.length)
+    console.log('Unique IDs in Excel:', uniqIds.length)
+
+    // Find duplicates
+    const idCounts = {}
+    ids.forEach(id => idCounts[id] = (idCounts[id] || 0) + 1)
+    const duplicates = Object.keys(idCounts).filter(id => idCounts[id] > 1)
+    console.log('Duplicate IDs found in Excel:', duplicates)
+    if (duplicates.length > 0) {
+      console.log('First duplicate ID details:')
+      const dupId = duplicates[0]
+      const dupRows = data.filter(r => (r['ID Kegiatan'] || r['id']) === dupId)
+      console.log(dupRows)
+    }
+
     // Check categories and locations list
     const categories = [...new Set(data.map(r => String(r['Kategori'] || '').trim()).filter(Boolean))]
     const locations = [...new Set(data.map(r => String(r['Lokasi'] || '').trim()).filter(Boolean))]

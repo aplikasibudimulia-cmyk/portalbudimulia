@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
+import { getCameraStream } from '../utils/cameraUtils'
 // bcrypt diverifikasi server-side via fn_login RPC (tidak perlu di browser)
 
 
@@ -47,6 +48,38 @@ function Login() {
   // State untuk memperbesar gambar setelan
   const [zoomedImg, setZoomedImg] = useState(null)
 
+  const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
+  const [showIosFsHint, setShowIosFsHint] = useState(false)
+
+  // Detect iOS (Safari doesn't support requestFullscreen)
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+
+  const toggleAppFullScreen = () => {
+    if (isIos) {
+      setShowIosFsHint(true)
+      return
+    }
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    const handleFs = () => setIsNativeFullScreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleFs)
+    document.addEventListener('webkitfullscreenchange', handleFs)
+    document.addEventListener('mozfullscreenchange', handleFs)
+    document.addEventListener('MSFullscreenChange', handleFs)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFs)
+      document.removeEventListener('webkitfullscreenchange', handleFs)
+      document.removeEventListener('mozfullscreenchange', handleFs)
+      document.removeEventListener('MSFullscreenChange', handleFs)
+    }
+  }, [])
+
   const openPermissionGuide = async (type, errorMsg) => {
     setGuideType(type)
     setModalError('')
@@ -77,19 +110,19 @@ function Login() {
     setModalError('')
     if (type === 'kamera') {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
+        const stream = await getCameraStream('user');
+        if (stream) stream.getTracks().forEach(track => track.stop());
         setPermissionState('granted')
         setShowPermissionGuide(false)
         setNotification({ type: 'success', message: 'Izin Kamera berhasil diaktifkan!' })
       } catch (e) {
         setPermissionState('denied')
-        setModalError('Gagal: Kamera masih diblokir browser. Anda harus mengaktifkannya melalui ikon setelan (🎛️) di sebelah kiri alamat web.')
+        setModalError(e.userMessage || 'Gagal: Kamera masih diblokir browser. Anda harus mengaktifkannya melalui pengaturan browser HP.')
       }
     } else if (type === 'lokasi') {
       try {
         await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
         });
         setPermissionState('granted')
         setShowPermissionGuide(false)
@@ -174,11 +207,73 @@ function Login() {
     setNotification(null)
 
     try {
-      // 1. Autentikasi menggunakan Supabase Auth (Mengamankan Session Client)
       let emailToSignIn = username.trim().toLowerCase()
-      // emailToSignIn dipakai oleh fn_login untuk matching di akun_pengguna (bisa pakai Gmail / username pendek)
-      // authEmail: semua akun di auth.users disimpan dengan @ebudimulia.local (strip domain asli)
-      const authEmail = emailToSignIn.split('@')[0] + '@ebudimulia.local'
+      let cleanUsername = emailToSignIn
+
+      // Jika input mengandung '@' dan login sebagai Siswa, lakukan lookup ke database untuk mendapatkan username asli (akun_pengguna.username)
+      if (loginRole === 'Siswa' && emailToSignIn.includes('@') && !emailToSignIn.endsWith('@ebudimulia.local')) {
+        let foundUsername = null
+
+        // 1. Coba via RPC fn_get_username_by_email (SECURITY DEFINER)
+        try {
+          const { data } = await supabase.rpc('fn_get_username_by_email', { p_email: emailToSignIn })
+          if (data) foundUsername = data
+        } catch (err) {
+          console.warn("Gagal lookup username via RPC:", err)
+        }
+
+        // 2. Fallback: Lookup via query tabel siswa_permanent -> akun_pengguna
+        if (!foundUsername) {
+          try {
+            const { data: siswaData } = await supabase
+              .from('siswa_permanent')
+              .select('nisn')
+              .or(`email_aktif.ilike.${emailToSignIn},email_ortu.ilike.${emailToSignIn}`)
+              .maybeSingle()
+
+            if (siswaData?.nisn) {
+              const { data: akunData } = await supabase
+                .from('akun_pengguna')
+                .select('username')
+                .eq('foreign_id', siswaData.nisn)
+                .eq('role', 'murid')
+                .maybeSingle()
+
+              if (akunData?.username) {
+                foundUsername = akunData.username
+              }
+            }
+          } catch (err2) {
+            console.warn("Fallback lookup via siswa_permanent gagal:", err2)
+          }
+        }
+
+        // 3. Fallback: Lookup via query tabel akun_pengguna langsung
+        if (!foundUsername) {
+          try {
+            const { data: akunData } = await supabase
+              .from('akun_pengguna')
+              .select('username')
+              .or(`email.ilike.${emailToSignIn},username.ilike.${emailToSignIn}`)
+              .eq('role', 'murid')
+              .maybeSingle()
+
+            if (akunData?.username) {
+              foundUsername = akunData.username
+            }
+          } catch (err3) {
+            console.warn("Fallback lookup via akun_pengguna gagal:", err3)
+          }
+        }
+
+        if (foundUsername) {
+          cleanUsername = foundUsername.toLowerCase()
+        }
+      }
+
+      // authEmail: semua akun di auth.users disimpan dengan @ebudimulia.local
+      // cleanUsername sudah berisi username (ebmsiswa.xxx) jika lookup berhasil
+      const authEmail = cleanUsername.split('@')[0] + '@ebudimulia.local'
 
       const { error: authError } = await supabase.auth.signInWithPassword({
         email: authEmail,
@@ -196,19 +291,7 @@ function Login() {
       }
 
       if (loginRole === 'Siswa') {
-        // A. Cek izin lokasi (wajib untuk presensi)
-        try {
-          if (!("geolocation" in navigator)) throw new Error('Browser tidak mendukung Geolocation.');
-          await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
-          });
-        } catch (e) {
-          setLoading(false);
-          await openPermissionGuide('lokasi', 'Izin LOKASI (GPS) diperlukan untuk verifikasi presensi. Silakan aktifkan izin lokasi perangkat Anda.');
-          return;
-        }
-
-        // B. Notifikasi (soft-check)
+        // Notifikasi (soft-check)
         if ('Notification' in window && Notification.permission === 'default') {
           await Notification.requestPermission();
         }
@@ -218,7 +301,7 @@ function Login() {
 
         // Login via RPC — password diverifikasi server-side, hash tidak keluar ke browser
         const { data: result, error } = await supabase.rpc('fn_login', {
-          p_username: emailToSignIn,
+          p_username: cleanUsername,
           p_password: password.trim(),
           p_role: 'murid'
         })
@@ -268,7 +351,7 @@ function Login() {
         }
 
         localStorage.setItem('orangtua_session', JSON.stringify(sessionData))
-        logActivity({ userRole: 'Orang Tua', action: 'Orang Tua Login', details: `Orang Tua dari ${result.siswa?.nama_lengkap} login via portal.` })
+        logActivity({ userRole: 'Orang Tua', action: 'Orang Tua Login', details: `Orang Tua dari ${result.siswa?.nama_lengkap} (NISN: ${result.siswa?.nisn || result.siswa?.id}) login via portal.` })
         navigate('/dashboard-orang-tua')
 
       } else {
@@ -312,8 +395,8 @@ function Login() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10 overflow-hidden relative">
       
-      <div className="text-center w-full flex justify-center z-10 pointer-events-none" style={{ marginBottom: '-25px' }}>
-        <img src="/logo.png?v=1782401880" alt="Logo SMP Budi Mulia" className="w-[500px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '50vh' }} />
+      <div className="text-center w-full flex justify-center z-10 pointer-events-none mb-2">
+        <img src="/logo.png?v=1784818000" alt="Logo SMP Budi Mulia" className="w-[580px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '55vh' }} />
       </div>
 
       <div className="w-full max-w-md z-20 relative">
@@ -529,7 +612,7 @@ function Login() {
                               className="p-1.5 bg-slate-100 border border-slate-200 rounded-lg w-fit cursor-zoom-in hover:opacity-85 transition-opacity"
                               title="Klik untuk memperbesar gambar"
                             >
-                              <img src="chrome_tune_icon.png" className="h-8 md:h-10 object-contain" alt="Chrome Tune Icon" />
+                              <img src="/chrome_tune_icon.png" className="h-8 md:h-10 object-contain" alt="Chrome Tune Icon" />
                             </div>
                             <p className="text-[10px] text-slate-400 font-medium">🔍 Klik gambar di atas untuk memperbesar</p>
                           </div>
@@ -620,6 +703,57 @@ function Login() {
             >
               ✕
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Fullscreen Button */}
+      <button
+        type="button"
+        onClick={toggleAppFullScreen}
+        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+        className="fixed bottom-6 right-6 z-[150] w-12 h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group border border-indigo-400"
+      >
+        {isNativeFullScreen ? (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0l5-5M4 4v5M15 9l5-5m0 0l-5-5m5 5v5M9 15l-5 5m0 0l5 5m-5-5v-5M15 15l5 5m0 0l-5 5m5-5v-5"/></svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+        )}
+      </button>
+
+      {/* iOS Fullscreen Hint Modal */}
+      {showIosFsHint && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowIosFsHint(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              <div>
+                <p className="text-white font-bold text-sm">Cara Layar Penuh di iPhone/iPad</p>
+                <p className="text-indigo-200 text-xs mt-0.5">Safari tidak mendukung fullscreen langsung</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-slate-700 text-sm font-medium">Tambahkan aplikasi ke Home Screen untuk pengalaman layar penuh:</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <p className="text-sm text-slate-600">Tekan tombol <strong>Bagikan</strong> <span className="inline-block bg-slate-100 px-1.5 py-0.5 rounded text-xs">⎙</span> di bagian bawah Safari</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <p className="text-sm text-slate-600">Pilih <strong>"Tambahkan ke Layar Utama"</strong> (Add to Home Screen)</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <p className="text-sm text-slate-600">Buka aplikasi dari <strong>Home Screen</strong> untuk mode layar penuh otomatis</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={() => setShowIosFsHint(false)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors text-sm">
+                Mengerti
+              </button>
+            </div>
           </div>
         </div>
       )}

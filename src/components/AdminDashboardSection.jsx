@@ -142,7 +142,11 @@ export default function AdminDashboardSection({ onNavigate }) {
         supabase.from('roles').select('*', { count: 'exact', head: true }),
         supabase.from('jenis_pengumuman').select('*', { count: 'exact', head: true }),
         supabase.from('berkas_pengumuman').select('kode_jenis', { count: 'exact' }),
-        supabase.from('presensi_harian').select('tanggal, status').order('tanggal', { ascending: false }).limit(2000)
+        supabase.from('presensi_harian')
+          .select('tanggal, status, tipe')
+          .or('tipe.eq.masuk,tipe.is.null')
+          .order('tanggal', { ascending: false })
+          .limit(5000)
       ])
 
       setStats({
@@ -169,10 +173,10 @@ export default function AdminDashboardSection({ onNavigate }) {
       })
       const berkasDist = Object.keys(berkasCountMap).map(k => ({ name: k, value: berkasCountMap[k] }))
 
-      // Proses Tren Presensi (7 hari terakhir)
+      // Proses Tren Presensi Masuk (7 hari terakhir)
       const trenMap = {}
       presensiData?.forEach(p => {
-        if (p.status === 'P') return // Skip pulang
+        if (p.tipe && p.tipe !== 'masuk') return // Hanya hitung presensi masuk pagi
         if (!trenMap[p.tanggal]) trenMap[p.tanggal] = { name: p.tanggal, Hadir: 0, TidakHadir: 0 }
         if (p.status === 'H' || p.status === 'T') trenMap[p.tanggal].Hadir++
         else trenMap[p.tanggal].TidakHadir++
@@ -254,7 +258,7 @@ export default function AdminDashboardSection({ onNavigate }) {
             Distribusi Siswa per Kelas
           </h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={chartData.kelasDist} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="name" tick={{fontSize: 12}} tickLine={false} axisLine={false} />
@@ -274,7 +278,7 @@ export default function AdminDashboardSection({ onNavigate }) {
           </h3>
           <div className="h-72">
             {chartData.presensiTren.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <LineChart data={chartData.presensiTren} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />

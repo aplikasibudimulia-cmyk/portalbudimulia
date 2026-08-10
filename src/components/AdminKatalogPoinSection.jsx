@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
-import ExcelJS from 'exceljs'
-import { saveAs } from 'file-saver'
 
 const EMPTY_FORM = { tipe: 'negative', kategori: '', kode: '', jenis: '', keterangan: '', poin: '' }
 
@@ -132,6 +130,8 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
 
   // ─── EXPORT ───────────────────────────────────────────────
   const handleExport = async () => {
+    const ExcelJS = await import('exceljs')
+    const { saveAs } = await import('file-saver')
     const wb = new ExcelJS.Workbook()
     const ws = wb.addWorksheet('Katalog Poin')
     ws.columns = [
@@ -159,6 +159,7 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
   const handleImportFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return
     setImportLoading(true)
+    const ExcelJS = await import('exceljs')
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(await file.arrayBuffer())
     const ws = wb.worksheets[0]
@@ -202,6 +203,8 @@ export default function AdminKatalogPoinSection({ readOnly = false }) {
   }
 
   const handleDownloadTemplate = async () => {
+    const ExcelJS = await import('exceljs')
+    const { saveAs } = await import('file-saver')
     const wb = new ExcelJS.Workbook()
     const ws = wb.addWorksheet('Template Katalog Poin')
     ws.columns = [

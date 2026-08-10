@@ -23,7 +23,9 @@ export default function AdminPresensiConfigSection() {
     jam_batas_pulang: '14:00',
     jadwal_otomatis_aktif: 'false',
     hari_aktif_presensi: '1,2,3,4,5',
+    presensi_masuk_mode: 'qr',
     presensi_qr_aktif: 'true',
+    presensi_pulang_aktif: 'false',
     selfie_required: 'true',
     notif_peringatan_aktif: 'true',
     jam_mulai_notif_belum_presensi: '06:40',
@@ -185,10 +187,14 @@ export default function AdminPresensiConfigSection() {
   useEffect(() => { fetchAll() }, [fetchAll])
 
   const saveSetting = async (key, value) => {
-    await supabase.from('pengaturan_sekolah').upsert(
+    const { error } = await supabase.from('pengaturan_sekolah').upsert(
       { setting_key: key, setting_value: String(value) },
       { onConflict: 'setting_key' }
     )
+    if (error) {
+      console.error(`Gagal menyimpan ${key}:`, error)
+      throw error
+    }
   }
 
   const handleSaveAll = async () => {
@@ -196,19 +202,24 @@ export default function AdminPresensiConfigSection() {
     setSaveMsg('')
     const keys = [
       'qr_interval_detik', 'jam_mulai_presensi', 'jam_batas_hadir', 'jam_batas_pulang',
-      'jadwal_otomatis_aktif', 'hari_aktif_presensi', 'presensi_qr_aktif',
+      'jadwal_otomatis_aktif', 'hari_aktif_presensi', 'presensi_masuk_mode', 'presensi_qr_aktif', 'presensi_pulang_aktif',
       'selfie_required', 'notif_peringatan_aktif', 'jam_mulai_notif_belum_presensi',
       'notif_pengingat_interval_menit',
       'geofence_aktif', 'geofence_lat', 'geofence_lng', 'geofence_radius_meter',
       'kode_pembatalan_presensi'
     ]
-    await Promise.all([
-      ...keys.map(k => saveSetting(k, settings[k])),
-      saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
-    ])
-    setSaving(false)
-    setSaveMsg('✅ Pengaturan disimpan!')
-    setTimeout(() => setSaveMsg(''), 3000)
+    try {
+      await Promise.all([
+        ...keys.map(k => saveSetting(k, settings[k])),
+        saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
+      ])
+      setSaving(false)
+      setSaveMsg('✅ Pengaturan disimpan!')
+      setTimeout(() => setSaveMsg(''), 3000)
+    } catch (err) {
+      setSaving(false)
+      setSaveMsg('❌ Gagal menyimpan pengaturan: ' + (err.message || 'Error Supabase'))
+    }
   }
 
   // Deteksi lokasi sekolah dari browser admin
@@ -384,13 +395,18 @@ export default function AdminPresensiConfigSection() {
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3">⚙️ Pengaturan Umum</h3>
 
-        {/* Toggle Aktif */}
-        <div className="flex items-center justify-between">
+
+        {/* Toggle Presensi Pulang */}
+        <div className="flex items-center justify-between p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
           <div>
-            <p className="text-sm font-semibold text-slate-700">Aktifkan Presensi QR</p>
-            <p className="text-xs text-slate-400">Izinkan siswa presensi via scan QR</p>
+            <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+              <span>🏠</span> Status Sesi Presensi Pulang
+            </p>
+            <p className="text-xs text-blue-700 mt-0.5">
+              Jika diaktifkan, siswa yang hadir/terlambat dapat langsung foto selfie untuk presensi pulang tanpa scan QR.
+            </p>
           </div>
-          <ToggleSwitch value={settings.presensi_qr_aktif} onChange={v => setSettings(p => ({ ...p, presensi_qr_aktif: v }))} />
+          <ToggleSwitch value={settings.presensi_pulang_aktif} onChange={v => setSettings(p => ({ ...p, presensi_pulang_aktif: v }))} colorOn="bg-blue-600" />
         </div>
 
         {/* Interval QR */}
@@ -510,6 +526,60 @@ export default function AdminPresensiConfigSection() {
             />
           </div>
         )}
+
+        {/* Mode Presensi Masuk */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800">Mode Presensi Masuk Siswa</p>
+            <p className="text-xs text-slate-500">Aktifkan satu atau keduanya — siswa bisa memilih metode yang tersedia.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Toggle QR Code */}
+            <div className={`flex items-start gap-3 p-3.5 rounded-xl border-2 transition-all ${settings.presensi_qr_aktif === 'true' ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-slate-800">📷 Scan QR Code TV</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Siswa wajib scan QR Code dinamis dari layar TV pintu masuk sekolah lalu selfie.</p>
+              </div>
+              <ToggleSwitch
+                value={settings.presensi_qr_aktif}
+                onChange={v => setSettings(p => ({ ...p, presensi_qr_aktif: v }))}
+              />
+            </div>
+
+            {/* Toggle Geofencing GPS */}
+            <div className={`flex items-start gap-3 p-3.5 rounded-xl border-2 transition-all ${settings.geofence_aktif === 'true' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-slate-800">📍 Geofencing GPS</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Siswa cukup berada di area sekolah lalu langsung selfie — tanpa perlu scan QR TV.</p>
+              </div>
+              <ToggleSwitch
+                value={settings.geofence_aktif}
+                onChange={v => setSettings(p => ({
+                  ...p,
+                  geofence_aktif: v,
+                  presensi_masuk_mode: v === 'true'
+                    ? (settings.presensi_qr_aktif === 'true' ? 'both' : 'geofence')
+                    : (settings.presensi_qr_aktif === 'true' ? 'qr' : 'qr')
+                }))}
+                colorOn="bg-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Info gabungan */}
+          {settings.presensi_qr_aktif === 'true' && settings.geofence_aktif === 'true' && (
+            <div className="p-3 bg-blue-50 border border-blue-200 text-blue-900 text-xs rounded-xl font-medium flex items-start gap-2">
+              <span className="text-base shrink-0">💡</span>
+              <span><strong>Kedua mode aktif:</strong> Siswa akan melihat dua pilihan — "Scan QR Code" (tanpa cek lokasi) atau "Presensi GPS" (verifikasi area + selfie langsung).</span>
+            </div>
+          )}
+          {settings.presensi_qr_aktif !== 'true' && settings.geofence_aktif !== 'true' && (
+            <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl font-medium flex items-center gap-2">
+              <span className="text-base">⚠️</span>
+              <span><strong>Perhatian:</strong> Tidak ada mode presensi yang aktif. Siswa tidak akan bisa melakukan presensi masuk.</span>
+            </div>
+          )}
+        </div>
 
         {/* Toggle Wajib Selfie */}
         <div className="flex items-center justify-between">

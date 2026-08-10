@@ -4,27 +4,47 @@ import { supabase } from '../supabaseClient'
 export default function AdminActivityLogSection() {
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [siswaMap, setSiswaMap] = useState({})
 
   useEffect(() => {
-    fetchLogs()
+    fetchLogsAndSiswa()
   }, [])
 
-  const fetchLogs = async () => {
+  const fetchLogsAndSiswa = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('activity_log')
-      .select(`
-        id, aktor, aksi, detail, created_at
-      `)
-      .order('created_at', { ascending: false })
-      .limit(100)
-      
-    if (!error && data) {
-      setLogs(data)
-    } else if (error) {
-      console.error('Fetch Logs Error:', error)
+    try {
+      const [
+        { data: logData, error: logErr },
+        { data: siswaData }
+      ] = await Promise.all([
+        supabase
+          .from('activity_log')
+          .select('id, aktor, aksi, detail, created_at')
+          .order('created_at', { ascending: false })
+          .limit(200),
+        supabase
+          .from('siswa_permanent')
+          .select('nisn, nama_lengkap')
+      ])
+
+      if (siswaData) {
+        const map = {}
+        siswaData.forEach(s => {
+          if (s.nisn) map[s.nisn] = s.nama_lengkap || s.nama || ''
+        })
+        setSiswaMap(map)
+      }
+
+      if (logData) {
+        setLogs(logData)
+      } else if (logErr) {
+        console.error('Fetch Logs Error:', logErr)
+      }
+    } catch (err) {
+      console.error('Error fetching activity log:', err)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const formatTime = (isoString) => {
@@ -35,14 +55,35 @@ export default function AdminActivityLogSection() {
     }).format(d)
   }
 
+  const renderDetailText = (detail) => {
+    if (!detail) return '-'
+
+    // Pattern 1: "dengan NISN 0121423040"
+    const matchNisn = detail.match(/(?:dengan NISN|NISN:?)\s*([0-9A-Z]+)/i)
+    if (matchNisn && matchNisn[1]) {
+      const nisn = matchNisn[1].trim()
+      const studentName = siswaMap[nisn]
+      
+      // If student name exists and detail doesn't already contain student name
+      if (studentName && !detail.toLowerCase().includes(studentName.toLowerCase())) {
+        return detail
+          .replace(`dengan NISN ${nisn}`, `dari ${studentName} (NISN: ${nisn})`)
+          .replace(`NISN: ${nisn}`, `${studentName} (NISN: ${nisn})`)
+          .replace(`NISN ${nisn}`, `${studentName} (NISN: ${nisn})`)
+      }
+    }
+
+    return detail
+  }
+
   return (
     <div className="animate-slide-up">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Log Aktivitas</h2>
-          <p className="text-slate-500 text-sm mt-1">Pemantauan aktivitas yang dilakukan oleh Admin dan Guru.</p>
+          <p className="text-slate-500 text-sm mt-1">Pemantauan aktivitas yang dilakukan oleh Admin, Guru, dan Orang Tua.</p>
         </div>
-        <button onClick={fetchLogs} className="p-2 bg-white border-none rounded-2xl hover:bg-slate-50 text-slate-600 transition-colors">
+        <button onClick={fetchLogsAndSiswa} className="p-2 bg-white border-none rounded-2xl hover:bg-slate-50 text-slate-600 transition-colors" title="Refresh Log">
           <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
         </button>
       </div>
@@ -63,20 +104,25 @@ export default function AdminActivityLogSection() {
                 <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-500">Memuat log aktivitas...</td></tr>
               ) : logs.length === 0 ? (
                 <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-500">Belum ada aktivitas yang tercatat.</td></tr>
-              ) : logs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 text-slate-500 font-mono text-xs">{formatTime(log.created_at)}</td>
-                  <td className="px-6 py-4">
-                    <div className="font-semibold text-slate-800">{log.aktor}</div>
-                  </td>
-                  <td className="px-6 py-4 font-medium text-slate-700">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                      {log.aksi}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-slate-600 truncate max-w-md" title={log.detail}>{log.detail || '-'}</td>
-                </tr>
-              ))}
+              ) : logs.map((log) => {
+                const formattedDetail = renderDetailText(log.detail)
+                return (
+                  <tr key={log.id} className="hover:bg-slate-50">
+                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">{formatTime(log.created_at)}</td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-slate-800">{log.aktor}</div>
+                    </td>
+                    <td className="px-6 py-4 font-medium text-slate-700">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                        {log.aksi}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-slate-600 truncate max-w-lg font-medium" title={formattedDetail}>
+                      {formattedDetail}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -12,6 +12,7 @@ import SiswaPoinSection from '../components/SiswaPoinSection'
 import SiswaRiwayatPresensi from '../components/SiswaRiwayatPresensi'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import SiswaJadwalSection from '../components/SiswaJadwalSection'
+import { sendLinePushNotification, createBindingSuccessFlexMessage } from '../utils/lineNotifier'
 
 function DashboardOrangTua() {
   const navigate = useNavigate()
@@ -48,6 +49,152 @@ function DashboardOrangTua() {
   const [isSavingBiodata, setIsSavingBiodata] = useState(false)
   const [biodataError, setBiodataError] = useState('')
   const [biodataSuccess, setBiodataSuccess] = useState(false)
+
+  // LINE Notification Binding state
+  const [showLineBindingModal, setShowLineBindingModal] = useState(false)
+  const [lineIdInput, setLineIdInput] = useState('')
+  const [isSavingLine, setIsSavingLine] = useState(false)
+  const [copySuccess, setCopySuccess] = useState(false)
+
+  const handleCopyLineCommand = (textToCopy) => {
+    if (!textToCopy) return
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopySuccess(true)
+        setTimeout(() => setCopySuccess(false), 2500)
+      }).catch(() => {
+        fallbackCopyText(textToCopy)
+      })
+    } else {
+      fallbackCopyText(textToCopy)
+    }
+  }
+
+  const fallbackCopyText = (text) => {
+    const textArea = document.createElement('textarea')
+    textArea.value = text
+    document.body.appendChild(textArea)
+    textArea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textArea)
+    setCopySuccess(true)
+    setTimeout(() => setCopySuccess(false), 2500)
+  }
+
+
+  const handleSaveLineBinding = async (idToSave) => {
+    if (!studentData?.nisn) return
+    setIsSavingLine(true)
+    try {
+      if (idToSave && idToSave.trim()) {
+        // TAUTKAN AKUN LINE
+        const cleanId = idToSave.trim()
+        await supabase
+          .from('line_bindings')
+          .upsert(
+            { nisn: studentData.nisn, line_user_id: cleanId, updated_at: new Date().toISOString() },
+            { onConflict: 'nisn' }
+          )
+
+        await supabase
+          .from('siswa_permanent')
+          .update({ line_user_id: cleanId })
+          .eq('nisn', studentData.nisn)
+
+        const updated = { ...studentData, line_user_id: cleanId }
+        setStudentData(updated)
+        localStorage.setItem('orangtua_session', JSON.stringify(updated))
+
+        // Kirim konfirmasi penautan ke akun LINE
+        try {
+          const flexMsg = createBindingSuccessFlexMessage({
+            nama: studentData.nama_lengkap || studentData.nama || 'Siswa',
+            kelas: studentData.kelas || '-',
+            nisn: studentData.nisn
+          })
+          await sendLinePushNotification({ lineUserId: cleanId, flexMessage: flexMsg })
+        } catch (e) {
+          console.warn('[LINE] Gagal kirim notif konfirmasi:', e)
+        }
+
+        alert('Akun LINE berhasil ditautkan! Notifikasi presensi otomatis aktif.')
+        setShowLineBindingModal(false)
+      } else {
+        // PUTUSKAN TAUTAN AKUN LINE
+        const oldLineUserId = studentData.line_user_id
+
+        // 1. Kirim pesan notifikasi pemutusan ke LINE jika ada LINE User ID sebelumnya
+        if (oldLineUserId) {
+          try {
+            await sendLinePushNotification({
+              lineUserId: oldLineUserId,
+              flexMessage: {
+                type: 'text',
+                text: `ℹ️ Tautan akun LINE Anda dengan siswa ${studentData.nama_lengkap || studentData.nama} (NISN: ${studentData.nisn}) telah diputuskan dari portal sekolah.`
+              }
+            })
+          } catch (e) {
+            console.warn('[LINE] Gagal kirim notif pemutusan ke LINE:', e)
+          }
+        }
+
+        // 2. Hapus dari tabel line_bindings secara permanen
+        await supabase
+          .from('line_bindings')
+          .delete()
+          .eq('nisn', studentData.nisn)
+
+        // 3. Reset line_user_id di siswa_permanent menjadi null
+        await supabase
+          .from('siswa_permanent')
+          .update({ line_user_id: null })
+          .eq('nisn', studentData.nisn)
+
+        const updated = { ...studentData, line_user_id: null }
+        setStudentData(updated)
+        localStorage.setItem('orangtua_session', JSON.stringify(updated))
+        alert('Tautan akun LINE telah berhasil dilepas.')
+        setShowLineBindingModal(false)
+      }
+    } catch (err) {
+      console.error('Error line binding:', err)
+      alert('Gagal memperbarui tautan LINE.')
+    } finally {
+      setIsSavingLine(false)
+    }
+  }
+
+  const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
+  const [showIosFsHint, setShowIosFsHint] = useState(false)
+
+  // Detect iOS (Safari doesn't support requestFullscreen)
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+
+  const toggleAppFullScreen = () => {
+    if (isIos) {
+      setShowIosFsHint(true)
+      return
+    }
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    const handleFs = () => setIsNativeFullScreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleFs)
+    document.addEventListener('webkitfullscreenchange', handleFs)
+    document.addEventListener('mozfullscreenchange', handleFs)
+    document.addEventListener('MSFullscreenChange', handleFs)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFs)
+      document.removeEventListener('webkitfullscreenchange', handleFs)
+      document.removeEventListener('mozfullscreenchange', handleFs)
+      document.removeEventListener('MSFullscreenChange', handleFs)
+    }
+  }, [])
 
   const [pengumuman, setPengumuman] = useState('')
   const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
@@ -127,15 +274,21 @@ function DashboardOrangTua() {
 
   useEffect(() => {
     const init = async () => {
-      // Pastikan token Supabase diperbarui secara sinkron sebelum query data
-      await supabase.auth.getSession()
 
       const raw = localStorage.getItem('orangtua_session')
       if (!raw) {
         navigate('/')
         return
       }
-      const data = JSON.parse(raw)
+      let data = null
+      try {
+        data = JSON.parse(raw)
+      } catch (e) {
+        console.error("Invalid orangtua session JSON:", e)
+        localStorage.removeItem('orangtua_session')
+        navigate('/')
+        return
+      }
       
       // Fetch historical enrollments to check ta_referensi_id correctly
       const { data: enrollments } = await supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn)
@@ -528,8 +681,10 @@ function DashboardOrangTua() {
     }
   }, [loading, studentData])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    window.__ebudimuliaExplicitLogout = true
     localStorage.removeItem('siswa_session')
+    await supabase.auth.signOut()
     navigate('/')
   }
 
@@ -632,9 +787,9 @@ function DashboardOrangTua() {
       localStorage.setItem('siswa_session', JSON.stringify(updatedData))
       
       logActivity({
-        userRole: 'Siswa',
+        userRole: 'Orang Tua',
         action: 'Update Biodata Orang Tua',
-        details: `Orang tua dari siswa dengan NISN ${studentData.nisn} berhasil memperbarui biodata.`
+        details: `Orang tua dari ${studentData.nama_lengkap || studentData.nama || 'siswa'} (NISN: ${studentData.nisn}) berhasil memperbarui biodata.`
       })
 
       setTimeout(() => {
@@ -693,6 +848,76 @@ function DashboardOrangTua() {
       >
         Lengkapi Sekarang
       </button>
+    </div>
+  )
+
+  const lineNotifWidgetCard = studentData && (
+    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-5 shadow-sm mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
+      <div className="flex items-start gap-3.5">
+        <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black text-xl shrink-0 shadow-md">
+          🟢
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h4 className="font-extrabold text-slate-900 text-sm">Notifikasi Presensi LINE</h4>
+            {studentData.line_user_id ? (
+              <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
+                ✅ TERHUBUNG
+              </span>
+            ) : (
+              <span className="text-[10px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300">
+                ⚪ BELUM TERHUBUNG
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            {studentData.line_user_id
+              ? `Akun LINE Anda (${studentData.line_user_id}) aktif menerima kartu presensi otomatis.`
+              : `Dapatkan kartu notifikasi presensi otomatis di aplikasi LINE HP Anda saat anak tiba/pulang sekolah.`}
+          </p>
+          {!studentData.line_user_id && (
+            <div className="mt-2 text-[11px] text-emerald-900 bg-white/70 border border-emerald-200 rounded-xl p-2.5 space-y-1.5">
+              <p className="font-bold text-slate-800">💬 Metode 2 (Chat Auto-Binding Bot):</p>
+              <p>Add LINE sekolah <strong>@499koywa</strong>, lalu kirim chat:</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="bg-emerald-100 px-2 py-1 rounded font-mono font-bold text-emerald-900 text-xs border border-emerald-300 select-all">
+                  TAUTKAN {studentData.nisn} {studentData.ortu_password || studentData.kode_akses || ''}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => handleCopyLineCommand(`TAUTKAN ${studentData.nisn} ${studentData.ortu_password || studentData.kode_akses || ''}`.trim())}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-lg transition-all shadow-sm flex items-center gap-1 shrink-0"
+                  title="Copas teks perintah ini"
+                >
+                  <span>{copySuccess ? '✅ Tersalin!' : '📋 Copas Text'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        {studentData.line_user_id ? (
+          <button
+            onClick={() => handleSaveLineBinding(null)}
+            disabled={isSavingLine}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-all shadow-sm"
+          >
+            Putuskan Tautan
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              setLineIdInput(studentData.line_user_id || '')
+              setShowLineBindingModal(true)
+            }}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5"
+          >
+            <span>📱 Tautkan LINE (1-Click)</span>
+          </button>
+        )}
+      </div>
     </div>
   )
 
@@ -788,7 +1013,7 @@ function DashboardOrangTua() {
         {/* Sidebar Header */}
         <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
             {!sidebarCollapsed && (
               <div className="animate-fade-in truncate">
                 <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
@@ -997,6 +1222,9 @@ function DashboardOrangTua() {
 
             {/* Kartu Profil selalu muncul di atas */}
             {studentInfoCard}
+
+            {/* Widget Status Notifikasi LINE */}
+            {lineNotifWidgetCard}
 
             {/* Konten Spesifik per Menu */}
             {!selectedType ? (
@@ -1413,6 +1641,121 @@ function DashboardOrangTua() {
           <button onClick={() => setPresensiToast(null)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors shrink-0 -mt-1 -mr-1">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
+        </div>
+      )}
+
+      {/* Floating Fullscreen FAB – always visible on mobile */}
+      <button
+        onClick={toggleAppFullScreen}
+        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+        className="fixed bottom-6 right-6 z-[150] w-12 h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group border border-indigo-400"
+      >
+        {isNativeFullScreen ? (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0l5-5M4 4v5M15 9l5-5m0 0l-5-5m5 5v5M9 15l-5 5m0 0l5 5m-5-5v-5M15 15l5 5m0 0l-5 5m5-5v-5"/></svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+        )}
+      </button>
+
+      {/* iOS Fullscreen Hint Modal */}
+      {showIosFsHint && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowIosFsHint(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              <div>
+                <p className="text-white font-bold text-sm">Cara Layar Penuh di iPhone/iPad</p>
+                <p className="text-indigo-200 text-xs mt-0.5">Safari tidak mendukung fullscreen langsung</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-slate-700 text-sm font-medium">Tambahkan aplikasi ke Home Screen untuk pengalaman layar penuh:</p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <p className="text-sm text-slate-600">Tekan tombol <strong>Bagikan</strong> <span className="inline-block bg-slate-100 px-1.5 py-0.5 rounded text-xs">⎙</span> di bagian bawah Safari</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <p className="text-sm text-slate-600">Pilih <strong>"Tambahkan ke Layar Utama"</strong> (Add to Home Screen)</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <p className="text-sm text-slate-600">Buka aplikasi dari <strong>Home Screen</strong> untuk mode layar penuh otomatis</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={() => setShowIosFsHint(false)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors text-sm">
+                Mengerti
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Tautkan Akun LINE */}
+      {showLineBindingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                🟢 Tautkan Akun LINE Orang Tua
+              </h3>
+              <button onClick={() => setShowLineBindingModal(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Masukkan <strong>LINE User ID</strong> milik Anda untuk menerima notifikasi kartu presensi anak.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">LINE User ID Anda</label>
+              <input
+                type="text"
+                value={lineIdInput}
+                onChange={(e) => setLineIdInput(e.target.value)}
+                placeholder="Contoh: U1a2b3c4d5e6f..."
+                className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-400 mt-1 block">
+                *Dapatkan User ID dari profil LINE atau dari menu LINE Developers Console.
+              </span>
+            </div>
+
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-900 space-y-2">
+              <p className="font-bold">💬 Pilihan Alternatif (Metode 2 - Tanpa Ketik):</p>
+              <p className="mt-0.5">Cukup add LINE Official <strong>@499koywa</strong> di HP Anda, lalu kirim chat:</p>
+              <div className="flex items-center justify-between gap-2 bg-white p-2 rounded-xl border border-emerald-200 shadow-inner flex-wrap">
+                <span className="font-mono font-bold text-emerald-900 text-xs select-all">
+                  TAUTKAN {studentData?.nisn} {studentData?.ortu_password || studentData?.kode_akses || ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyLineCommand(`TAUTKAN ${studentData?.nisn || ''} ${studentData?.ortu_password || studentData?.kode_akses || ''}`.trim())}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-lg transition-all shadow-sm flex items-center gap-1 shrink-0"
+                >
+                  <span>{copySuccess ? '✅ Tersalin!' : '📋 Copas Text'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowLineBindingModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => handleSaveLineBinding(lineIdInput)}
+                disabled={isSavingLine || !lineIdInput.trim()}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md disabled:opacity-50"
+              >
+                {isSavingLine ? 'Simpan...' : 'Simpan Tautan LINE'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

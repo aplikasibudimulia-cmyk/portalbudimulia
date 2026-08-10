@@ -1,17 +1,39 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
+import HallOfFameModal from './HallOfFameModal'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
-import ExcelJS from 'exceljs'
-import { saveAs } from 'file-saver'
 
 const CHART_COLORS = ['#3b82f6', '#f97316', '#ef4444', '#10b981', '#6b7280', '#8b5cf6', '#ec4899', '#14b8a6']
 
+// Helper untuk menghitung peringkat dengan poin sama (Tie Ranking)
+const assignTieRanks = (items, scoreFn) => {
+  let currentRank = 1
+  return items.map((item, index) => {
+    if (index > 0) {
+      const prevScore = scoreFn(items[index - 1])
+      const currScore = scoreFn(item)
+      if (currScore !== prevScore) {
+        currentRank = index + 1
+      }
+    } else {
+      currentRank = 1
+    }
+    return { ...item, displayRank: currentRank }
+  })
+}
+
 export default function RekapPoinSiswaSection({ session, activeTa }) {
   // Filters
-  const [periode, setPeriode] = useState('bulan_ini') // hari_ini, minggu_ini, bulan_ini, semester, custom
+  const [periode, setPeriode] = useState('tahun_ajaran') // tahun_ajaran, hari_ini, minggu_ini, bulan_ini, bulan_tertentu, semester, custom
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    return `${yyyy}-${mm}`
+  })
   const [startDate, setStartDate] = useState(() => {
     const d = new Date()
     d.setDate(1) // Awal bulan ini
@@ -26,6 +48,13 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [allClasses, setAllClasses] = useState([])
   const [semesters, setSemesters] = useState([])
 
+  // Leaderboard Tabs & Data
+  const [showHallOfFame, setShowHallOfFame] = useState(false)
+  const [leaderboardTab, setLeaderboardTab] = useState('total') // 'total' | 'prestasi' | 'pelanggaran' | 'kumulatif'
+  const [topTotalPointsList, setTopTotalPointsList] = useState([])
+  const [topPrestasiList, setTopPrestasiList] = useState([])
+  const [topPelanggaranList, setTopPelanggaranList] = useState([])
+
   // Dashboard Data
   const [loading, setLoading] = useState(false)
   const [summaryStats, setSummaryStats] = useState({
@@ -38,6 +67,20 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [kelasRankData, setKelasRankData] = useState([])
   const [siswaRankData, setSiswaRankData] = useState([])
   const [breakdownData, setBreakdownData] = useState([])
+
+  // Opsi Pilihan Bulan (12 Bulan Terakhir)
+  const monthOptions = React.useMemo(() => {
+    const opts = []
+    const now = new Date()
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const yyyy = d.getFullYear()
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const label = d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })
+      opts.push({ value: `${yyyy}-${mm}`, label })
+    }
+    return opts
+  }, [])
 
   // Drill-down State
   const [drillLevel, setDrillLevel] = useState(1) // 1: Kelas list, 2: Siswa list, 3: Riwayat Siswa
@@ -82,7 +125,10 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       let end = endDate
       const today = new Date().toISOString().slice(0, 10)
 
-      if (periode === 'hari_ini') {
+      if (periode === 'tahun_ajaran') {
+        start = activeTa?.tanggal_mulai || '2000-01-01'
+        end = activeTa?.tanggal_selesai || '2099-12-31'
+      } else if (periode === 'hari_ini') {
         start = today
         end = today
       } else if (periode === 'minggu_ini') {
@@ -95,6 +141,17 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         d.setDate(1)
         start = d.toISOString().slice(0, 10)
         end = today
+      } else if (periode === 'bulan_tertentu') {
+        const parts = selectedMonth.split('-')
+        const year = parseInt(parts[0])
+        const month = parseInt(parts[1])
+        const firstDay = new Date(year, month - 1, 1)
+        const lastDay = new Date(year, month, 0)
+        const yyyy = firstDay.getFullYear()
+        const mm = String(firstDay.getMonth() + 1).padStart(2, '0')
+        const ddLast = String(lastDay.getDate()).padStart(2, '0')
+        start = `${yyyy}-${mm}-01`
+        end = `${yyyy}-${mm}-${ddLast}`
       } else if (periode === 'semester') {
         const activeSem = semesters.find(s => s.nomor === semester)
         if (activeSem) {
@@ -105,9 +162,12 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
       // 1. Buat Query Dasar untuk point_records
       let query = supabase.from('point_records').select('*')
-        .eq('tahun_ajaran_id', activeTa.id)
         .gte('tanggal', start)
         .lte('tanggal', end)
+
+      if (activeTa?.id) {
+        query = query.or(`tahun_ajaran_id.eq.${activeTa.id},tahun_ajaran_id.is.null`)
+      }
 
       if (periode === 'semester') {
         query = query.eq('semester', semester)
@@ -175,7 +235,6 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       setKelasRankData(classList)
 
       // 5. Breakdown Kategori Pelanggaran (Pie Chart)
-      // Kita perlu join point_catalog. Tapi karena catalog_id ada di point_records, kita bisa query point_catalog
       const { data: catalogData } = await supabase.from('point_catalog').select('id, kategori')
       const catMap = (catalogData || []).reduce((acc, curr) => {
         acc[curr.id] = curr.kategori
@@ -193,8 +252,118 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       catList.sort((a, b) => b.value - a.value)
       setBreakdownData(catList)
 
-      // 6. Peringkat Siswa Pelanggaran Terbanyak
-      // Hanya siswa yang total_poin < poin_default (benar-benar memiliki pelanggaran)
+      // 6. LEADERBOARD PERIODE / BULAN TERPILIH (Poin Positif & Negatif Siswa)
+      const studentStatsMap = {}
+      const allNisnsInRecords = Array.from(new Set(filteredRecords.map(r => r.nisn)))
+      let studentNameMap = {}
+      let studentClassMap = {}
+
+      if (allNisnsInRecords.length > 0) {
+        const { data: siswaDataList } = await supabase
+          .from('siswa_permanent')
+          .select('nisn, nama_lengkap, kelas')
+          .in('nisn', allNisnsInRecords)
+
+        if (siswaDataList) {
+          siswaDataList.forEach(s => {
+            studentNameMap[s.nisn] = s.nama_lengkap || s.nama || 'Siswa'
+            studentClassMap[s.nisn] = s.kelas || '-'
+          })
+        }
+      }
+
+      filteredRecords.forEach(r => {
+        if (!studentStatsMap[r.nisn]) {
+          studentStatsMap[r.nisn] = {
+            nisn: r.nisn,
+            nama: studentNameMap[r.nisn] || r.nama_siswa || 'Siswa',
+            kelas: r.kelas || studentClassMap[r.nisn] || '-',
+            pelanggaranPoin: 0,
+            prestasiPoin: 0,
+            pelanggaranCount: 0,
+            prestasiCount: 0,
+          }
+        }
+
+        if (r.poin_diberikan < 0) {
+          studentStatsMap[r.nisn].pelanggaranPoin += Math.abs(r.poin_diberikan)
+          studentStatsMap[r.nisn].pelanggaranCount++
+        } else {
+          studentStatsMap[r.nisn].prestasiPoin += r.poin_diberikan
+          studentStatsMap[r.nisn].prestasiCount++
+        }
+      })
+
+      const studentStatsList = Object.values(studentStatsMap)
+
+      // Top Total Poin (Poin Awal 100 + Poin Plus - Poin Negatif)
+      const topTotalList = assignTieRanks(
+        [...studentStatsList]
+          .map(s => ({
+            ...s,
+            poinAwal: 100,
+            totalPoinAkhir: 100 + s.prestasiPoin - s.pelanggaranPoin
+          }))
+          .sort((a, b) => b.totalPoinAkhir - a.totalPoinAkhir)
+          .slice(0, 20),
+        s => s.totalPoinAkhir
+      )
+
+      // Query Top Total Poin Akumulasi dari student_points
+      const { data: spTopPoints } = await supabase
+        .from('student_points')
+        .select('nisn, total_poin, poin_default, tahap_pembinaan_aktif')
+        .eq('tahun_ajaran_id', activeTa.id)
+        .order('total_poin', { ascending: false })
+        .limit(20)
+
+      if (spTopPoints && spTopPoints.length > 0) {
+        const spNisns = spTopPoints.map(s => s.nisn)
+        const { data: spSiswaNames } = await supabase.from('siswa_lengkap').select('nisn, nama_lengkap, kelas').in('nisn', spNisns)
+        const nameMap = {}
+        const classMap = {}
+        ;(spSiswaNames || []).forEach(s => {
+          nameMap[s.nisn] = s.nama_lengkap
+          classMap[s.nisn] = s.kelas
+        })
+
+        const kumulatifTopTotal = spTopPoints.map(sp => {
+          const matchedRecord = studentStatsMap[sp.nisn] || { prestasiPoin: 0, pelanggaranPoin: 0 }
+          return {
+            nisn: sp.nisn,
+            nama: nameMap[sp.nisn] || 'Siswa',
+            kelas: classMap[sp.nisn] || '-',
+            poinAwal: sp.poin_default ?? 100,
+            prestasiPoin: matchedRecord.prestasiPoin,
+            pelanggaranPoin: matchedRecord.pelanggaranPoin,
+            totalPoinAkhir: sp.total_poin
+          }
+        })
+        setTopTotalPointsList(assignTieRanks(kumulatifTopTotal, s => s.totalPoinAkhir))
+      } else {
+        setTopTotalPointsList(topTotalList)
+      }
+
+      const topPres = assignTieRanks(
+        [...studentStatsList]
+          .filter(s => s.prestasiPoin > 0)
+          .sort((a, b) => b.prestasiPoin - a.prestasiPoin)
+          .slice(0, 20),
+        s => s.prestasiPoin
+      )
+
+      const topPel = assignTieRanks(
+        [...studentStatsList]
+          .filter(s => s.pelanggaranPoin > 0)
+          .sort((a, b) => b.pelanggaranPoin - a.pelanggaranPoin)
+          .slice(0, 20),
+        s => s.pelanggaranPoin
+      )
+
+      setTopPrestasiList(topPres)
+      setTopPelanggaranList(topPel)
+
+      // 7. Peringkat Kumulatif Siswa Pembinaan (Student Points Table)
       let siswaQuery = supabase.from('student_points')
         .select('nisn, total_poin, poin_default, tahap_pembinaan_aktif')
         .eq('tahun_ajaran_id', activeTa.id)
@@ -205,7 +374,6 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       }
 
       const { data: sPointsRaw } = await siswaQuery.limit(50)
-      // Filter client-side: hanya siswa yang poinnya BENAR-BENAR berkurang dari default
       const sPoints = (sPointsRaw || [])
         .filter(sp => sp.total_poin < (sp.poin_default ?? 100))
         .slice(0, 10)
@@ -236,14 +404,14 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         })
       }
 
-      const sRank = (sPoints || []).map(sp => ({
+      const sRankRaw = (sPoints || []).map(sp => ({
         nisn: sp.nisn,
         nama: siswaNameMap[sp.nisn] || 'Tidak Diketahui',
         kelas: enrolMap[sp.nisn] || '—',
         poin: sp.total_poin,
         tahap: stageMap[sp.tahap_pembinaan_aktif] || 'Normal'
       }))
-      setSiswaRankData(sRank)
+      setSiswaRankData(assignTieRanks(sRankRaw, s => s.poin))
 
     } catch (err) {
       console.error('Error fetching dashboard statistics:', err)
@@ -374,6 +542,9 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
     setLoading(true)
 
     try {
+      const ExcelJS = await import('exceljs')
+      const { saveAs } = await import('file-saver')
+      
       const { data: recs } = await supabase.from('point_records')
         .select('*')
         .eq('tahun_ajaran_id', activeTa.id)
@@ -448,16 +619,25 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           <h2 className="text-2xl font-bold text-slate-900">Rekap & Analitik Poin</h2>
           <p className="text-slate-500 text-sm mt-0.5">Analisis tren perilaku, prestasi, dan pembinaan siswa secara menyeluruh</p>
         </div>
-        <button
-          onClick={handleExportExcel}
-          disabled={loading}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 rounded-xl shadow-sm transition-all"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          Ekspor Laporan Excel
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => window.open('/showcase-rekap-poin', '_blank')}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-black text-white bg-gradient-to-r from-amber-500 via-purple-600 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 rounded-xl shadow-lg shadow-indigo-500/25 hover:scale-[1.03] transition-all cursor-pointer"
+          >
+            <span className="text-base animate-bounce">⭐</span>
+            <span>Rekap Total Poin Sementara (Buka Tab Baru)</span>
+          </button>
+          <button
+            onClick={handleExportExcel}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 rounded-xl shadow-sm transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Ekspor Laporan Excel
+          </button>
+        </div>
       </div>
 
       {/* Filter Card */}
@@ -470,15 +650,33 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             <select
               value={periode}
               onChange={e => setPeriode(e.target.value)}
-              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
             >
-              <option value="hari_ini">Hari Ini</option>
-              <option value="minggu_ini">7 Hari Terakhir</option>
-              <option value="bulan_ini">Bulan Ini</option>
+              <option value="tahun_ajaran">Full Tahun Ajaran (Default)</option>
               <option value="semester">Semester Aktif</option>
+              <option value="bulan_ini">Bulan Ini</option>
+              <option value="bulan_tertentu">Bulan Tertentu</option>
+              <option value="minggu_ini">7 Hari Terakhir</option>
+              <option value="hari_ini">Hari Ini</option>
               <option value="custom">Rentang Kustom</option>
             </select>
           </div>
+
+          {/* Opsi Pilih Bulan Tertentu */}
+          {periode === 'bulan_tertentu' && (
+            <div className="min-w-[180px]">
+              <label className="block text-xs font-bold text-slate-600 mb-1.5">Pilih Bulan</label>
+              <select
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-semibold text-indigo-700"
+              >
+                {monthOptions.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Rentang Kustom */}
           {periode === 'custom' && (
@@ -630,7 +828,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           </h3>
           <div className="h-72">
             {trenData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <LineChart data={trenData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 'semibold', fill: '#64748b' }} tickLine={false} axisLine={false} />
@@ -655,7 +853,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           </h3>
           <div className="h-72">
             {kelasRankData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={kelasRankData.slice(0, 5)} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 'semibold', fill: '#64748b' }} tickLine={false} axisLine={false} />
@@ -680,7 +878,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             {breakdownData.length > 0 ? (
               <>
                 <div className="w-1/2 h-full min-h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                     <PieChart>
                       <Pie
                         data={breakdownData}
@@ -716,36 +914,225 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Peringkat Siswa dengan Pelanggaran Terbanyak (Poin Terendah) */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            Ranking Siswa Butuh Pembinaan Khusus
-          </h3>
-          <div className="flex-1 overflow-auto max-h-[240px]">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-                  <th className="px-3 py-2">Nama</th>
-                  <th className="px-3 py-2 text-center">Kelas</th>
-                  <th className="px-3 py-2 text-center">Skor Poin</th>
-                  <th className="px-3 py-2 text-center">Tahap Pembinaan</th>
+      {/* SECTION: LEADERBOARD POIN SISWA PERIODE / BULAN TERPILIH */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <h3 className="font-extrabold text-slate-900 text-lg flex items-center gap-2">
+              🏆 Leaderboard Poin Siswa ({periode === 'bulan_tertentu' ? (monthOptions.find(m => m.value === selectedMonth)?.label || selectedMonth) : periode === 'bulan_ini' ? 'Bulan Ini' : periode === 'hari_ini' ? 'Hari Ini' : periode === 'minggu_ini' ? '7 Hari Terakhir' : periode === 'semester' ? `Semester ${semester}` : 'Rentang Kustom'})
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Peringkat perolehan poin prestasi dan bobot pelanggaran siswa pada bulan / periode yang dipilih.
+            </p>
+          </div>
+
+          {/* Leaderboard Tabs */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold shrink-0 self-start md:self-auto flex-wrap gap-1">
+            <button
+              type="button"
+              onClick={() => setLeaderboardTab('total')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                leaderboardTab === 'total'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>⭐</span> Top Total Poin ({topTotalPointsList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeaderboardTab('prestasi')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                leaderboardTab === 'prestasi'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🥇</span> Top Prestasi ({topPrestasiList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeaderboardTab('pelanggaran')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                leaderboardTab === 'pelanggaran'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>⚠️</span> Top Pelanggaran ({topPelanggaranList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeaderboardTab('kumulatif')}
+              className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                leaderboardTab === 'kumulatif'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🏅</span> Butuh Pembinaan
+            </button>
+          </div>
+        </div>
+
+        {/* Tab 0: Top Total Poin (Skor Akhir Siswa: Default 100 + Poin Plus - Poin Negatif) */}
+        {leaderboardTab === 'total' && (
+          <div className="overflow-x-auto max-h-[340px]">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead className="bg-indigo-50/70 text-indigo-900 font-bold uppercase text-[10px] sticky top-0 border-b border-indigo-100">
+                <tr>
+                  <th className="px-4 py-3 w-16 text-center">Peringkat</th>
+                  <th className="px-4 py-3">Nama Siswa & NISN</th>
+                  <th className="px-4 py-3 text-center">Kelas</th>
+                  <th className="px-4 py-3 text-center">Formula Poin (Awal + Plus - Negatif)</th>
+                  <th className="px-4 py-3 text-center">Total Poin Akhir</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-100">
+                {topTotalPointsList.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-slate-400 font-medium">Belum ada data poin siswa.</td></tr>
+                ) : topTotalPointsList.map((s) => (
+                  <tr key={s.nisn} className="hover:bg-indigo-50/40 transition-colors">
+                    <td className="px-4 py-3 text-center font-black text-sm">
+                      {s.displayRank === 1 ? '👑 1' : s.displayRank === 2 ? '🥈 2' : s.displayRank === 3 ? '🥉 3' : `#${s.displayRank}`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-900">{s.nama}</div>
+                      <div className="text-[10px] font-mono text-slate-400">NISN: {s.nisn}</div>
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-indigo-800">{s.kelas}</td>
+                    <td className="px-4 py-3 text-center font-medium text-slate-600">
+                      <span className="text-slate-500 font-semibold">{s.poinAwal || 100} (Awal)</span>
+                      {s.prestasiPoin > 0 && <span className="text-emerald-600 font-bold ml-1">+{s.prestasiPoin}</span>}
+                      {s.pelanggaranPoin > 0 && <span className="text-rose-600 font-bold ml-1">-{s.pelanggaranPoin}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`px-3 py-1 font-black rounded-full text-xs border ${
+                        s.totalPoinAkhir >= 100
+                          ? 'bg-indigo-100 text-indigo-900 border-indigo-200'
+                          : s.totalPoinAkhir >= 75
+                          ? 'bg-amber-100 text-amber-900 border-amber-200'
+                          : 'bg-rose-100 text-rose-900 border-rose-200'
+                      }`}>
+                        {s.totalPoinAkhir} Poin
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 1: Top Prestasi (Poin Positif Terbanyak) */}
+        {leaderboardTab === 'prestasi' && (
+          <div className="overflow-x-auto max-h-[340px]">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead className="bg-emerald-50/70 text-emerald-900 font-bold uppercase text-[10px] sticky top-0 border-b border-emerald-100">
+                <tr>
+                  <th className="px-4 py-3 w-16 text-center">Peringkat</th>
+                  <th className="px-4 py-3">Nama Siswa & NISN</th>
+                  <th className="px-4 py-3 text-center">Kelas</th>
+                  <th className="px-4 py-3 text-center">Jumlah Apresiasi</th>
+                  <th className="px-4 py-3 text-center">Total Poin Positif</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {topPrestasiList.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-slate-400 font-medium">Belum ada data poin prestasi pada bulan/periode yang dipilih.</td></tr>
+                ) : topPrestasiList.map((s) => (
+                  <tr key={s.nisn} className="hover:bg-emerald-50/40 transition-colors">
+                    <td className="px-4 py-3 text-center font-black text-sm">
+                      {s.displayRank === 1 ? '🥇 1' : s.displayRank === 2 ? '🥈 2' : s.displayRank === 3 ? '🥉 3' : `#${s.displayRank}`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-900">{s.nama}</div>
+                      <div className="text-[10px] font-mono text-slate-400">NISN: {s.nisn}</div>
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-emerald-800">{s.kelas}</td>
+                    <td className="px-4 py-3 text-center font-medium text-slate-600">{s.prestasiCount} Kali</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="px-3 py-1 bg-emerald-100 text-emerald-800 font-black rounded-full text-xs border border-emerald-200">
+                        +{s.prestasiPoin} Poin
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 2: Top Pelanggaran (Bobot Pelanggaran Terbanyak) */}
+        {leaderboardTab === 'pelanggaran' && (
+          <div className="overflow-x-auto max-h-[340px]">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead className="bg-rose-50/70 text-rose-900 font-bold uppercase text-[10px] sticky top-0 border-b border-rose-100">
+                <tr>
+                  <th className="px-4 py-3 w-16 text-center">Peringkat</th>
+                  <th className="px-4 py-3">Nama Siswa & NISN</th>
+                  <th className="px-4 py-3 text-center">Kelas</th>
+                  <th className="px-4 py-3 text-center">Jumlah Kasus</th>
+                  <th className="px-4 py-3 text-center">Total Bobot Pelanggaran</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {topPelanggaranList.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-slate-400 font-medium">Belum ada data pelanggaran pada bulan/periode yang dipilih.</td></tr>
+                ) : topPelanggaranList.map((s) => (
+                  <tr key={s.nisn} className="hover:bg-rose-50/40 transition-colors">
+                    <td className="px-4 py-3 text-center font-black text-sm">
+                      {s.displayRank === 1 ? '🔴 1' : s.displayRank === 2 ? '🟧 2' : s.displayRank === 3 ? '🟨 3' : `#${s.displayRank}`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-slate-900">{s.nama}</div>
+                      <div className="text-[10px] font-mono text-slate-400">NISN: {s.nisn}</div>
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-rose-800">{s.kelas}</td>
+                    <td className="px-4 py-3 text-center font-medium text-slate-600">{s.pelanggaranCount} Kasus</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="px-3 py-1 bg-rose-100 text-rose-800 font-black rounded-full text-xs border border-rose-200">
+                        -{s.pelanggaranPoin} Poin
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 3: Kumulatif Pembinaan Semester (Sisa Skor Poin Terendah) */}
+        {leaderboardTab === 'kumulatif' && (
+          <div className="overflow-x-auto max-h-[340px]">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] sticky top-0 border-b border-slate-100">
+                <tr>
+                  <th className="px-4 py-3 w-16 text-center">Peringkat</th>
+                  <th className="px-4 py-3">Nama Siswa</th>
+                  <th className="px-4 py-3 text-center">Kelas</th>
+                  <th className="px-4 py-3 text-center">Skor Poin Sisa</th>
+                  <th className="px-4 py-3 text-center">Tahap Pembinaan Aktif</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
                 {siswaRankData.length > 0 ? (
-                  siswaRankData.map((s, idx) => (
-                    <tr key={s.nisn} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="px-3 py-2.5 font-bold text-slate-800">{s.nama}</td>
-                      <td className="px-3 py-2.5 text-center font-semibold text-slate-500">{s.kelas}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${s.poin <= 50 ? 'bg-red-100 text-red-700' : s.poin <= 75 ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                          {s.poin}
+                  siswaRankData.map((s) => (
+                    <tr key={s.nisn} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 text-center font-black text-sm text-slate-700">
+                        {s.displayRank === 1 ? '⚠️ 1' : s.displayRank === 2 ? '⚠️ 2' : s.displayRank === 3 ? '⚠️ 3' : `#${s.displayRank}`}
+                      </td>
+                      <td className="px-4 py-3 font-bold text-slate-800">{s.nama} <span className="text-[10px] font-mono text-slate-400 font-normal">({s.nisn})</span></td>
+                      <td className="px-4 py-3 text-center font-semibold text-slate-500">{s.kelas}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2.5 py-1 rounded-full font-bold text-xs ${s.poin <= 50 ? 'bg-red-100 text-red-700' : s.poin <= 75 ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {s.poin} Poin
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${s.tahap !== 'Normal' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-slate-100 text-slate-600'}`}>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2.5 py-1 rounded-full font-bold text-xs ${s.tahap !== 'Normal' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-slate-100 text-slate-600'}`}>
                           {s.tahap}
                         </span>
                       </td>
@@ -753,14 +1140,13 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={4} className="text-center py-8 text-slate-400">Semua siswa berada dalam kondisi aman.</td>
+                    <td colSpan={5} className="text-center py-10 text-slate-400 font-medium">Seluruh siswa berada dalam batas poin aman semester ini.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
-
+        )}
       </div>
 
       {/* Drill-down Table Section */}
@@ -910,6 +1296,16 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           </div>
         )}
       </div>
+
+      {/* Modal Fullscreen Hall of Fame & Leaderboard */}
+      <HallOfFameModal
+        isOpen={showHallOfFame}
+        onClose={() => setShowHallOfFame(false)}
+        activeTa={activeTa}
+        semesters={semesters}
+        allClasses={allClasses}
+        monthOptions={monthOptions}
+      />
 
     </div>
   )

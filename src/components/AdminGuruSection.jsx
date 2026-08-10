@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx'
 import { useConfirm } from '../utils/useConfirm'
 
 export default function AdminGuruSection({ tahunAjarans, activeTa }) {
@@ -198,6 +197,7 @@ export default function AdminGuruSection({ tahunAjarans, activeTa }) {
     setCsvSyncing(true)
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]

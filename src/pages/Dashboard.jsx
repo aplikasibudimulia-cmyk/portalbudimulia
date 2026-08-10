@@ -8,6 +8,7 @@ import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
 import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import SiswaPoinSection from '../components/SiswaPoinSection'
+import SiswaPengajuanPoinSection from '../components/SiswaPengajuanPoinSection'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import SiswaBKKonsultasiSection from '../components/SiswaBKKonsultasiSection'
 import SiswaJadwalSection from '../components/SiswaJadwalSection'
@@ -130,15 +131,21 @@ function Dashboard() {
 
   useEffect(() => {
     const init = async () => {
-      // Pastikan token Supabase diperbarui secara sinkron sebelum query data
-      await supabase.auth.getSession()
 
       const raw = localStorage.getItem('siswa_session')
       if (!raw) {
         navigate('/')
         return
       }
-      const data = JSON.parse(raw)
+      let data = null
+      try {
+        data = JSON.parse(raw)
+      } catch (e) {
+        console.error("Invalid student session JSON:", e)
+        localStorage.removeItem('siswa_session')
+        navigate('/')
+        return
+      }
       
       // Fetch historical enrollments to check ta_referensi_id correctly
       const { data: enrollments } = await supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn)
@@ -515,8 +522,10 @@ function Dashboard() {
     }
   }, [loading, studentData])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    window.__ebudimuliaExplicitLogout = true
     localStorage.removeItem('siswa_session')
+    await supabase.auth.signOut()
     navigate('/')
   }
 
@@ -585,7 +594,8 @@ function Dashboard() {
     selectedType === 'JADWAL' ? 'Jadwal Pelajaran' :
     selectedType === 'PENGATURAN' ? 'Pengaturan Portal' : 
     selectedType === 'KALENDER' ? 'Kalender Akademik' : 
-    selectedType === 'KONSULTASI_BK' ? 'Konsultasi BK' : 
+    selectedType === 'KONSULTASI_BK' ? 'Konsultasi BK' :
+    selectedType === 'AJUKAN_POIN' ? 'Pengajuan Poin Positif' :
     selectedType ? selectedType.nama : 
     'Beranda Profil'
 
@@ -674,7 +684,7 @@ function Dashboard() {
         {/* Sidebar Header */}
         <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1782401880" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
             {!sidebarCollapsed && (
               <div className="animate-fade-in truncate">
                 <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
@@ -777,6 +787,20 @@ function Dashboard() {
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Konsultasi BK</span>}
+              </button>
+
+              {/* Pengajuan Poin Positif */}
+              <button 
+                onClick={() => { setSelectedType('AJUKAN_POIN'); setSidebarOpen(false) }}
+                title="Pengajuan Poin Positif"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'AJUKAN_POIN' ? 'bg-emerald-50 text-emerald-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'AJUKAN_POIN' ? 'text-emerald-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="16"/>
+                  <line x1="8" y1="12" x2="16" y2="12"/>
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengajuan Poin Positif</span>}
               </button>
 
             </div>
@@ -972,6 +996,11 @@ function Dashboard() {
               <ProgramSekolahSection session={null} isAdmin={false} activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} />
             ) : selectedType === 'KONSULTASI_BK' ? (
               <SiswaBKKonsultasiSection studentData={studentData} />
+            ) : selectedType === 'AJUKAN_POIN' ? (
+              <SiswaPengajuanPoinSection 
+                studentData={studentData} 
+                activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} 
+              />
             ) : selectedType === 'PROFIL' ? (
               <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} />
             ) : selectedType === 'PENGATURAN' ? (

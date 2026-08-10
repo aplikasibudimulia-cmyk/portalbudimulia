@@ -1,4 +1,4 @@
-package com.budimulia.portal.skl;
+package com.ebudimulia.portal;
 
 import com.getcapacitor.BridgeActivity;
 

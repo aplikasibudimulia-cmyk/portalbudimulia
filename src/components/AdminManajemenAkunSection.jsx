@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx'
 import { useConfirm } from '../utils/useConfirm'
+import { cleanOrphanedStudentData } from '../utils/cleanOrphans'
 
 // Icons (Simplified as SVGs to reduce dependencies)
 const IconUsers = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -11,6 +11,10 @@ const IconKey = ({ className = 'w-5 h-5' }) => <svg className={className} viewBo
 const IconPlus = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
 const IconUpload = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
 const IconCamera = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+
+const generateRandom3Digits = () => {
+  return Math.floor(100 + Math.random() * 900).toString()
+}
 
 const FallbackAvatar = ({ name, className = '' }) => (
   <div className={`flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-bold uppercase ${className}`} style={{ width: '40px', height: '40px', flexShrink: 0 }}>
@@ -363,6 +367,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [showResetModal, setShowResetModal] = useState(false)
   const [resetData, setResetData] = useState(null)
   const [resetMethod, setResetMethod] = useState('random')
+  const [printLayout, setPrintLayout] = useState('4-per-page') // '4-per-page' or '1-per-page'
 
   // State untuk fetch credential real-time dari siswa_permanent
   const [isProcessingPrint, setIsProcessingPrint] = useState(false)
@@ -384,33 +389,44 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       { bg: 'bg-pink-50/90', text: 'text-pink-800', border: 'border-pink-200', solidBg: 'bg-pink-600' },
       { bg: 'bg-sky-50/90', text: 'text-sky-800', border: 'border-sky-200', solidBg: 'bg-sky-500' },
       { bg: 'bg-violet-50/90', text: 'text-violet-800', border: 'border-violet-200', solidBg: 'bg-violet-600' },
-      { bg: 'bg-teal-50/90', text: 'text-teal-800', border: 'border-teal-200', solidBg: 'bg-teal-650' }
+      { bg: 'bg-teal-50/90', text: 'text-teal-800', border: 'border-teal-200', solidBg: 'bg-teal-600' }
     ]
     return colors[index]
   }
 
-  // Pre-calculate attendance numbers based on sorted alphabet of students inside each class
+  // Pre-calculate attendance numbers based on sorted alphabet of students inside each class for the target academic year
   const classAbsenMap = React.useMemo(() => {
     const map = {}
     const studentsByClass = {}
     
-    // Group raw students
+    const targetTa = selectedTaFilter === 'all' ? activeTa?.nama : selectedTaFilter
+
+    // Group only students enrolled in the target academic year
     students.forEach(std => {
-      const k = std.kelas || '-'
+      if (targetTa && std.tahun_ajaran && std.tahun_ajaran.trim() !== targetTa.trim()) return
+      const k = (std.kelas || '-').trim()
+      if (k === '-' || !k) return
       if (!studentsByClass[k]) studentsByClass[k] = []
-      studentsByClass[k].push(std)
+      
+      const studentKey = std.nisn || std.id || std.nama_lengkap
+      if (!studentsByClass[k].some(existing => (existing.nisn || existing.id || existing.nama_lengkap) === studentKey)) {
+        studentsByClass[k].push(std)
+      }
     })
     
     // Sort each class group alphabetically and assign index
     Object.keys(studentsByClass).forEach(k => {
       studentsByClass[k].sort((a, b) => (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '', 'id'))
       studentsByClass[k].forEach((std, index) => {
-        map[std.nisn] = index + 1
+        const num = index + 1
+        if (std.nisn) map[std.nisn] = num
+        if (std.id) map[std.id] = num
+        if (std.nama_lengkap) map[std.nama_lengkap] = num
       })
     })
     
     return map
-  }, [students])
+  }, [students, selectedTaFilter, activeTa])
 
   const handleOpenPrintCardsModal = async () => {
     setIsProcessingPrint(true)
@@ -492,6 +508,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       setLoading(false)
       return
     }
+    // Clean up any leftover orphaned data from deleted demo/student accounts
+    cleanOrphanedStudentData()
 
     // 1. Fetch Akun Pengguna for current tab
     const { data: akunData, error: akunError } = await supabase.from('akun_pengguna').select('id, username, role, status, foreign_id, created_at, updated_at').eq('role', activeTab)
@@ -528,11 +546,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       // Create a unique list of students (sometimes enrollment causes duplicates if not grouped)
       const uniqueStudentsMap = new Map()
       students.forEach(s => {
-        if (!uniqueStudentsMap.has(s.nisn)) {
-          uniqueStudentsMap.set(s.nisn, { ...s, enrollments: [] })
+        const key = String(s.nisn || s.id || s.nama_lengkap).trim()
+        if (!uniqueStudentsMap.has(key)) {
+          uniqueStudentsMap.set(key, { ...s, nisn: String(s.nisn || key).trim(), enrollments: [] })
         }
         if (s.tahun_ajaran) {
-          uniqueStudentsMap.get(s.nisn).enrollments.push({
+          uniqueStudentsMap.get(key).enrollments.push({
             kelas: s.kelas,
             tahun_ajaran: s.tahun_ajaran,
             tahun_ajaran_id: s.tahun_ajaran_id // Might be undefined but that's fine
@@ -540,38 +559,58 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
       })
 
+      // Include any accounts in akunList whose foreign_id is not in uniqueStudentsMap
+      const targetRole = activeTab === 'orang_tua' ? 'orang_tua' : 'murid'
+      akunList.filter(a => a.role === targetRole).forEach(a => {
+        const fId = a.foreign_id ? String(a.foreign_id).trim() : ''
+        if (fId && !uniqueStudentsMap.has(fId)) {
+          uniqueStudentsMap.set(fId, {
+            id: fId,
+            nisn: fId,
+            nama_lengkap: (a.username && !a.username.startsWith('ebmsiswa.') && !a.username.startsWith('ebmortu.') ? a.username : ''),
+            kelas: '-',
+            tahun_ajaran: '-',
+            enrollments: []
+          })
+        }
+      })
+
       return Array.from(uniqueStudentsMap.values()).map(student => {
+        const key = student.nisn || student.id || student.nama_lengkap
         // Find relevant enrollment based on TA
         let enrollment = null
         if (selectedTaFilter !== 'all') {
-          enrollment = student.enrollments.find(e => e.tahun_ajaran === selectedTaFilter)
+          enrollment = student.enrollments.find(e => e.tahun_ajaran?.trim() === selectedTaFilter?.trim())
         } else {
-          enrollment = student.enrollments.find(e => e.tahun_ajaran === activeTa?.nama)
+          enrollment = student.enrollments.find(e => e.tahun_ajaran?.trim() === activeTa?.nama?.trim())
         }
         
         if (!enrollment && student.enrollments.length > 0) enrollment = student.enrollments[0]
 
         // Find Akun
         const targetRole = activeTab === 'orang_tua' ? 'orang_tua' : 'murid'
-        const akun = akunList.find(a => a.foreign_id === student.nisn && a.role === targetRole)
+        const akun = akunList.find(a => (a.foreign_id === student.nisn || a.foreign_id === student.id?.toString()) && a.role === targetRole)
         
         // Find Foto
-        const foto = allFotos.filter(f => f.nisn === student.nisn && f.cloudinary_url)
+        const foto = allFotos.filter(f => (f.nisn === student.nisn || f.nisn === student.id?.toString()) && f.cloudinary_url)
             .sort((a, b) => (b.tahun_ajaran?.nama || '').localeCompare(a.tahun_ajaran?.nama || ''))[0]
 
+        const resolvedKelas = enrollment?.kelas || student.kelas || '-'
+
         return {
-          id: student.nisn, // use nisn as unique key
-          foreign_id: student.nisn,
+          id: key,
+          foreign_id: key,
+          nisn: student.nisn,
           nama: student.nama_lengkap,
-          kelas: enrollment?.kelas || '-',
-          tahun_ajaran: enrollment?.tahun_ajaran || '-',
+          kelas: resolvedKelas,
+          tahun_ajaran: enrollment?.tahun_ajaran || student.tahun_ajaran || '-',
           foto_url: foto?.cloudinary_url || null,
           hasAkun: !!akun,
           akun_id: akun?.id,
           username: activeTab === 'orang_tua' 
             ? (akun?.username || student.ortu_username || '(Belum punya akun)') 
             : (activeTab === 'murid' 
-                ? (student.email_aktif || akun?.username || '(Belum punya akun)') 
+                ? (akun?.username || student.email_aktif || '(Belum punya akun)') 
                 : (akun?.username || '(Belum punya akun)')),
           password_exists: !!akun?.password,
           status: akun?.status || 'nonaktif',
@@ -628,7 +667,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   // Apply TA Filter for Murid & Orang Tua
   if ((activeTab === 'murid' || activeTab === 'orang_tua') && selectedTaFilter !== 'all') {
-    mergedData = mergedData.filter(a => a.tahun_ajaran === selectedTaFilter)
+    mergedData = mergedData.filter(a => a.tahun_ajaran === selectedTaFilter || a.tahun_ajaran === '-')
   }
 
   // Derive Unique Classes from TA-filtered data (before class filter is applied)
@@ -779,12 +818,22 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true)
     
     if (activeTab === 'murid') {
-      await supabase.from('enrollment').delete().eq('nisn', row.foreign_id)
-      await supabase.from('foto').delete().eq('nisn', row.foreign_id)
+      const nisn = row.foreign_id
+      // Delete all related records across all tables for this student
+      await Promise.all([
+        supabase.from('enrollment').delete().eq('nisn', nisn),
+        supabase.from('foto').delete().eq('nisn', nisn),
+        supabase.from('presensi_harian').delete().eq('siswa_nisn', nisn),
+        supabase.from('point_records').delete().eq('nisn', nisn),
+        supabase.from('student_points').delete().eq('nisn', nisn),
+        supabase.from('nilai_siswa').delete().eq('siswa_nisn', nisn),
+        supabase.from('bk_konsultasi').delete().eq('siswa_nisn', nisn),
+        supabase.from('berkas_pengumuman').delete().eq('kode_siswa', row.kode || nisn),
+        supabase.from('impersonate_tokens').delete().eq('target_user_id', nisn)
+      ])
       if (row.akun_id) await supabase.from('akun_pengguna').delete().eq('id', row.akun_id)
-      // Also delete orang_tua akun if exists
-      await supabase.from('akun_pengguna').delete().eq('foreign_id', row.foreign_id).eq('role', 'orang_tua')
-      const { error } = await supabase.from('siswa_permanent').delete().eq('nisn', row.foreign_id)
+      await supabase.from('akun_pengguna').delete().eq('foreign_id', nisn)
+      const { error } = await supabase.from('siswa_permanent').delete().eq('nisn', nisn)
       if (error) alert("Gagal hapus data siswa: " + error.message)
     } else if (activeTab === 'orang_tua') {
       // Only delete orang_tua account, NOT the student data
@@ -816,7 +865,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         
         // Ambil data terbaru langsung dari siswa_permanent untuk menutupi kolom yang belum ada di view siswa_lengkap
         const { data: permData } = await supabase.from('siswa_permanent')
-          .select('nama_ortu, no_hp_ortu, email_ortu, telegram_ortu, no_whatsapp, email_aktif')
+          .select('nama_lengkap, nama_ortu, no_hp_ortu, email_ortu, telegram_ortu, no_whatsapp, email_aktif')
           .eq('nisn', row.foreign_id).maybeSingle();
           
         if (permData) {
@@ -825,14 +874,33 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       } else {
         setStudentEnrollments([]);
       }
+      
+      const emailAktifVal = rawStudent?.email_aktif || '';
+      let usernameSiswaVal = '';
+      
+      if (activeTab === 'murid') {
+        if (row?.hasAkun && row.username) {
+          usernameSiswaVal = row.username;
+        } else {
+          // Generate default ebmsiswa.namadepan3digitrandom
+          const namaDepan = (rawStudent?.nama_lengkap || row?.nama || '').split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+          const randomDigits = generateRandom3Digits();
+          usernameSiswaVal = namaDepan ? `ebmsiswa.${namaDepan}${randomDigits}` : '';
+        }
+      }
+
+      const initialNama = rawStudent?.nama_lengkap || (row?.nama && !row?.nama.startsWith('ebmsiswa.') && !row?.nama.startsWith('ebmortu.') ? row?.nama : '') || '';
+
       const formState = {
         isNew: !row,
         row: row,
         original_foreign_id: row?.foreign_id || '',
         foreign_id: row?.foreign_id || '',
-        nama: row?.nama || '',
+        nama: initialNama,
         kelas: row?.kelas !== '-' ? row?.kelas : '',
-        username: row?.hasAkun ? row.username : (rawStudent?.email_aktif || ''),
+        username: row?.hasAkun ? row.username : (activeTab === 'orang_tua' ? '' : emailAktifVal),
+        email_aktif: emailAktifVal,
+        username_siswa: usernameSiswaVal,
         password: '',
         hasAkun: row?.hasAkun || false,
         akun_id: row?.akun_id,
@@ -842,7 +910,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         no_whatsapp: rawStudent?.no_whatsapp || '',
         no_hp_ortu: rawStudent?.no_hp_ortu || '',
         email_ortu: rawStudent?.email_ortu || '',
-        nama_ortu: rawStudent?.nama_ortu || ''
+        nama_ortu: rawStudent?.nama_ortu || '',
+        temp_ta_id: activeTa?.id || ''
       }
       setPrimaryMapelId('')
       setBiodataForm(formState)
@@ -1011,7 +1080,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           if (rpcError) throw new Error("Gagal memigrasikan NISN: " + rpcError.message)
         }
         
-        let uNameSiswa = biodataForm.username || null;
+        let uNameSiswa = activeTab === 'murid' ? biodataForm.username_siswa : biodataForm.username;
         let pWordSiswa = biodataForm.password ? biodataForm.password : (biodataForm.isNew && !biodataForm.hasAkun ? '123456' : undefined);
 
         if (activeTab === 'murid') {
@@ -1022,9 +1091,9 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             no_whatsapp: formatPhoneNumber(biodataForm.no_whatsapp) || null,
             no_hp_ortu: formatPhoneNumber(biodataForm.no_hp_ortu) || null,
             email_ortu: biodataForm.email_ortu || null,
-            nama_ortu: biodataForm.nama_ortu || null
+            nama_ortu: biodataForm.nama_ortu || null,
+            email_aktif: biodataForm.email_aktif || null
           }
-          if (uNameSiswa) siswaPayload.email_aktif = uNameSiswa;
           if (pWordSiswa !== undefined) siswaPayload.kode_akses = pWordSiswa;
 
           // Upsert Siswa
@@ -1173,18 +1242,21 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       }
 
       // 2. Save Akun Pengguna
-      if (biodataForm.username) { // Only create/update akun if username is provided
-        let uName = biodataForm.username;
+      const targetUsername = activeTab === 'murid' ? biodataForm.username_siswa : biodataForm.username;
+      
+      if (targetUsername) { // Only create/update akun if username is provided
+        let uName = targetUsername;
         const roleName = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'murid' : activeTab)
         
-        if (biodataForm.hasAkun && biodataForm.akun_id) {
-          // Strip domain dari username — simpan hanya bagian sebelum @ (misal: ebm.mesrawati)
-          const cleanUsername = uName.includes('@') ? uName.split('@')[0] : uName
+        // Selalu potong domain dari username sebelum dikirim ke DB
+        // Ini penting agar auth.users email tersimpan sebagai: username@ebudimulia.local (bukan username@gmail.com@ebudimulia.local)
+        const cleanUsernameForAkun = uName.includes('@') ? uName.split('@')[0].toLowerCase() : uName.toLowerCase()
 
+        if (biodataForm.hasAkun && biodataForm.akun_id) {
           // Panggil RPC untuk sinkronisasi username ke akun_pengguna DAN auth.users sekaligus
           const { data: updateResult, error: updateErr } = await supabase.rpc('admin_update_username', {
             p_akun_id: biodataForm.akun_id,
-            p_new_username: cleanUsername
+            p_new_username: cleanUsernameForAkun
           })
           if (updateErr || !updateResult?.ok) {
             throw new Error('Gagal update username: ' + (updateResult?.msg || updateErr?.message))
@@ -1206,9 +1278,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
         } else {
           // Buat akun baru via secure RPC admin_create_user
+          // Kirim username yang sudah di-strip domain-nya agar konsisten dengan auth.users
           const pWord = biodataForm.password || '123456'
           const { data: createResult, error: createErr } = await supabase.rpc('admin_create_user', {
-            p_username: uName,
+            p_username: cleanUsernameForAkun,
             p_password: pWord,
             p_role: roleName,
             p_foreign_id: f_id,
@@ -1217,11 +1290,23 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           if (createErr || !createResult?.ok) throw new Error(createResult?.msg || createErr?.message || "Gagal membuat akun")
         }
 
-        // Auto-generate Akun Orang Tua jika tipenya Murid
+        // Auto-generate Akun Orang Tua jika tipenya Murid (meniru angka acak username siswa)
         if (activeTab === 'murid') {
-          const firstName = (biodataForm.nama || '').split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
-          const nisnLast3 = biodataForm.foreign_id.slice(-3)
-          const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
+          const studentUsername = biodataForm.username_siswa || '';
+          let ortuSuffix = '';
+          if (studentUsername.startsWith('ebmsiswa.')) {
+            ortuSuffix = studentUsername.substring('ebmsiswa.'.length); // mengambil 'anselmus845'
+          } else {
+            ortuSuffix = studentUsername.includes('@') ? studentUsername.split('@')[0] : studentUsername;
+          }
+          
+          if (!ortuSuffix) {
+            const firstName = (biodataForm.nama || '').split(' ')[0].toLowerCase().replace(/[^a-z]/g, '');
+            const randomDigits = generateRandom3Digits();
+            ortuSuffix = `${firstName}${randomDigits}`;
+          }
+          
+          const ortuUsername = `ebmortu.${ortuSuffix}`
           const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 karakter acak
           
           // Cek apakah akun ortu untuk foreign_id ini sudah ada
@@ -1396,6 +1481,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true)
     setProgressText('Menyiapkan file Excel...')
     try {
+      const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
 
       if (choice === '1' || choice === '3') {
@@ -1408,6 +1494,23 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
           })
 
+        // Ambil semua data siswa_permanent untuk kolom yang tidak ada di view siswa_lengkap
+        setProgressText('Mengambil data lengkap siswa...')
+        const allNisns = sortedFilteredMurid.map(s => s.nisn)
+        const { data: permDataAll } = await supabase
+          .from('siswa_permanent')
+          .select('nisn, email_aktif, kode_akses, telegram_ortu, ortu_username, ortu_password, no_hp_ortu, email_ortu, nama_ortu, tahun_lulus, jenis_kelamin, no_whatsapp, nipd')
+          .in('nisn', allNisns)
+        const permMap = new Map((permDataAll || []).map(p => [p.nisn, p]))
+
+        // Ambil akun login siswa dari akun_pengguna untuk mengisi kolom Username Siswa
+        const { data: akunSiswaAll } = await supabase
+          .from('akun_pengguna')
+          .select('foreign_id, username')
+          .eq('role', 'murid')
+          .in('foreign_id', allNisns)
+        const akunMap = new Map((akunSiswaAll || []).map(a => [a.foreign_id, a.username]))
+
         let currentClass = null
         let currentAbsen = 1
 
@@ -1417,23 +1520,31 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             currentAbsen = 1
           }
           const absen = currentAbsen++
+          const perm = permMap.get(s.nisn) || {}
           return {
-            'No Absen': absen,
+            'No Absen':           absen,
             'KODE PDF (PENTING)': s.kode || '',
-            'NISN': s.nisn,
-            'NIPD': s.nipd || '',
-            'Nama Lengkap': s.nama_lengkap,
-            'Jenis Kelamin': s.jenis_kelamin || '',
-            'Username': s.username || '',
-            'Password / Kode Akses': s.password_text || '',
-            'Username Orang Tua': s.ortu_username || '',
-            'Password Orang Tua': s.ortu_password || '',
-            'Kelas': s.kelas || '',
-            'Tahun Ajaran': s.tahun_ajaran || '',
-            'Email': s.email_aktif || '',
-            'No Telp': s.no_whatsapp || '',
-            'Kode Akses': s.kode_akses || '',
-            'Password Login': s.raw_password || ''
+            'NISN':               s.nisn,
+            'NIPD':               perm.nipd || s.nipd || '',
+            'Nama Lengkap':       s.nama_lengkap || '',
+            'Jenis Kelamin':      perm.jenis_kelamin || s.jenis_kelamin || '',
+            'Kelas':              s.kelas || '',
+            'Tahun Ajaran':       s.tahun_ajaran || '',
+            'Tahun Lulus':        perm.tahun_lulus || '',
+            // --- Akun Siswa ---
+            'Email Siswa':        perm.email_aktif || s.email_aktif || '',
+            'Username Siswa':     akunMap.get(s.nisn) || '',
+            'Kode Akses':         perm.kode_akses || s.kode_akses || '',
+            // --- Kontak Siswa ---
+            'No WhatsApp Siswa':  perm.no_whatsapp || s.no_whatsapp || '',
+            // --- Akun Orang Tua ---
+            'Username Orang Tua': perm.ortu_username || s.ortu_username || '',
+            'Password Orang Tua': perm.ortu_password || s.ortu_password || '',
+            // --- Data Orang Tua ---
+            'Nama Orang Tua':     perm.nama_ortu || s.nama_ortu || '',
+            'No HP Orang Tua':    perm.no_hp_ortu || s.no_hp_ortu || '',
+            'Email Orang Tua':    perm.email_ortu || s.email_ortu || '',
+            'Telegram Orang Tua': perm.telegram_ortu || s.telegram_ortu || '',
           }
         })
         const wsMurid = XLSX.utils.json_to_sheet(dataMurid)
@@ -1563,6 +1674,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true); setProgressText("Memproses Excel...")
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -1657,6 +1769,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true); setProgressText("Memproses Excel Siswa...")
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -1688,28 +1801,39 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           ''
         ).trim()
         const telegram = String(
-          row.telegram_ortu || 
-          row['TELEGRAM ORTU'] || 
-          row['Telegram Ortu'] || 
-          row.telegram || 
-          row.Telegram || 
+          row['Telegram Orang Tua'] ??
+          row.telegram_ortu ?? 
+          row['TELEGRAM ORTU'] ?? 
+          row['Telegram Ortu'] ?? 
+          row.telegram ?? 
+          row.Telegram ?? 
           ''
         ).trim()
         const whatsapp = formatPhoneNumber(
-          row.no_whatsapp || 
-          row['NO WHATSAPP'] || 
-          row['No Whatsapp'] || 
-          row['NO. WHATSAPP'] || 
-          row['No. Whatsapp'] || 
-          row.whatsapp || 
-          row.Whatsapp || 
-          row['No Telp'] || 
-          row['No. Telp'] || 
-          row.no_telp || 
-          row.WA || 
-          row.wa || 
+          row['No WhatsApp Siswa'] ??
+          row.no_whatsapp ?? 
+          row['NO WHATSAPP'] ?? 
+          row['No Whatsapp'] ?? 
+          row['NO. WHATSAPP'] ?? 
+          row['No. Whatsapp'] ?? 
+          row.whatsapp ?? 
+          row.Whatsapp ?? 
+          row['No Telp'] ?? 
+          row['No. Telp'] ?? 
+          row.no_telp ?? 
+          row.WA ?? 
+          row.wa ?? 
           ''
         )
+        const noHpOrtu = formatPhoneNumber(
+          row['No HP Orang Tua'] ??
+          row.no_hp_ortu ??
+          row['No HP Ortu'] ??
+          ''
+        )
+        const emailOrtu = String(row['Email Orang Tua'] ?? row.email_ortu ?? '').trim()
+        const namaOrtu = String(row['Nama Orang Tua'] ?? row.nama_ortu ?? '').trim()
+        const tahunLulus = String(row['Tahun Lulus'] ?? row.tahun_lulus ?? '').trim()
         const jkRaw = String(
           row.jenis_kelamin ||
           row['Jenis Kelamin'] ||
@@ -1721,8 +1845,49 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         ).trim().toUpperCase()
         const jk = jkRaw.startsWith('L') ? 'L' : jkRaw.startsWith('P') ? 'P' : null
 
+        // Baca Email Siswa (Gmail) dari Excel
+        const _emailRaw = (
+          row['Email Siswa'] ?? row['EMAIL SISWA'] ??
+          row['Email'] ?? row.Email ?? row.email ?? row.EMAIL ??
+          ''
+        )
+        const emailSiswa = String(_emailRaw).trim().toLowerCase()
+
+        // Baca Username Siswa dari Excel (biarkan kosong jika tidak diisi agar username lama tidak berubah)
+        const _uNameRaw = (
+          row['Username Siswa'] ?? row['USERNAME SISWA'] ??
+          row['Username'] ?? row.Username ?? row.username ?? row.USERNAME ??
+          ''
+        )
+        const usernameSiswa = String(_uNameRaw).trim()
+
+        // Baca password/kode_akses siswa dari Excel
+        const _pwRaw = (
+          row['Kode Akses'] ?? row['kode_akses'] ??
+          row['Password / Kode Akses'] ??
+          row.password ?? row.Password ?? row.PASSWORD ??
+          row['KODE AKSES'] ?? row['kode akses'] ??
+          ''
+        )
+        const passwordSiswa = String(_pwRaw).trim()
+
+        // Baca Username Orang Tua dan Password Orang Tua dari Excel
+        const _uNameOrtuRaw = (
+          row['Username Orang Tua'] ?? row['USERNAME ORANG TUA'] ??
+          row['Username Ortu'] ?? row.ortu_username ??
+          ''
+        )
+        const usernameOrtu = String(_uNameOrtuRaw).trim()
+
+        const _pwOrtuRaw = (
+          row['Password Orang Tua'] ?? row['PASSWORD ORANG TUA'] ??
+          row['Password Ortu'] ?? row.ortu_password ??
+          ''
+        )
+        const passwordOrtu = String(_pwOrtuRaw).trim()
+
         if (nisn && nama) {
-          validRows.push({ nisn, nama, kelas, telegram, whatsapp, jk })
+          validRows.push({ nisn, nama, kelas, telegram, whatsapp, noHpOrtu, emailOrtu, namaOrtu, tahunLulus, jk, emailSiswa, usernameSiswa, passwordSiswa, usernameOrtu, passwordOrtu })
         }
       }
 
@@ -1732,13 +1897,20 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         return
       }
 
-      // Step 1: Bulk Upsert Siswa Permanent
+      // Step 1: Bulk Upsert Siswa Permanent (biodata saja)
+      setProgressText(`Menyimpan biodata ${validRows.length} siswa...`)
       const payloadSiswaList = validRows.map(r => ({
         nisn: r.nisn,
         nama_lengkap: r.nama,
-        ...(r.telegram ? { telegram_ortu: r.telegram } : {}),
-        ...(r.whatsapp ? { no_whatsapp: r.whatsapp } : {}),
-        ...(r.jk !== null ? { jenis_kelamin: r.jk } : {})
+        ...(r.telegram       ? { telegram_ortu: r.telegram }       : {}),
+        ...(r.whatsapp       ? { no_whatsapp: r.whatsapp }         : {}),
+        ...(r.noHpOrtu       ? { no_hp_ortu: r.noHpOrtu }         : {}),
+        ...(r.emailOrtu      ? { email_ortu: r.emailOrtu }         : {}),
+        ...(r.namaOrtu       ? { nama_ortu: r.namaOrtu }           : {}),
+        ...(r.tahunLulus     ? { tahun_lulus: r.tahunLulus }       : {}),
+        ...(r.jk !== null    ? { jenis_kelamin: r.jk }             : {}),
+        ...(r.emailSiswa     ? { email_aktif: r.emailSiswa }       : {}),
+        ...(r.passwordSiswa  ? { kode_akses: r.passwordSiswa }     : {})
       }))
 
       const { error: errSiswa } = await supabase.from('siswa_permanent').upsert(payloadSiswaList, { onConflict: 'nisn' })
@@ -1768,51 +1940,167 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
       }
 
-      // Step 3: Dapatkan list NISN dan cek orang tua yang sudah memiliki akun
+      // Step 3: Cek akun siswa & orang tua yang sudah ada
       const importNisns = validRows.map(r => r.nisn)
-      const { data: existingOrtus, error: errFetchOrtu } = await supabase
+      const { data: existingAkunSiswa } = await supabase
         .from('akun_pengguna')
-        .select('foreign_id')
+        .select('id, foreign_id, username')
+        .eq('role', 'murid')
+        .in('foreign_id', importNisns)
+
+      const { data: existingOrtus } = await supabase
+        .from('akun_pengguna')
+        .select('id, foreign_id, username')
         .eq('role', 'orang_tua')
         .in('foreign_id', importNisns)
 
-      if (errFetchOrtu) {
-        console.error("Gagal mengambil data akun ortu:", errFetchOrtu)
+      const akunSiswaMap = new Map((existingAkunSiswa || []).map(a => [a.foreign_id, a]))
+      const akunOrtuMap = new Map((existingOrtus || []).map(o => [o.foreign_id, o]))
+
+      // Step 4: Proses akun siswa (buat baru / update username+password jika ada di Excel atau auto generate)
+      // Kita proses siswa yang memiliki data email, username di Excel, ATAU siswa yang belum punya akun (agar ter-generate otomatis)
+      const siswaToProcess = validRows.filter(r => r.emailSiswa || r.usernameSiswa || !akunSiswaMap.has(r.nisn))
+      setProgressText(`Memproses akun untuk ${siswaToProcess.length} siswa...`)
+
+      for (const r of siswaToProcess) {
+        const existingAkun = akunSiswaMap.get(r.nisn)
+        let cleanUsername = r.usernameSiswa.includes('@') ? r.usernameSiswa.split('@')[0] : r.usernameSiswa
+
+        // Jika kolom username kosong di Excel:
+        if (!cleanUsername) {
+          if (existingAkun) {
+            // Jika sudah ada akun, pertahankan username lama
+            cleanUsername = existingAkun.username
+          } else {
+            // Jika belum ada akun, auto generate
+            const namaDepan = r.nama.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '')
+            const randomDigits = generateRandom3Digits()
+            cleanUsername = `ebmsiswa.${namaDepan}${randomDigits}`
+          }
+        }
+
+        // Simpan username final siswa agar Step 5 bisa membaca untuk sinkronisasi akun ortu
+        r.finalStudentUsername = cleanUsername;
+
+        try {
+          if (existingAkun) {
+            // Sudah punya akun — update username jika diisi di Excel dan nilainya berbeda
+            if (r.usernameSiswa && existingAkun.username !== cleanUsername) {
+              await supabase.rpc('admin_update_username', {
+                p_akun_id: existingAkun.id,
+                p_new_username: cleanUsername
+              })
+            }
+            // Reset password jika ada di Excel
+            if (r.passwordSiswa) {
+              await supabase.rpc('admin_reset_password', {
+                p_akun_id: existingAkun.id,
+                p_new_password: r.passwordSiswa
+              })
+            }
+          } else {
+            // Belum punya akun — buat baru
+            const pWord = r.passwordSiswa || '123456'
+            const { data: createResult, error: createErr } = await supabase.rpc('admin_create_user', {
+              p_username: cleanUsername,
+              p_password: pWord,
+              p_role: 'murid',
+              p_foreign_id: r.nisn,
+              p_status: 'aktif'
+            })
+            if (createErr || !createResult?.ok) {
+              console.error(`Gagal buat akun siswa NISN ${r.nisn}:`, createResult?.msg || createErr?.message)
+              errorCount++
+              continue
+            }
+          }
+        } catch (e) {
+          console.error(`Error akun siswa NISN ${r.nisn}:`, e)
+          errorCount++
+        }
       }
 
-      const existingOrtuSet = new Set((existingOrtus || []).map(o => o.foreign_id))
-
-      // Step 4: Loop untuk membuat akun orang tua HANYA yang belum memilikinya
+      // Step 5: Proses akun orang tua (buat baru / update username+password jika ada di Excel atau auto generate)
+      setProgressText(`Memproses akun orang tua...`)
       for (const r of validRows) {
-        if (existingOrtuSet.has(r.nisn)) {
-          // Akun ortu sudah ada, skip reset agar hemat network call & tidak merusak login ortu yang sudah aktif
-          successCount++
-          continue
+        const existingOrtu = akunOrtuMap.get(r.nisn)
+        let cleanOrtuUsername = r.usernameOrtu.includes('@') ? r.usernameOrtu.split('@')[0] : r.usernameOrtu
+
+        // Jika kolom username orang tua kosong di Excel:
+        if (!cleanOrtuUsername) {
+          if (existingOrtu) {
+            // Jika sudah ada akun, pertahankan username lama
+            cleanOrtuUsername = existingOrtu.username
+          } else {
+            // Jika belum ada akun, auto generate meniru suffix username siswa
+            const existingSiswaAkun = akunSiswaMap.get(r.nisn)
+            const studentUsername = r.finalStudentUsername || existingSiswaAkun?.username || ''
+            
+            let ortuSuffix = ''
+            if (studentUsername) {
+              if (studentUsername.startsWith('ebmsiswa.')) {
+                ortuSuffix = studentUsername.substring('ebmsiswa.'.length)
+              } else {
+                ortuSuffix = studentUsername.includes('@') ? studentUsername.split('@')[0] : studentUsername
+              }
+            }
+
+            if (!ortuSuffix) {
+              const firstName = r.nama.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
+              const randomDigits = generateRandom3Digits()
+              ortuSuffix = `${firstName}${randomDigits}`
+            }
+
+            cleanOrtuUsername = `ebmortu.${ortuSuffix}`
+          }
         }
 
         try {
-          const firstName = r.nama.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
-          const nisnLast3 = r.nisn.slice(-3)
-          const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
-          const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase()
-
-          const { error: errCreate } = await supabase.rpc('admin_create_user', {
-            p_username: ortuUsername,
-            p_password: ortuPassword,
-            p_role: 'orang_tua',
-            p_foreign_id: r.nisn,
-            p_status: 'aktif'
-          })
-
-          if (errCreate) {
-            console.error(`Gagal membuat akun ortu untuk NISN ${r.nisn}:`, errCreate)
-            errorCount++
-          } else {
-            await supabase
-              .from('siswa_permanent')
-              .update({ ortu_username: ortuUsername, ortu_password: ortuPassword })
-              .eq('nisn', r.nisn)
+          if (existingOrtu) {
+            // Sudah punya akun ortu — update username jika diisi di Excel dan nilainya berbeda
+            if (r.usernameOrtu && existingOrtu.username !== cleanOrtuUsername) {
+              await supabase.rpc('admin_update_username', {
+                p_akun_id: existingOrtu.id,
+                p_new_username: cleanOrtuUsername
+              })
+              await supabase
+                .from('siswa_permanent')
+                .update({ ortu_username: cleanOrtuUsername })
+                .eq('nisn', r.nisn)
+            }
+            // Reset password jika ada di Excel
+            if (r.passwordOrtu) {
+              await supabase.rpc('admin_reset_password', {
+                p_akun_id: existingOrtu.id,
+                p_new_password: r.passwordOrtu
+              })
+              await supabase
+                .from('siswa_permanent')
+                .update({ ortu_password: r.passwordOrtu })
+                .eq('nisn', r.nisn)
+            }
             successCount++
+          } else {
+            // Belum punya akun — buat baru
+            const pWord = r.passwordOrtu || Math.random().toString(36).substring(2, 8).toUpperCase()
+            const { data: ortuResult, error: errCreate } = await supabase.rpc('admin_create_user', {
+              p_username: cleanOrtuUsername,
+              p_password: pWord,
+              p_role: 'orang_tua',
+              p_foreign_id: r.nisn,
+              p_status: 'aktif'
+            })
+
+            if (errCreate || !ortuResult?.ok) {
+              console.error(`Gagal membuat akun ortu untuk NISN ${r.nisn}:`, errCreate || ortuResult?.msg)
+              errorCount++
+            } else {
+              await supabase
+                .from('siswa_permanent')
+                .update({ ortu_username: cleanOrtuUsername, ortu_password: pWord })
+                .eq('nisn', r.nisn)
+              successCount++
+            }
           }
         } catch (e) {
           console.error(e)
@@ -1820,7 +2108,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
       }
 
-      alert(`Sinkronisasi Siswa selesai!\nBerhasil: ${successCount}\nGagal: ${errorCount}`)
+      const siswaAkunDibuat = siswaToProcess.filter(r => !akunSiswaMap.has(r.nisn)).length
+      const siswaAkunDiupdate = siswaToProcess.filter(r => akunSiswaMap.has(r.nisn)).length
+      alert(
+        `Sinkronisasi Siswa selesai!\n` +
+        `✅ Biodata tersimpan: ${validRows.length} siswa\n` +
+        `🔑 Akun siswa dibuat: ${siswaAkunDibuat}\n` +
+        `🔄 Akun siswa diupdate: ${siswaAkunDiupdate}\n` +
+        `👨‍👩‍👦 Akun ortu baru: ${successCount}\n` +
+        `❌ Gagal: ${errorCount}`
+      )
     } catch (err) {
       alert('Gagal memproses file: ' + err.message)
     }
@@ -1835,6 +2132,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true); setProgressText("Memproses Update NISN Massal...")
 
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -1991,48 +2289,83 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(true)
     try {
       const { data: allSiswa } = await supabase.from('siswa_permanent').select('nisn, nama_lengkap, ortu_username')
-      const { data: allAkunOrtu } = await supabase.from('akun_pengguna').select('foreign_id').eq('role', 'orang_tua')
-      const existingAkunOrtuIds = new Set(allAkunOrtu?.map(a => a.foreign_id) || [])
-
-      const siswaToGenerate = (allSiswa || []).filter(s => !existingAkunOrtuIds.has(s.nisn))
+      const { data: allAkunSiswa } = await supabase.from('akun_pengguna').select('foreign_id, username').eq('role', 'murid')
+      const { data: allAkunOrtu } = await supabase.from('akun_pengguna').select('id, foreign_id, username').eq('role', 'orang_tua')
       
-      if (siswaToGenerate.length === 0) {
-        alert("Semua siswa sudah memiliki akun orang tua.")
-        setIsProcessing(false)
-        return
-      }
+      const akunSiswaMap = new Map(allAkunSiswa?.map(a => [a.foreign_id, a.username]) || [])
+      const akunOrtuMap = new Map(allAkunOrtu?.map(a => [a.foreign_id, a]) || [])
 
       let successCount = 0
       let errorCount = 0
+      let updateCount = 0
 
-      for (const siswa of siswaToGenerate) {
-        const firstName = (siswa.nama_lengkap || '').split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
-        const nisnLast3 = siswa.nisn.slice(-3)
-        const ortuUsername = `ebmortu.${firstName}${nisnLast3}`
-        const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
-
-        const { data: createResult, error: errAkun } = await supabase.rpc('admin_create_user', {
-          p_username: ortuUsername,
-          p_password: ortuPassword,
-          p_role: 'orang_tua',
-          p_foreign_id: siswa.nisn,
-          p_status: 'aktif'
-        })
+      for (const siswa of (allSiswa || [])) {
+        const studentUsername = akunSiswaMap.get(siswa.nisn) || ''
+        let ortuSuffix = ''
         
-        if (errAkun || !createResult?.ok) {
-          errorCount++
-          continue
+        if (studentUsername) {
+          if (studentUsername.startsWith('ebmsiswa.')) {
+            ortuSuffix = studentUsername.substring('ebmsiswa.'.length)
+          } else {
+            ortuSuffix = studentUsername.includes('@') ? studentUsername.split('@')[0] : studentUsername
+          }
         }
 
-        await supabase.from('siswa_permanent').update({
-          ortu_username: ortuUsername,
-          ortu_password: ortuPassword
-        }).eq('nisn', siswa.nisn)
-        
-        successCount++
+        if (!ortuSuffix) {
+          const firstName = (siswa.nama_lengkap || '').split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')
+          const randomDigits = generateRandom3Digits()
+          ortuSuffix = `${firstName}${randomDigits}`
+        }
+
+        const ortuUsername = `ebmortu.${ortuSuffix}`
+        const existingOrtu = akunOrtuMap.get(siswa.nisn)
+
+        if (existingOrtu) {
+          // Jika akun orang tua sudah ada tapi username mismatch, lakukan update/sync
+          if (existingOrtu.username !== ortuUsername) {
+            const { data: updateResult, error: errUpdate } = await supabase.rpc('admin_update_username', {
+              p_akun_id: existingOrtu.id,
+              p_new_username: ortuUsername
+            })
+
+            if (errUpdate || !updateResult?.ok) {
+              console.error(`Gagal menyelaraskan username ortu NISN ${siswa.nisn}:`, errUpdate || updateResult?.msg)
+              errorCount++
+              continue
+            }
+
+            await supabase.from('siswa_permanent').update({
+              ortu_username: ortuUsername
+            }).eq('nisn', siswa.nisn)
+
+            updateCount++
+          }
+        } else {
+          // Jika belum memiliki akun orang tua, buat baru
+          const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 chars random
+          const { data: createResult, error: errAkun } = await supabase.rpc('admin_create_user', {
+            p_username: ortuUsername,
+            p_password: ortuPassword,
+            p_role: 'orang_tua',
+            p_foreign_id: siswa.nisn,
+            p_status: 'aktif'
+          })
+          
+          if (errAkun || !createResult?.ok) {
+            errorCount++
+            continue
+          }
+
+          await supabase.from('siswa_permanent').update({
+            ortu_username: ortuUsername,
+            ortu_password: ortuPassword
+          }).eq('nisn', siswa.nisn)
+          
+          successCount++
+        }
       }
       
-      alert(`Berhasil membuat ${successCount} akun orang tua baru. Gagal: ${errorCount}`)
+      alert(`Sinkronisasi Akun Ortu selesai!\n🔑 Akun baru dibuat: ${successCount}\n🔄 Akun diupdate/diselaraskan: ${updateCount}\n❌ Gagal: ${errorCount}`)
       fetchData()
     } catch (err) {
       alert("Terjadi kesalahan: " + err.message)
@@ -2367,10 +2700,42 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       {row.hasAkun ? (
                         <div className="flex flex-col gap-1">
                           <p className="text-slate-800 font-medium">{row.username}</p>
-                          <span className={`w-fit px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.status === 'aktif' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{row.status === 'aktif' ? 'Aktif' : 'Nonaktif'}</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className={`w-fit px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.status === 'aktif' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{row.status === 'aktif' ? 'Aktif' : 'Nonaktif'}</span>
+                            {activeTab === 'orang_tua' && (
+                              <>
+                                {row.rawStudent?.line_user_id ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
+                                )}
+                                {Boolean(row.rawStudent?.nama_ortu && row.rawStudent?.no_hp_ortu && row.rawStudent?.email_ortu) ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">📝 Biodata Lengkap</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       ) : (
-                        <p className="text-xs italic text-slate-400 font-medium">(Belum Punya Akun)</p>
+                        <div className="flex flex-col gap-1">
+                          <p className="text-xs italic text-slate-400 font-medium">(Belum Punya Akun)</p>
+                          {activeTab === 'orang_tua' && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {row.rawStudent?.line_user_id ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
+                              )}
+                              {Boolean(row.rawStudent?.nama_ortu && row.rawStudent?.no_hp_ortu && row.rawStudent?.email_ortu) ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">📝 Biodata Lengkap</span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -2422,11 +2787,37 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       <>
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">NISN * <span className="text-amber-500 font-normal">(Ubah dengan hati-hati)</span></label>
-                          <input required value={biodataForm.foreign_id} onChange={e => setBiodataForm({...biodataForm, foreign_id: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-2xl text-sm bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+                          <input required value={biodataForm.foreign_id} onChange={e => {
+                            const val = e.target.value;
+                            if (!biodataForm.hasAkun) {
+                              const namaDepan = (biodataForm.nama || '').split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+                              const nisnLast3 = String(val).slice(-3);
+                              setBiodataForm({
+                                ...biodataForm,
+                                foreign_id: val,
+                                username_siswa: namaDepan ? `ebmsiswa.${namaDepan}${nisnLast3}` : ''
+                              });
+                            } else {
+                              setBiodataForm({ ...biodataForm, foreign_id: val });
+                            }
+                          }} className="w-full px-3 py-2 border border-slate-300 rounded-2xl text-sm bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">Nama Lengkap *</label>
-                          <input required value={biodataForm.nama} onChange={e => setBiodataForm({...biodataForm, nama: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                          <input required value={biodataForm.nama} onChange={e => {
+                            const val = e.target.value;
+                            if (!biodataForm.hasAkun) {
+                              const namaDepan = val.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+                              const nisnLast3 = String(biodataForm.foreign_id || '').slice(-3);
+                              setBiodataForm({
+                                ...biodataForm,
+                                nama: val,
+                                username_siswa: namaDepan ? `ebmsiswa.${namaDepan}${nisnLast3}` : ''
+                              });
+                            } else {
+                              setBiodataForm({ ...biodataForm, nama: val });
+                            }
+                          }} className="w-full px-3 py-2 border rounded-2xl text-sm" />
                         </div>
                         <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-2xl p-4">
                           <label className="block text-xs font-bold text-slate-700 mb-3 border-b border-slate-200 pb-2">Riwayat Kelas Terdaftar</label>
@@ -3172,7 +3563,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                 ) : (
                   <p className="text-xs text-amber-600 mb-3 font-medium">Pengguna ini belum memiliki akun login. Isi form di bawah untuk membuatkannya.</p>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className={`grid grid-cols-1 ${activeTab === 'murid' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
                   <div className="md:col-span-1">
                     <label className="block text-xs font-medium text-slate-700 mb-1">Status Akun</label>
                     <select value={biodataForm.akun_status} onChange={e => setBiodataForm({...biodataForm, akun_status: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
@@ -3180,10 +3571,23 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       <option value="nonaktif">🔴 Nonaktif / Pindah</option>
                     </select>
                   </div>
-                  <div className="md:col-span-1">
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Email / Username *</label>
-                    <input required value={biodataForm.username} onChange={e => setBiodataForm({...biodataForm, username: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
-                  </div>
+                  {activeTab === 'murid' ? (
+                    <>
+                      <div className="md:col-span-1">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Email Siswa (Gmail)</label>
+                        <input type="email" value={biodataForm.email_aktif} onChange={e => setBiodataForm({...biodataForm, email_aktif: e.target.value})} placeholder="Contoh: siswa@gmail.com" className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                      <div className="md:col-span-1">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Username Siswa *</label>
+                        <input required value={biodataForm.username_siswa} onChange={e => setBiodataForm({...biodataForm, username_siswa: e.target.value})} placeholder="Contoh: ebmsiswa.siswa123" className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="md:col-span-1">
+                      <label className="block text-xs font-medium text-slate-700 mb-1">{activeTab === 'orang_tua' ? 'Username Orang Tua *' : 'Email / Username *'}</label>
+                      <input required value={biodataForm.username} onChange={e => setBiodataForm({...biodataForm, username: e.target.value})} className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                  )}
                   <div className="md:col-span-1">
                     <label className="block text-xs font-medium text-slate-700 mb-1">{biodataForm.hasAkun ? 'Ganti Password' : 'Password Awal'}</label>
                     <input type="text" value={biodataForm.password} onChange={e => setBiodataForm({...biodataForm, password: e.target.value})} placeholder={biodataForm.hasAkun ? 'Kosongkan jika sama' : 'Default: 123456'} className="w-full px-3 py-2 border rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -3216,6 +3620,27 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">Mencetak {mergedData.length} kartu siswa yang saat ini ter-filter.</p>
               </div>
+
+              {/* Layout Mode Toggles */}
+              <div className="flex items-center gap-1.5 bg-slate-200/70 p-1.5 rounded-2xl border border-slate-300/40">
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('4-per-page')}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${printLayout === '4-per-page' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-300/50'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                  4 per Halaman
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('1-per-page')}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${printLayout === '1-per-page' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-slate-300/50'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                  1 per Halaman
+                </button>
+              </div>
+
               <button onClick={() => setShowPrintCardsModal(false)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-2xl transition-colors">
                 <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
               </button>
@@ -3233,11 +3658,11 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                   }
                   @page {
                     size: A4 portrait;
-                    margin: 0;
+                    margin: 10mm 10mm;
                   }
                   html, body {
-                    width: 210mm;
-                    height: 297mm;
+                    width: 100% !important;
+                    height: auto !important;
                     margin: 0 !important;
                     padding: 0 !important;
                     background: white !important;
@@ -3247,27 +3672,55 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                   }
                   #print-cards-wrap {
                     display: block !important;
-                    width: 210mm !important;
-                    height: 297mm !important;
-                    padding: 10mm !important;
+                    width: 100% !important;
+                    height: auto !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
                     box-sizing: border-box !important;
                     background: white !important;
                   }
                   #print-cards-grid {
-                    display: grid !important;
-                    grid-template-columns: 95mm 95mm !important;
-                    grid-auto-rows: 135mm !important;
-                    gap: 8mm 6mm !important;
+                    display: block !important;
                     width: 190mm !important;
-                    height: auto !important;
                     margin: 0 auto !important;
                   }
-                  .print-card-item {
-                    width: 95mm !important;
-                    height: 135mm !important;
+                  .print-page-container {
+                    width: 190mm !important;
+                    height: 270mm !important;
                     box-sizing: border-box !important;
-                    break-inside: avoid !important;
-                    page-break-inside: avoid !important;
+                    margin: 0 auto !important;
+                    padding: 0 !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    border-radius: 0 !important;
+                    page-break-after: always !important;
+                    break-after: page !important;
+                    position: relative !important;
+                    background: white !important;
+                  }
+                  .print-page-container:last-child {
+                    page-break-after: avoid !important;
+                    break-after: avoid !important;
+                  }
+                  .print-page-grid {
+                    display: ${printLayout === '4-per-page' ? 'grid' : 'flex'} !important;
+                    ${printLayout === '4-per-page' ? `
+                      grid-template-columns: 90mm 90mm !important;
+                      grid-auto-rows: 128mm !important;
+                      gap: 8mm 10mm !important;
+                    ` : `
+                      flex-direction: column !important;
+                      align-items: center !important;
+                      justify-content: center !important;
+                      height: 100% !important;
+                    `}
+                    width: 190mm !important;
+                    height: auto !important;
+                  }
+                  .print-card-item {
+                    width: 90mm !important;
+                    height: 128mm !important;
+                    box-sizing: border-box !important;
                     border: 1px solid #cbd5e1 !important;
                     border-radius: 0px !important;
                     box-shadow: none !important;
@@ -3276,145 +3729,150 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                                       repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px) !important;
                     position: relative !important;
                   }
-                  /* Force page break after exactly 4 cards */
-                  .print-card-item:nth-child(4n) {
-                    page-break-after: always !important;
-                    break-after: page !important;
-                  }
                 }
                 
-                /* Screen Preview Background Pattern styling */
-                .print-card-item {
-                  border-radius: 0px !important;
-                  background-image: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.02) 0%, transparent 80%), 
-                                    repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px) !important;
+                @media screen {
+                  .print-page-container {
+                    background: white;
+                    border: 1px solid #e2e8f0;
+                    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+                    border-radius: 1rem;
+                    padding: 1.5rem;
+                  }
+                  .print-card-item {
+                    border-radius: 0px;
+                    background-image: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.02) 0%, transparent 80%), 
+                                      repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px);
+                  }
                 }
               `}</style>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto" id="print-cards-grid">
-                {mergedData.map((s, index) => {
-                  const classCol = getClassColor(s.kelas)
-                  
-                  // Credentials
-                  const studentPass = siswaPermanentCredentials[s.foreign_id]?.kode_akses || s.rawStudent?.kode_akses || s.password_text || s.raw_password || ''
-                  const ortuUser = siswaPermanentCredentials[s.foreign_id]?.ortu_username || s.rawStudent?.ortu_username || ''
-                  const ortuPass = siswaPermanentCredentials[s.foreign_id]?.ortu_password || s.rawStudent?.ortu_password || ''
+              {(() => {
+                const chunkedPages = []
+                const pageSize = printLayout === '4-per-page' ? 4 : 1
+                for (let i = 0; i < mergedData.length; i += pageSize) {
+                  chunkedPages.push(mergedData.slice(i, i + pageSize))
+                }
 
-                  // Auto-login URLs for QR code (Login.jsx automatically parses u, p, r params)
-                  const studentLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(s.username || '')}&p=${encodeURIComponent(studentPass)}&r=siswa`
-                  const studentQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(studentLoginUrl)}`
-
-                  const ortuLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(ortuUser)}&p=${encodeURIComponent(ortuPass)}&r=ortu`
-                  const ortuQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(ortuLoginUrl)}`
-
-                  return (
-                    <div key={s.id || index} className="print-card-item bg-white border border-slate-200 rounded-none p-5 shadow-md relative overflow-hidden flex flex-col justify-between" style={{ minHeight: '460px', maxHeight: '480px' }}>
-                      {/* Geometric Background Shapes (Top Right) */}
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/60 -z-10" style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }} />
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-100/40 -z-10" style={{ clipPath: 'polygon(100% 0, 30% 0, 100% 70%)' }} />
-                      
-                      {/* Class & Absen Tag - Beautiful shape solid corner badge */}
-                      <div className={`absolute top-0 right-0 rounded-none px-5 py-2 text-[11px] font-black text-white shadow-sm z-10 ${classCol.solidBg}`}>
-                        {s.kelas || '-'} No. {classAbsenMap[s.foreign_id] || '-'}
-                      </div>
-
-                      {/* Header Section */}
-                      <div>
-                        <div className="flex items-center gap-4 border-b pb-2 border-slate-100 mb-3 pr-20">
-                          {/* Logo Wrapper */}
-                          <div className="shrink-0">
-                            <img src="/logo.jpg" alt="Logo SMP Budi Mulia" className="w-10 h-10 object-contain rounded-lg" />
-                          </div>
-                          
-                          {/* Title */}
-                          <div className="min-w-0">
-                            <h3 className="text-base font-black tracking-wide text-slate-800 leading-tight">
-                              KARTU <span className="text-indigo-600">AKSES</span> PORTAL
-                            </h3>
-                            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1 leading-none">
-                              SMP BUDI MULIA JAKARTA
-                            </p>
-                          </div>
+                return (
+                  <div className="space-y-8 max-w-4xl mx-auto" id="print-cards-grid">
+                    {chunkedPages.map((pageCards, pageIndex) => (
+                      <div
+                        key={pageIndex}
+                        className="print-page-container bg-white rounded-2xl shadow-md border border-slate-200/60"
+                      >
+                        <div className="text-xs text-slate-400 font-bold mb-4 print:hidden border-b pb-2 flex justify-between items-center">
+                          <span>Halaman {pageIndex + 1} dari {chunkedPages.length}</span>
+                          <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] text-slate-500 font-black">
+                            {pageCards.length} Kartu
+                          </span>
                         </div>
-                      </div>
+                        <div className={`print-page-grid ${printLayout === '4-per-page' ? "grid grid-cols-1 md:grid-cols-2 gap-6" : "flex flex-col items-center gap-6"}`}>
+                          {pageCards.map((s, index) => {
+                            const classCol = getClassColor(s.kelas)
+                            const studentPass = siswaPermanentCredentials[s.foreign_id]?.kode_akses || s.rawStudent?.kode_akses || s.password_text || s.raw_password || ''
+                            const ortuUser = siswaPermanentCredentials[s.foreign_id]?.ortu_username || s.rawStudent?.ortu_username || ''
+                            const ortuPass = siswaPermanentCredentials[s.foreign_id]?.ortu_password || s.rawStudent?.ortu_password || ''
+                            const studentLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(s.username || '')}&p=${encodeURIComponent(studentPass)}&r=siswa`
+                            const studentQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(studentLoginUrl)}`
+                            const ortuLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(ortuUser)}&p=${encodeURIComponent(ortuPass)}&r=ortu`
+                            const ortuQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(ortuLoginUrl)}`
 
-                        {/* Student Profile Block (Single Row: Name + Photo) */}
-                        <div className="flex gap-4 items-center mb-3">
-                          {/* Foto Siswa (Portrait with border) */}
-                          <div className={`relative rounded-2xl overflow-hidden border shrink-0 ${s.foto_url ? 'border-2 border-white shadow-md bg-blue-500' : 'border-slate-200 bg-white'}`} style={{ width: '70px', height: '90px' }}>
-                            {s.foto_url && (
-                              <img src={s.foto_url} alt={s.nama} className="w-full h-full object-cover" />
-                            )}
-                          </div>
-                          
-                          {/* Name Block */}
-                          <div className="flex-1 min-w-0 py-1">
-                            <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest leading-none mb-1.5">NAMA SISWA</span>
-                            <span className="block text-base font-black text-slate-800 truncate leading-tight">{s.nama}</span>
-                          </div>
-                        </div>
-
-                        {/* Access Login Siswa (Blue Accent Box) */}
-                        <div className="bg-[#f8fafc] border border-slate-100 border-l-4 border-l-blue-600 rounded-2xl p-3 mb-3 flex items-center justify-between gap-2 shadow-sm">
-                          <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
-                            <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
-                              <div className="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-blue-600">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            return (
+                              <div key={s.id || index} className="print-card-item bg-white border border-slate-200 rounded-none p-5 shadow-sm relative overflow-hidden flex flex-col justify-between" style={{ minHeight: '460px', maxHeight: '480px' }}>
+                                {/* Geometric Background Shapes */}
+                                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/60 -z-10" style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }} />
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-100/40 -z-10" style={{ clipPath: 'polygon(100% 0, 30% 0, 100% 70%)' }} />
+                                <div className={`absolute top-0 right-0 rounded-none px-5 py-2 text-[11px] font-black text-white shadow-sm z-10 ${classCol.solidBg}`}>
+                                  {s.kelas || '-'} No. {classAbsenMap[s.foreign_id] || classAbsenMap[s.nisn] || classAbsenMap[s.nama] || '-'}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-4 border-b pb-2 border-slate-100 mb-3 pr-20">
+                                    <div className="shrink-0">
+                                      <img src="/logo.png" alt="Logo SMP Budi Mulia" className="w-10 h-10 object-contain rounded-lg" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <h3 className="text-base font-black tracking-wide text-slate-800 leading-tight">
+                                        KARTU <span className="text-indigo-600">AKSES</span> PORTAL
+                                      </h3>
+                                      <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1 leading-none">
+                                        SMP BUDI MULIA JAKARTA
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex gap-4 items-center mb-3">
+                                  <div className={`relative rounded-2xl overflow-hidden border shrink-0 ${s.foto_url ? 'border-2 border-white shadow-md bg-blue-500' : 'border-slate-200 bg-white'}`} style={{ width: '70px', height: '90px' }}>
+                                    {s.foto_url && (
+                                      <img src={s.foto_url} alt={s.nama} className="w-full h-full object-cover" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0 py-1">
+                                    <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-widest leading-none mb-1.5">NAMA SISWA</span>
+                                    <span className="block text-base font-black text-slate-800 truncate leading-tight">{s.nama}</span>
+                                  </div>
+                                </div>
+                                <div className="bg-[#f8fafc] border border-slate-100 border-l-4 border-l-blue-600 rounded-2xl p-3 mb-3 flex items-center justify-between gap-2 shadow-sm">
+                                  <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
+                                    <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
+                                      <div className="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-blue-600">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                      </div>
+                                      <span className="font-extrabold text-[9px] text-blue-600 uppercase tracking-wider">Akses Login Siswa</span>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username</span>
+                                      <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{s.username || '-'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Kode Akses / Pass</span>
+                                      <span className="font-mono font-extrabold text-sm text-blue-600 leading-none block">{studentPass || '-'}</span>
+                                    </div>
+                                  </div>
+                                  {s.username && s.username !== '(Belum punya akun)' && studentPass && (
+                                    <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm">
+                                      <img src={studentQrUrl} alt="QR Siswa" className="w-14 h-14 object-contain" />
+                                      <span className="text-[8px] text-slate-400 font-bold mt-1 tracking-tight">Scan Login</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="bg-[#fdfcff] border border-slate-100 border-l-4 border-l-violet-600 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
+                                  <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
+                                    <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
+                                      <div className="w-4 h-4 rounded-full bg-violet-100 flex items-center justify-center shrink-0 text-violet-600">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                      </div>
+                                      <span className="font-extrabold text-[9px] text-violet-600 uppercase tracking-wider">Akses Login Orang Tua</span>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username Ortu</span>
+                                      <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{ortuUser || '-'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Password Ortu</span>
+                                      <span className="font-mono font-extrabold text-sm text-violet-600 leading-none block">{ortuPass || '-'}</span>
+                                    </div>
+                                  </div>
+                                  {ortuUser && ortuUser !== '-' && ortuPass && ortuPass !== '-' && (
+                                    <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-violet-200 shadow-sm">
+                                      <img src={ortuQrUrl} alt="QR Ortu" className="w-14 h-14 object-contain" />
+                                      <span className="text-[8px] text-violet-500 font-bold mt-1 tracking-tight">Scan Login</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-center mt-4 text-[9px] text-slate-400 font-semibold tracking-wider flex items-center justify-center gap-1.5 shrink-0">
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-indigo-500/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                  <span>Portal Akademik:</span>
+                                  <span className="text-indigo-600 font-bold">edu.smpbudimuliajakarta.sch.id</span>
+                                </div>
                               </div>
-                              <span className="font-extrabold text-[9px] text-blue-600 uppercase tracking-wider">Akses Login Siswa</span>
-                            </div>
-                            <div className="min-w-0">
-                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username</span>
-                              <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{s.username || '-'}</span>
-                            </div>
-                            <div>
-                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Kode Akses / Pass</span>
-                              <span className="font-mono font-extrabold text-sm text-blue-600 leading-none block">{studentPass || '-'}</span>
-                            </div>
-                          </div>
-                          {s.username && s.username !== '(Belum punya akun)' && studentPass && (
-                            <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm">
-                              <img src={studentQrUrl} alt="QR Siswa" className="w-14 h-14 object-contain" />
-                              <span className="text-[8px] text-slate-400 font-bold mt-1 tracking-tight">Scan Login</span>
-                            </div>
-                          )}
+                            )
+                          })}
                         </div>
-
-                        {/* Access Login Orang Tua (Violet Accent Box) */}
-                        <div className="bg-[#fdfcff] border border-slate-100 border-l-4 border-l-violet-600 rounded-2xl p-3 flex items-center justify-between gap-2 shadow-sm">
-                          <div className="flex-1 space-y-2 text-[11px] min-w-0 pr-1">
-                            <div className="flex items-center gap-1.5 border-b pb-1.5 border-slate-100">
-                              <div className="w-4 h-4 rounded-full bg-violet-100 flex items-center justify-center shrink-0 text-violet-600">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                              </div>
-                              <span className="font-extrabold text-[9px] text-violet-600 uppercase tracking-wider">Akses Login Orang Tua</span>
-                            </div>
-                            <div className="min-w-0">
-                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Username Ortu</span>
-                              <span className="font-mono font-bold text-slate-800 truncate block leading-none py-0.5">{ortuUser || '-'}</span>
-                            </div>
-                            <div>
-                              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Password Ortu</span>
-                              <span className="font-mono font-extrabold text-sm text-violet-600 leading-none block">{ortuPass || '-'}</span>
-                            </div>
-                          </div>
-                          {ortuUser && ortuUser !== '-' && ortuPass && ortuPass !== '-' && (
-                            <div className="shrink-0 flex flex-col items-center bg-white p-1.5 rounded-lg border border-violet-200 shadow-sm">
-                              <img src={ortuQrUrl} alt="QR Ortu" className="w-14 h-14 object-contain" />
-                              <span className="text-[8px] text-violet-500 font-bold mt-1 tracking-tight">Scan Login</span>
-                            </div>
-                          )}
-                        </div>
-
-                      {/* Center text footer without shape */}
-                      <div className="text-center mt-4 text-[9px] text-slate-400 font-semibold tracking-wider flex items-center justify-center gap-1.5 shrink-0">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-indigo-500/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        <span>Portal Akademik:</span>
-                        <span className="text-indigo-600 font-bold">edu.smpbudimuliajakarta.sch.id</span>
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Modal Footer / Action */}
@@ -3425,11 +3883,87 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
               <button type="button" onClick={() => {
                 const el = document.getElementById('print-cards-grid')
                 const style = document.createElement('style')
-                style.innerHTML = `@media print { body > *:not(#print-cards-wrap) { display: none !important; } #print-cards-wrap { display: block !important; } }`
+                style.innerHTML = `
+                  @media print {
+                    * {
+                      -webkit-print-color-adjust: exact !important;
+                      print-color-adjust: exact !important;
+                      box-shadow: none !important;
+                      text-shadow: none !important;
+                    }
+                    @page {
+                      size: A4 portrait;
+                      margin: 10mm 10mm;
+                    }
+                    html, body {
+                      width: 100% !important;
+                      height: auto !important;
+                      margin: 0 !important;
+                      padding: 0 !important;
+                      background: white !important;
+                    }
+                    body > *:not(#print-cards-wrap) {
+                      display: none !important;
+                    }
+                    #print-cards-wrap {
+                      display: block !important;
+                      width: 100% !important;
+                      height: auto !important;
+                      padding: 0 !important;
+                      margin: 0 !important;
+                      box-sizing: border-box !important;
+                      background: white !important;
+                    }
+                    .print-page-container {
+                      width: 190mm !important;
+                      height: 270mm !important;
+                      box-sizing: border-box !important;
+                      margin: 0 auto !important;
+                      padding: 0 !important;
+                      border: none !important;
+                      box-shadow: none !important;
+                      border-radius: 0 !important;
+                      page-break-after: always !important;
+                      break-after: page !important;
+                      position: relative !important;
+                      background: white !important;
+                    }
+                    .print-page-container:last-child {
+                      page-break-after: avoid !important;
+                      break-after: avoid !important;
+                    }
+                    .print-page-grid {
+                      display: ${printLayout === '4-per-page' ? 'grid' : 'flex'} !important;
+                      ${printLayout === '4-per-page' ? `
+                        grid-template-columns: 90mm 90mm !important;
+                        grid-auto-rows: 128mm !important;
+                        gap: 8mm 10mm !important;
+                      ` : `
+                        flex-direction: column !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        height: 100% !important;
+                      `}
+                      width: 190mm !important;
+                      height: auto !important;
+                    }
+                    .print-card-item {
+                      width: 90mm !important;
+                      height: 128mm !important;
+                      box-sizing: border-box !important;
+                      border: 1px solid #cbd5e1 !important;
+                      border-radius: 0px !important;
+                      box-shadow: none !important;
+                      background-color: white !important;
+                      background-image: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.02) 0%, transparent 80%), 
+                                        repeating-linear-gradient(-45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 1px, transparent 1px, transparent 10px) !important;
+                      position: relative !important;
+                    }
+                  }
+                `
                 document.head.appendChild(style)
                 const wrap = document.createElement('div')
                 wrap.id = 'print-cards-wrap'
-                wrap.className = 'p-6 bg-white min-h-screen'
                 wrap.appendChild(el.cloneNode(true))
                 document.body.appendChild(wrap)
                 window.print()

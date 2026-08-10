@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import { jsPDF } from 'jspdf'
 import { useConfirm } from '../utils/useConfirm'
 
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -150,6 +149,7 @@ export default function TemplateGenerator({ type, students, onRefresh }) {
       let successCount = 0
       let failCount = 0
 
+      const { jsPDF } = await import('jspdf')
       // 2. Loop through students
       for (let i = 0; i < students.length; i++) {
         const student = students[i]

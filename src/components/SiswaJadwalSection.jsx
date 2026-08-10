@@ -44,7 +44,8 @@ function isCurrentSlot(startTime, endTime) {
   return nowMin >= timeToMinutes(startTime) && nowMin < timeToMinutes(endTime)
 }
 
-export default function SiswaJadwalSection({ kelas, activeTa, semester = 2 }) {
+export default function SiswaJadwalSection({ kelas, activeTa, semester = 1 }) {
+  const [selectedSemester, setSelectedSemester] = useState(semester)
   const [activeHari, setActiveHari] = useState(() => {
     const today = getTodayHari()
     return HARI_LIST.includes(today) ? today : 'Senin'
@@ -54,6 +55,11 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 2 }) {
   const [loading, setLoading] = useState(true)
   const [currentTime, setCurrentTime] = useState(new Date())
 
+  // Keep selectedSemester synced if parent prop changes
+  useEffect(() => {
+    if (semester) setSelectedSemester(semester)
+  }, [semester])
+
   // Update current time every minute for "Sedang Berlangsung" indicator
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -62,21 +68,46 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 2 }) {
 
   // Fetch data when day changes
   useEffect(() => {
-    if (!activeTa?.id || !kelas) return
+    if (!kelas) return
     fetchDayData()
-  }, [activeHari, activeTa?.id, kelas, semester])
+  }, [activeHari, activeTa?.id, kelas, selectedSemester])
 
   const fetchDayData = async () => {
     setLoading(true)
     try {
       // 1. Fetch slot waktu hari ini
-      const { data: slotsData } = await supabase
-        .from('jadwal_slot_waktu')
-        .select('*')
-        .eq('tahun_ajaran_id', activeTa.id)
-        .eq('semester', semester)
-        .eq('hari', activeHari)
-        .order('urutan')
+      let slotsData = null
+      if (activeTa?.id) {
+        const res = await supabase
+          .from('jadwal_slot_waktu')
+          .select('*')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', selectedSemester)
+          .eq('hari', activeHari)
+          .order('urutan')
+        slotsData = res.data
+      }
+
+      // Fallback 1a: if slots empty for selectedSemester, try without semester filter
+      if ((!slotsData || slotsData.length === 0) && activeTa?.id) {
+        const res = await supabase
+          .from('jadwal_slot_waktu')
+          .select('*')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('hari', activeHari)
+          .order('urutan')
+        slotsData = res.data
+      }
+
+      // Fallback 1b: if still empty, fetch any slots for today
+      if (!slotsData || slotsData.length === 0) {
+        const res = await supabase
+          .from('jadwal_slot_waktu')
+          .select('*')
+          .eq('hari', activeHari)
+          .order('urutan')
+        slotsData = res.data
+      }
 
       if (slotsData && slotsData.length > 0) {
         const baseStart = slotsData[0].waktu_mulai ? slotsData[0].waktu_mulai.slice(0, 5) : '06:30'
@@ -86,17 +117,50 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 2 }) {
       }
 
       // 2. Fetch jadwal pelajaran untuk kelas ini
-      const { data: jadwalData } = await supabase
-        .from('jadwal_pelajaran')
-        .select(`
-          *,
-          guru ( id, nama_guru, kode ),
-          mata_pelajaran ( id, nama, singkatan )
-        `)
-        .eq('tahun_ajaran_id', activeTa.id)
-        .eq('semester', semester)
-        .eq('hari', activeHari)
-        .eq('kelas', kelas)
+      let jadwalData = null
+      if (activeTa?.id) {
+        const res = await supabase
+          .from('jadwal_pelajaran')
+          .select(`
+            *,
+            guru ( id, nama_guru, kode ),
+            mata_pelajaran ( id, nama, singkatan )
+          `)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', selectedSemester)
+          .eq('hari', activeHari)
+          .eq('kelas', kelas)
+        jadwalData = res.data
+      }
+
+      // Fallback 2a: if empty for selectedSemester, try without semester filter
+      if ((!jadwalData || jadwalData.length === 0) && activeTa?.id) {
+        const res = await supabase
+          .from('jadwal_pelajaran')
+          .select(`
+            *,
+            guru ( id, nama_guru, kode ),
+            mata_pelajaran ( id, nama, singkatan )
+          `)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('hari', activeHari)
+          .eq('kelas', kelas)
+        jadwalData = res.data
+      }
+
+      // Fallback 2b: if still empty, try without TA filter (in case TA id mismatch)
+      if (!jadwalData || jadwalData.length === 0) {
+        const res = await supabase
+          .from('jadwal_pelajaran')
+          .select(`
+            *,
+            guru ( id, nama_guru, kode ),
+            mata_pelajaran ( id, nama, singkatan )
+          `)
+          .eq('hari', activeHari)
+          .eq('kelas', kelas)
+        jadwalData = res.data
+      }
 
       setJadwals(jadwalData || [])
     } catch (err) {

@@ -12,10 +12,17 @@ export async function registerSW() {
 
   try {
     const reg = await navigator.serviceWorker.register(SW_PATH, { scope: '/' })
+    // Force checking for updates from the server
+    reg.update().catch(() => {})
     await navigator.serviceWorker.ready
     return reg
   } catch (err) {
-    console.warn('[SW] Gagal register:', err)
+    const isSslError = err?.name === 'SecurityError' || err?.message?.includes('SSL certificate') || err?.message?.includes('SecurityError')
+    if (isSslError) {
+      console.info('[SW] ServiceWorker registrasi dilewati (SSL certificate local/untrusted):', err.message)
+    } else {
+      console.warn('[SW] Gagal register:', err)
+    }
     return null
   }
 }
@@ -82,11 +89,14 @@ export async function requestNotifPermission() {
  * @param {object} options - tag, icon, data
  */
 export async function showLocalNotif(title, body, options = {}) {
+  // Hanya jalankan jika browser mendukung dan izin notifikasi sudah di-granted
+  if (!('Notification' in window) || Notification.permission !== 'granted') {
+    return
+  }
+
   if (!('serviceWorker' in navigator)) {
     // Fallback: gunakan Notification API langsung
-    if (Notification.permission === 'granted') {
-      new Notification(title, { body, icon: '/logo.png', ...options })
-    }
+    new Notification(title, { body, icon: '/logo.png', ...options })
     return
   }
 
@@ -113,3 +123,52 @@ export async function showLocalNotif(title, body, options = {}) {
 export function isNotifGranted() {
   return 'Notification' in window && Notification.permission === 'granted'
 }
+
+/**
+ * Dispatcher Notifikasi Ganda (Dual-Notification System)
+ * Mengirimkan In-App/Browser Push Notification & LINE Flex Message secara paralel tanpa mengganggu satu sama lain.
+ */
+export async function dispatchDualNotification({
+  title,
+  body,
+  siswaData = null, // { nama, nisn, kelas, status, waktu, tipe, fotoUrl }
+  options = {}
+}) {
+  // 1. Saluran 1: Local / Browser Push Notification
+  try {
+    showLocalNotif(title, body, options)
+  } catch (e) {
+    console.warn('[DualNotif] In-App Notif Error:', e)
+  }
+
+  // 2. Saluran 2: LINE Push Notification via Supabase Edge Function line-notify
+  if (siswaData?.nisn) {
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/functions/v1/line-notify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'apikey': supabaseAnonKey,
+          },
+          body: JSON.stringify({
+            nisn: siswaData.nisn,
+            nama: siswaData.nama,
+            kelas: siswaData.kelas,
+            status: siswaData.status,
+            waktu: siswaData.waktu,
+            tipe: siswaData.tipe,
+            fotoUrl: siswaData.fotoUrl,
+            keterangan: siswaData.keterangan || '-'
+          }),
+        }).catch(err => console.warn('[DualNotif] LINE Notify Fetch Error:', err))
+      }
+    } catch (e) {
+      console.warn('[DualNotif] LINE Notif Error:', e)
+    }
+  }
+}
+

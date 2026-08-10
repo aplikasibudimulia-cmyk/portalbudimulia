@@ -62,12 +62,14 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
 
   const fetchPresensi = async () => {
     const today = new Date().toLocaleDateString('en-CA')
-    const [{ data: prData }, { data: sesi }] = await Promise.all([
+    const [{ data: prData }, { data: sesi }, { data: settings }] = await Promise.all([
       supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
-      supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
+      supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
+      supabase.from('pengaturan_sekolah').select('setting_key, setting_value').eq('setting_key', 'presensi_pulang_aktif').maybeSingle()
     ])
+    const pulAktif = settings?.setting_value === 'true' || settings?.setting_value === '1'
     setPresensiHariIni(prData || [])
-    setSesiPresensiAktif(!!sesi)
+    setSesiPresensiAktif(!!sesi || pulAktif)
   }
 
   const fetchAllWidgets = async () => {
@@ -105,8 +107,8 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
         .order('published_at', { ascending: false })
         .limit(3)
         
-      // 5. Fetch Settings (Countdown)
-      const reqSettings = supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa'])
+      // 5. Fetch Settings (Countdown & Presensi Pulang)
+      const reqSettings = supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa', 'presensi_pulang_aktif'])
 
       // 6. Fetch Poin
       const reqPoin = supabase.from('student_points').select('total_poin, poin_default').eq('nisn', studentData.nisn).eq('tahun_ajaran_id', studentData.tahun_ajaran_id).order('semester', { ascending: false }).limit(1).maybeSingle()
@@ -119,7 +121,9 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       ])
 
       // Set Sesi Presensi
-      setSesiPresensiAktif(!!resSesi.data)
+      const pulAktifVal = resSettings.data?.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
+      const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
+      setSesiPresensiAktif(!!resSesi.data || pulAktif)
 
       // Set Presensi Hari ini
       if (resHariIni.data) setPresensiHariIni(resHariIni.data)

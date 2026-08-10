@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
-import { jsPDF } from 'jspdf'
 
 export default function PengumumanResmiSection({ session, activeTa }) {
   const isKepalaSekolah = session?.roles?.some(r => r.nama.toLowerCase().includes('kepala sekolah'))
@@ -307,7 +306,8 @@ export default function PengumumanResmiSection({ session, activeTa }) {
   }
 
   // Export formal letter design to PDF
-  const handleExportPDF = (item) => {
+  const handleExportPDF = async (item) => {
+    const { jsPDF } = await import('jspdf')
     const doc = new jsPDF()
 
     // 1. Header (Kop Surat)

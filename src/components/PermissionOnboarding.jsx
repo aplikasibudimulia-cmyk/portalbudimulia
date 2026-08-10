@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { getCameraStream } from '../utils/cameraUtils'
 
 // Cek apakah izin sudah pernah diurus sebelumnya
 const STORAGE_KEY = 'perm_onboarding_done'
@@ -16,11 +17,11 @@ const PERMISSIONS = [
     ),
     color: 'blue',
     request: async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-      stream.getTracks().forEach(t => t.stop())
+      const stream = await getCameraStream('user')
+      if (stream) stream.getTracks().forEach(t => t.stop())
     },
     permName: 'camera',
-    notSupported: !navigator.mediaDevices,
+    notSupported: typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia,
   },
   {
     key: 'geolocation',
@@ -34,7 +35,7 @@ const PERMISSIONS = [
     ),
     color: 'emerald',
     request: () => new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 })
     }),
     permName: 'geolocation',
     notSupported: !('geolocation' in navigator),
@@ -97,7 +98,7 @@ function DeniedGuide({ perm }) {
               <div className="space-y-1.5">
                 <span>Klik lambang setelan di sebelah kiri nama domain alamat browser:</span>
                 <div className="p-1.5 bg-slate-100 border border-slate-200 rounded-lg w-fit">
-                  <img src="chrome_tune_icon.png" className="h-5 object-contain" alt="Chrome Tune Icon" />
+                  <img src="/chrome_tune_icon.png" className="h-5 object-contain" alt="Chrome Tune Icon" />
                 </div>
               </div>
             </li>

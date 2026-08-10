@@ -48,8 +48,11 @@ const FITUR_CATEGORIES = [
       { id: 'lihat_katalog_poin', label: 'Lihat Katalog Poin', desc: 'Melihat rincian poin pelanggaran' },
       { id: 'lihat_tahap_pembinaan', label: 'Lihat Tahap Pembinaan', desc: 'Melihat kriteria tahap pembinaan siswa' },
       { id: 'catat_poin', label: 'Catat Poin Siswa', desc: 'Input poin pelanggaran/prestasi ke siswa' },
+      { id: 'kelola_prestasi_lomba', label: 'Catat Prestasi & Lomba', desc: 'Input, edit, dan sinkronisasi rekam prestasi & keikutsertaan lomba siswa' },
       { id: 'kelola_poin_siswa', label: 'Kelola Pengaturan Poin', desc: 'Set poin default, reset poin, lihat semua poin siswa' },
-      { id: 'akses_rekap_poin', label: 'Lihat Rekap Poin Sekolah', desc: 'Memantau peringkat poin dan rekap pelanggaran sekolah' }
+      { id: 'akses_rekap_poin', label: 'Lihat Rekap Poin Sekolah', desc: 'Memantau peringkat poin dan rekap pelanggaran sekolah' },
+      { id: 'kelola_pengajuan_poin', label: 'Kelola Pengajuan Poin Positif', desc: 'Review, setujui, tolak, atau tandai spam pengajuan poin positif dari siswa' },
+      { id: 'lihat_pengajuan_poin', label: 'Lihat Pengajuan Poin (Read Only)', desc: 'Melihat daftar pengajuan poin positif siswa tanpa bisa approve/reject' }
     ]
   },
   {

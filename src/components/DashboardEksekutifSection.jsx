@@ -294,7 +294,7 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
           </div>
           <div className="h-64">
             {attendanceTren.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <LineChart data={attendanceTren} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="name" tick={{ fontSize: 10, fontWeight: 'bold' }} tickLine={false} axisLine={false} />
@@ -317,7 +317,7 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
           </h3>
           <div className="h-64">
             {topClassesViolations.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={topClassesViolations} layout="vertical" margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
                   <XAxis type="number" tick={{ fontSize: 10 }} />

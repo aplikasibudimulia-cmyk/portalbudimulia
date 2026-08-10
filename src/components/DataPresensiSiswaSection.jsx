@@ -23,12 +23,109 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
   const [hariAktifPresensi, setHariAktifPresensi] = useState('1,2,3,4,5')
   const [jamBatasPulang, setJamBatasPulang] = useState('')
   const [isUnlocked, setIsUnlocked] = useState(false)
+  const [activeTipe, setActiveTipe] = useState('masuk') // 'masuk' | 'pulang'
+  const [statusFilter, setStatusFilter] = useState('all') // 'all' | 'H' | 'T' | 'S' | 'I' | 'A' | 'belum'
+  const manualEndedRef = React.useRef({})
+
+  const waliClassesForActiveTa = React.useMemo(() => {
+    if (!session?.kelas || session.kelas.length === 0) return []
+    if (activeTa?.id) {
+      const filtered = session.kelas.filter(k => k.tahun_ajaran_id == activeTa.id)
+      if (filtered.length > 0) return filtered.map(k => k.kelas).filter(Boolean)
+    }
+    return session.kelas.map(k => k.kelas).filter(Boolean)
+  }, [session, activeTa])
+
+  const isWaliOnly = React.useMemo(() => {
+    if (waliClassesForActiveTa.length === 0) return false
+    const roleStr = String(session.role || session.app_role || '').toLowerCase()
+    if (roleStr.includes('admin') || roleStr.includes('superadmin')) return false
+
+    const hasAdminOrPiketRole = session.roles?.some(r => {
+      const n = String(r.nama || r || '').toLowerCase()
+      return n.includes('admin') || n.includes('superadmin') || n.includes('piket') || n.includes('tata usaha')
+    })
+
+    return !hasAdminOrPiketRole
+  }, [session, waliClassesForActiveTa])
+
   const isEditLocked = React.useMemo(() => {
-    return !sesiAktif && presensiHariIni.length > 0 && !isUnlocked
-  }, [sesiAktif, presensiHariIni.length, isUnlocked])
+    const hasRecord = presensiHariIni.some(r => r.tipe === activeTipe || (!r.tipe && activeTipe === 'masuk'))
+    return !sesiAktif && hasRecord && !isUnlocked
+  }, [sesiAktif, presensiHariIni, isUnlocked, activeTipe])
+
+  const isRowLocked = React.useCallback((nisn, tipe) => {
+    const t = tipe || activeTipe
+    const pd = presensiData[nisn]?.[t]
+    const isQrOrMandiri = pd?.metode === 'qr_scan' || pd?.metode === 'manual_piket'
+    
+    // Jika kunci dibuka secara manual (PIN terverifikasi) -> Semua bebas diedit
+    if (isUnlocked) return false
+    
+    // Presensi QR / Mandiri selalu terkunci jika belum dimasukkan PIN
+    if (isQrOrMandiri) return true
+    
+    // Jika sesi presensi sudah ditutup (tidak aktif)
+    if (!sesiAktif) {
+      // Jika sudah terisi -> Terkunci
+      // Jika belum terisi -> Bisa diisi (setelah diisi otomatis terkunci)
+      return !!pd?.status
+    }
+    
+    // Jika sesi aktif, entri manual bebas diubah
+    return false
+  }, [isUnlocked, sesiAktif, presensiData, activeTipe])
 
   const [isSaving, setIsSaving] = useState(false)
+  const [sendingLineNisn, setSendingLineNisn] = useState(null)
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
+
+  const handleKirimNotifLineSiswa = async (student) => {
+    const pd = presensiData[student.nisn]?.[activeTipe]
+    if (!pd || !pd.status) {
+      alert(`Siswa ${student.nama_lengkap} belum memiliki status presensi ${activeTipe} hari ini.`)
+      return
+    }
+
+    const rec = presensiHariIni.find(r => r.siswa_nisn === student.nisn && r.tipe === activeTipe)
+    const jamStr = pd.time || rec?.waktu || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+
+    setSendingLineNisn(student.nisn)
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+      const res = await fetch(`${supabaseUrl}/functions/v1/line-notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          nisn: student.nisn,
+          nama: student.nama_lengkap,
+          kelas: student.kelas || selectedKelas || '-',
+          status: pd.status,
+          waktu: jamStr,
+          tipe: activeTipe,
+          fotoUrl: pd.selfie_url || rec?.selfie_url || null,
+          keterangan: rec?.keterangan || '-'
+        }),
+      })
+
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.success) {
+        alert(`✅ Notifikasi LINE (${activeTipe.toUpperCase()}) berhasil dikirimkan ke HP orang tua dari ${student.nama_lengkap}!`)
+      } else {
+        alert(`⚠️ Gagal mengirim notifikasi LINE: ${data?.reason || data?.error || 'Tidak ada penautan LINE aktif atau token belum diset.'}`)
+      }
+    } catch (err) {
+      alert(`❌ Terjadi kesalahan saat mengirim notifikasi LINE: ${err.message}`)
+    } finally {
+      setSendingLineNisn(null)
+    }
+  }
 
   useEffect(() => {
     fetchDashboardData()
@@ -92,6 +189,10 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
       const todayDateStr = new Date().toLocaleDateString('en-CA')
       if (tanggal !== todayDateStr) return // Only auto-start for today's date
 
+      // Jangan auto-start jika sesi hari ini sudah diakhiri/diselesaikan
+      const isEnded = manualEndedRef.current[todayDateStr] || localStorage.getItem(`sesi_selesai_${todayDateStr}`) === 'true'
+      if (isEnded) return
+
       const todayDow = new Date().getDay()
       const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
       if (!activeDays.includes(todayDow)) return
@@ -152,6 +253,8 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         console.log('Jadwal otomatis aktif: Waktu batas pulang tercapai. Mengakhiri sesi presensi otomatis...')
         const { error } = await supabase.from('sesi_presensi').delete().eq('tanggal', todayDateStr)
         if (!error) {
+          manualEndedRef.current[todayDateStr] = true
+          localStorage.setItem(`sesi_selesai_${todayDateStr}`, 'true')
           setSesiAktif(false)
         }
       }
@@ -162,22 +265,63 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     return () => clearInterval(interval)
   }, [loading, sesiAktif, jadwalOtomatisAktif, jamBatasPulang, hariAktifPresensi, tanggal, session?.id])
 
+  const lastFiltersRef = React.useRef({
+    activeTaId: null,
+    siswaData: []
+  })
+
   const fetchDashboardData = async (isRealtime = false) => {
     if (!isRealtime) setLoading(true)
     try {
-      const { data: siswaData } = await supabase
-        .from('siswa_lengkap')
-        .select('nisn, nama_lengkap, kelas')
-        .eq('is_aktif', true)
-        .order('nama_lengkap')
+      const activeTaId = activeTa?.id
+      const filtersChanged = 
+        lastFiltersRef.current.activeTaId !== activeTaId ||
+        lastFiltersRef.current.siswaData.length === 0
 
-      if (siswaData) {
-        setSemuaSiswa(siswaData)
-        const uniqueClasses = [...new Set(siswaData.map(s => s.kelas).filter(Boolean))].sort()
-        setSemuaKelas(['Semua Siswa', ...uniqueClasses])
+      let siswaData = []
+      if (filtersChanged) {
+        let query = supabase
+          .from('siswa_lengkap')
+          .select('nisn, nama_lengkap, kelas, tahun_ajaran_id')
+          .eq('is_aktif', true)
         
-        if (!isRealtime && studentsInClass.length === 0) {
-          setStudentsInClass(siswaData)
+        if (activeTaId) {
+          query = query.eq('tahun_ajaran_id', activeTaId)
+        }
+
+        const { data } = await query.order('nama_lengkap')
+        
+        siswaData = data || []
+        
+        lastFiltersRef.current = {
+          activeTaId,
+          siswaData
+        }
+      } else {
+        siswaData = lastFiltersRef.current.siswaData
+      }
+
+      const waliClasses = isWaliOnly ? waliClassesForActiveTa : null
+      const displaySiswa = waliClasses ? siswaData.filter(s => waliClasses.includes(s.kelas)) : siswaData
+
+      if (displaySiswa.length > 0) {
+        setSemuaSiswa(displaySiswa)
+        const uniqueClasses = [...new Set(displaySiswa.map(s => s.kelas).filter(Boolean))].sort()
+        
+        if (waliClasses && waliClasses.length > 0) {
+          setSemuaKelas(uniqueClasses)
+          if (!selectedKelas || selectedKelas === 'Semua Siswa' || !uniqueClasses.includes(selectedKelas)) {
+            setSelectedKelas(uniqueClasses[0])
+          }
+        } else {
+          setSemuaKelas(['Semua Siswa', ...uniqueClasses])
+        }
+        
+        if (!isRealtime && (studentsInClass.length === 0 || waliClasses)) {
+          const currentK = (selectedKelas && uniqueClasses.includes(selectedKelas)) ? selectedKelas : uniqueClasses[0]
+          const targetKName = (waliClasses || currentK === 'Semua Siswa') ? (waliClasses ? currentK : null) : currentK
+          const initialStudents = targetKName ? displaySiswa.filter(s => s.kelas === targetKName) : displaySiswa
+          setStudentsInClass(initialStudents)
         }
       }
 
@@ -191,10 +335,14 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
       const { data: pengDataList } = await supabase
         .from('pengaturan_sekolah')
         .select('setting_key, setting_value')
-        .in('setting_key', ['link_grup_guru', 'jadwal_otomatis_aktif', 'jam_mulai_presensi', 'hari_aktif_presensi', 'jam_batas_pulang'])
+        .in('setting_key', ['link_grup_guru', 'jadwal_otomatis_aktif', 'jam_mulai_presensi', 'hari_aktif_presensi', 'jam_batas_pulang', `sesi_selesai_${tanggal}`])
       if (pengDataList) {
         const map = {}
         pengDataList.forEach(p => { map[p.setting_key] = p.setting_value })
+        if (map[`sesi_selesai_${tanggal}`] === 'true') {
+          manualEndedRef.current[tanggal] = true
+          localStorage.setItem(`sesi_selesai_${tanggal}`, 'true')
+        }
         if (map['link_grup_guru'] !== undefined && !isRealtime) {
           setLinkGrupGuru(map['link_grup_guru'] || '')
           setTempLinkGrup(map['link_grup_guru'] || '')
@@ -219,8 +367,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         .eq('tanggal', tanggal)
       
       if (presensiDataDB) {
-        const filteredMasuk = presensiDataDB.filter(r => !r.tipe || r.tipe !== 'pulang')
-        setPresensiHariIni(filteredMasuk)
+        setPresensiHariIni(presensiDataDB)
         
         // Sync presensiData (state form) jika sedang membuka kelas
         if (selectedKelas && siswaData) {
@@ -228,17 +375,34 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
           const classStudents = targetKelas ? siswaData.filter(s => s.kelas === targetKelas) : siswaData;
           setPresensiData(prev => {
             const newData = isRealtime ? { ...prev } : {}
-             classStudents.forEach(s => {
-              const rec = filteredMasuk.find(r => r.siswa_nisn === s.nisn)
-              if (rec) {
-                // Saat realtime: QR scan selalu diapply (tidak boleh ditimpa manual)
-                // Jika bukan realtime (reload penuh), atau siswa belum ada di form: selalu set
-                if (!isRealtime || rec.metode === 'qr_scan' || !newData[s.nisn]) {
-                  newData[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
+            classStudents.forEach(s => {
+              const masukRec = presensiDataDB.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
+              const pulangRec = presensiDataDB.find(r => r.siswa_nisn === s.nisn && r.tipe === 'pulang')
+              
+              if (!newData[s.nisn]) {
+                newData[s.nisn] = { masuk: null, pulang: null }
+              } else {
+                // Ensure structural integrity
+                newData[s.nisn] = {
+                  masuk: newData[s.nisn].masuk || null,
+                  pulang: newData[s.nisn].pulang || null
+                }
+              }
+              
+              if (masukRec) {
+                if (!isRealtime || masukRec.metode === 'qr_scan' || !newData[s.nisn].masuk) {
+                  newData[s.nisn].masuk = { status: masukRec.status, time: masukRec.waktu || null, metode: masukRec.metode }
                 }
               } else if (!isRealtime) {
-                // Saat reload penuh: hapus entry yang sudah dihapus dari DB
-                delete newData[s.nisn]
+                newData[s.nisn].masuk = null
+              }
+
+              if (pulangRec) {
+                if (!isRealtime || pulangRec.metode === 'qr_scan' || !newData[s.nisn].pulang) {
+                  newData[s.nisn].pulang = { status: pulangRec.status, time: pulangRec.waktu || null, metode: pulangRec.metode }
+                }
+              } else if (!isRealtime) {
+                newData[s.nisn].pulang = null
               }
             })
             return newData
@@ -256,6 +420,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
   const loadKelasDetail = async (kelasName) => {
     setSelectedKelas(kelasName)
     setSearchDetail('')
+    setStatusFilter('all')
     
     const targetKelas = kelasName === 'Semua Siswa' ? null : kelasName;
     const classStudents = targetKelas ? semuaSiswa.filter(s => s.kelas === targetKelas) : semuaSiswa;
@@ -264,9 +429,11 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
       setStudentsInClass(classStudents)
       const dataMap = {}
       classStudents.forEach(s => {
-        const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
-        if (rec) {
-          dataMap[s.nisn] = { status: rec.status, time: rec.waktu || null, metode: rec.metode }
+        const masukRec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && (!r.tipe || r.tipe === 'masuk'))
+        const pulangRec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && r.tipe === 'pulang')
+        dataMap[s.nisn] = {
+          masuk: masukRec ? { status: masukRec.status, time: masukRec.waktu || null, metode: masukRec.metode } : null,
+          pulang: pulangRec ? { status: pulangRec.status, time: pulangRec.waktu || null, metode: pulangRec.metode } : null
         }
       })
       setPresensiData(dataMap)
@@ -304,27 +471,34 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
   }
 
   const handleStatusChange = async (nisn, status) => {
-    if (isEditLocked) {
+    const tipe = activeTipe
+    if (isRowLocked(nisn, tipe)) {
       const unlocked = await handleRequestUnlock()
       if (!unlocked) return
     }
-    const currentMetode = presensiData[nisn]?.metode
-    if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
-      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
+    const currentMetode = presensiData[nisn]?.[tipe]?.metode
+    if ((currentMetode === 'qr_scan' || currentMetode === 'manual_piket') && !isUnlocked) {
+      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual. Silakan buka kunci edit terlebih dahulu.')
       return
     }
 
-    const isTogglingOff = presensiData[nisn]?.status === status;
+    const isTogglingOff = presensiData[nisn]?.[tipe]?.status === status;
     
     if (isTogglingOff) {
       setPresensiData(prev => {
         const newData = { ...prev }
-        delete newData[nisn]
+        if (newData[nisn]) {
+          newData[nisn][tipe] = null
+        }
         return newData
       })
       try {
         setIsSaving(true)
-        const { error } = await supabase.from('presensi_harian').delete().eq('tanggal', tanggal).eq('siswa_nisn', nisn)
+        const { error } = await supabase.from('presensi_harian')
+          .delete()
+          .eq('tanggal', tanggal)
+          .eq('siswa_nisn', nisn)
+          .eq('tipe', tipe)
         if (error) throw error
       } catch (e) {
         console.error(e)
@@ -336,25 +510,36 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     }
 
     const now = new Date().toTimeString().slice(0, 5)
-    const newTime = (status === 'T' || status === 'P') ? (presensiData[nisn]?.time || now) : null
+    const newTime = (status === 'T' || status === 'P' || status === 'S' || status === 'I') 
+      ? (presensiData[nisn]?.[tipe]?.time || now) 
+      : null
     
-    setPresensiData(prev => ({
-      ...prev,
-      [nisn]: { status, time: newTime, metode: 'manual' }
-    }))
+    setPresensiData(prev => {
+      const newData = { ...prev }
+      if (!newData[nisn]) {
+        newData[nisn] = { masuk: null, pulang: null }
+      }
+      newData[nisn][tipe] = { status, time: newTime, metode: 'manual' }
+      return newData
+    })
 
     // Autosave
     try {
       setIsSaving(true)
+      const stdObj = semuaSiswa.find(s => s.nisn === nisn)
+      const actualKelas = (stdObj?.kelas && !stdObj.kelas.toLowerCase().includes('semua')) 
+        ? stdObj.kelas 
+        : (selectedKelas && !selectedKelas.toLowerCase().includes('semua') ? selectedKelas : '-')
+
       const record = {
         tanggal,
         tahun_ajaran_id: activeTa?.id || null,
-        kelas: selectedKelas,
+        kelas: actualKelas,
         siswa_nisn: nisn,
         status,
         waktu: newTime,
         metode: 'manual',
-        tipe: 'masuk',
+        tipe,
         diinput_oleh: session.id,
         updated_at: new Date().toISOString()
       }
@@ -362,41 +547,51 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
       if (error) throw error
     } catch (e) {
       console.error(e)
+      alert('Gagal menyimpan presensi otomatis: ' + e.message)
     } finally {
       setIsSaving(false)
     }
   }
 
   const handleTimeChange = async (nisn, time) => {
-    if (isEditLocked) {
+    const tipe = activeTipe
+    if (isRowLocked(nisn, tipe)) {
       const unlocked = await handleRequestUnlock()
       if (!unlocked) return
     }
-    const currentMetode = presensiData[nisn]?.metode
-    if (currentMetode === 'qr_scan' || currentMetode === 'manual_piket') {
-      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual.')
+    const currentMetode = presensiData[nisn]?.[tipe]?.metode
+    if ((currentMetode === 'qr_scan' || currentMetode === 'manual_piket') && !isUnlocked) {
+      alert('Presensi QR Code / Mandiri Siswa tidak dapat diubah manual. Silakan buka kunci edit terlebih dahulu.')
       return
     }
 
-    setPresensiData(prev => ({
-      ...prev,
-      [nisn]: { ...prev[nisn], time }
-    }))
+    setPresensiData(prev => {
+      const newData = { ...prev }
+      if (newData[nisn] && newData[nisn][tipe]) {
+        newData[nisn][tipe] = { ...newData[nisn][tipe], time }
+      }
+      return newData
+    })
 
     // Autosave
     try {
       setIsSaving(true)
-      const pd = presensiData[nisn]
+      const pd = presensiData[nisn]?.[tipe]
       if (!pd) return
+      const stdObj = semuaSiswa.find(s => s.nisn === nisn)
+      const actualKelas = (stdObj?.kelas && !stdObj.kelas.toLowerCase().includes('semua')) 
+        ? stdObj.kelas 
+        : (selectedKelas && !selectedKelas.toLowerCase().includes('semua') ? selectedKelas : '-')
+
       const record = {
         tanggal,
         tahun_ajaran_id: activeTa?.id || null,
-        kelas: selectedKelas,
+        kelas: actualKelas,
         siswa_nisn: nisn,
         status: pd.status,
         waktu: time,
         metode: 'manual',
-        tipe: 'masuk',
+        tipe,
         diinput_oleh: session.id,
         updated_at: new Date().toISOString()
       }
@@ -404,16 +599,14 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
       if (error) throw error
     } catch (e) {
       console.error(e)
+      alert('Gagal menyimpan perubahan waktu otomatis: ' + e.message)
     } finally {
       setIsSaving(false)
     }
   }
 
   const handleBulkPresensi = async (status) => {
-    if (isEditLocked) {
-      const unlocked = await handleRequestUnlock()
-      if (!unlocked) return
-    }
+    const tipe = activeTipe
     const confirmed = await requestConfirm({
       title: 'Set Status Semua Siswa?',
       message: `Set semua siswa yang tampil menjadi ${status === 'kosong' ? 'KOSONG (hapus presensi)' : status}?`,
@@ -427,21 +620,30 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     const nisnsToDelete = []
 
     filteredStudents.forEach(s => {
-      if (presensiData[s.nisn]?.metode === 'qr_scan') return // Lewati siswa yang sudah scan QR
+      if (isRowLocked(s.nisn, tipe)) return // Lewati siswa yang barisnya terkunci
       if (status === 'kosong') {
-        delete newData[s.nisn]
+        if (newData[s.nisn]) {
+          newData[s.nisn][tipe] = null
+        }
         nisnsToDelete.push(s.nisn)
       } else {
-        newData[s.nisn] = { status, time: null, metode: 'manual' }
+        if (!newData[s.nisn]) {
+          newData[s.nisn] = { masuk: null, pulang: null }
+        }
+        newData[s.nisn][tipe] = { status, time: null, metode: 'manual' }
+        const actualKelas = (s.kelas && !s.kelas.toLowerCase().includes('semua')) 
+          ? s.kelas 
+          : (selectedKelas && !selectedKelas.toLowerCase().includes('semua') ? selectedKelas : '-')
+
         recordsToUpsert.push({
           tanggal,
           tahun_ajaran_id: activeTa?.id || null,
-          kelas: selectedKelas,
+          kelas: actualKelas,
           siswa_nisn: s.nisn,
           status,
           waktu: null,
           metode: 'manual',
-          tipe: 'masuk',
+          tipe,
           diinput_oleh: session.id,
           updated_at: new Date().toISOString()
         })
@@ -453,10 +655,12 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     try {
       setIsSaving(true)
       if (status === 'kosong' && nisnsToDelete.length > 0) {
-        await supabase.from('presensi_harian')
+        const { error } = await supabase.from('presensi_harian')
           .delete()
           .eq('tanggal', tanggal)
+          .eq('tipe', tipe)
           .in('siswa_nisn', nisnsToDelete)
+        if (error) throw error
       } else if (recordsToUpsert.length > 0) {
         const { error } = await supabase.from('presensi_harian').upsert(recordsToUpsert, { onConflict: 'tanggal,siswa_nisn,tipe' })
         if (error) throw error
@@ -475,6 +679,14 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
 
   const handleMulaiSesi = async () => {
     setIsSaving(true)
+    manualEndedRef.current[tanggal] = false
+    try {
+      localStorage.removeItem(`sesi_selesai_${tanggal}`)
+      await supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${tanggal}`)
+    } catch (e) {
+      console.warn('Gagal hapus status sesi selesai:', e)
+    }
+
     const { error } = await supabase
       .from('sesi_presensi')
       .insert({ tanggal, dibuka_oleh: session.id })
@@ -505,6 +717,17 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     if (!confirmed) return;
 
     setIsSaving(true)
+    manualEndedRef.current[tanggal] = true
+    try {
+      localStorage.setItem(`sesi_selesai_${tanggal}`, 'true')
+      await supabase.from('pengaturan_sekolah').upsert({
+        setting_key: `sesi_selesai_${tanggal}`,
+        setting_value: 'true'
+      }, { onConflict: 'setting_key' })
+    } catch (e) {
+      console.warn('Gagal simpan status sesi selesai:', e)
+    }
+
     const { error } = await supabase.from('sesi_presensi').delete().eq('tanggal', tanggal)
     if (!error) {
       setSesiAktif(false)
@@ -593,30 +816,105 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     setIsSaving(false)
   }
 
-  const generateWA = (semua = false) => {
-    let text = `*Laporan Presensi Siswa*\nTanggal: ${new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}\n\n`
+  const generateWA = async (semua = false) => {
+    let text = `*Laporan Presensi ${activeTipe === 'masuk' ? 'Masuk' : 'Pulang'} Siswa*\nTanggal: ${new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}\n\n`
     
-    const targetClasses = semua ? semuaKelas : (selectedKelas ? [selectedKelas] : [])
+    const rawTargetClasses = semua ? semuaKelas : (selectedKelas ? [selectedKelas] : [])
+    const targetClasses = rawTargetClasses.filter(c => c !== 'Semua Siswa')
     
     if (targetClasses.length === 0) {
       alert('Pilih kelas terlebih dahulu atau pilih laporan seluruh kelas.')
       return
     }
 
+    // Ambil data akumulasi keterlambatan untuk tipe masuk
+    const lateCounts = {}
+    if (activeTipe === 'masuk' && activeTa?.id) {
+      try {
+        const { data: allLates, error } = await supabase
+          .from('presensi_harian')
+          .select('siswa_nisn')
+          .eq('status', 'T')
+          .eq('tahun_ajaran_id', activeTa.id)
+        if (!error && allLates) {
+          allLates.forEach(r => {
+            lateCounts[r.siswa_nisn] = (lateCounts[r.siswa_nisn] || 0) + 1
+          })
+        }
+      } catch (e) {
+        console.error('Gagal mengambil histori keterlambatan:', e)
+      }
+    }
+
     targetClasses.forEach(kelas => {
       text += `*Kelas ${kelas}*\n`
-      const students = semuaSiswa.filter(s => s.kelas === kelas)
-      let belumPresensi = 0
-      students.forEach(s => {
-        const pd = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
-        const uiData = selectedKelas === kelas ? presensiData[s.nisn] : null
-        if (!pd && !uiData) {
-          text += `- ${s.nama_lengkap} (Belum Presensi)\n`
-          belumPresensi++
+      const classStudentsList = semuaSiswa.filter(s => s.kelas === kelas)
+      
+      const terlambat = []
+      const tidakHadir = []
+      const belumPresensi = []
+
+      classStudentsList.forEach(s => {
+        // Cari dari database hari ini
+        const dbRec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && r.tipe === activeTipe)
+        
+        let status = null
+        if (dbRec) {
+          status = dbRec.status
+        } else if (selectedKelas === kelas || selectedKelas === 'Semua Siswa') {
+          status = presensiData[s.nisn]?.[activeTipe]?.status
+        }
+
+        if (!status) {
+          belumPresensi.push(s.nama_lengkap)
+        } else {
+          if (activeTipe === 'masuk') {
+            if (status === 'T') {
+              const count = lateCounts[s.nisn] || 1
+              terlambat.push(`${s.nama_lengkap} (${count} kali terlambat)`)
+            } else if (status === 'S') {
+              tidakHadir.push(`${s.nama_lengkap} (Sakit)`)
+            } else if (status === 'I') {
+              tidakHadir.push(`${s.nama_lengkap} (Izin)`)
+            } else if (status === 'A') {
+              tidakHadir.push(`${s.nama_lengkap} (Alpha)`)
+            }
+          } else {
+            // activeTipe === 'pulang'
+            if (status === 'S') {
+              tidakHadir.push(`${s.nama_lengkap} (Pulang Cepat - Sakit)`)
+            } else if (status === 'I') {
+              tidakHadir.push(`${s.nama_lengkap} (Pulang Cepat - Izin)`)
+            } else if (status === 'A') {
+              tidakHadir.push(`${s.nama_lengkap} (Alpha / Membolos)`)
+            }
+          }
         }
       })
-      if (belumPresensi === 0) {
-        text += `_Semua data sudah masuk_\n`
+
+      const hasIssues = terlambat.length > 0 || tidakHadir.length > 0 || belumPresensi.length > 0
+
+      if (!hasIssues) {
+        text += `Semua siswa hadir tanpa terlambat\n`
+      } else {
+        if (terlambat.length > 0) {
+          text += `Terlambat:\n`
+          terlambat.forEach(item => {
+            text += `- ${item}\n`
+          })
+        }
+        if (tidakHadir.length > 0) {
+          text += `Tidak hadir:\n`
+          tidakHadir.forEach(item => {
+            text += `- ${item}\n`
+          })
+        }
+        if (belumPresensi.length > 0) {
+          text += `Belum mengisi presensi:\n`
+          belumPresensi.forEach(item => {
+            text += `- ${item}\n`
+          })
+        }
       }
       text += '\n'
     })
@@ -633,11 +931,37 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     })
   }
 
+  const statusCounts = React.useMemo(() => {
+    const counts = { all: studentsInClass.length, H: 0, T: 0, S: 0, I: 0, A: 0, belum: 0 }
+    studentsInClass.forEach(s => {
+      const st = presensiData[s.nisn]?.[activeTipe]?.status
+      if (!st) {
+        counts.belum++
+      } else if (counts[st] !== undefined) {
+        counts[st]++
+      } else if (st === 'P') {
+        counts.H++
+      }
+    })
+    return counts
+  }, [studentsInClass, presensiData, activeTipe])
+
+  const filteredStudents = React.useMemo(() => {
+    return studentsInClass.filter(s => {
+      const matchesSearch = s.nama_lengkap.toLowerCase().includes(searchDetail.toLowerCase()) || s.nisn.includes(searchDetail)
+      if (!matchesSearch) return false
+
+      const st = presensiData[s.nisn]?.[activeTipe]?.status
+      if (statusFilter === 'all') return true
+      if (statusFilter === 'belum') return !st
+      if (statusFilter === 'H') return st === 'H' || st === 'P'
+      return st === statusFilter
+    })
+  }, [studentsInClass, searchDetail, presensiData, activeTipe, statusFilter])
+
   if (loading && semuaKelas.length === 0) {
     return <div className="flex justify-center items-center h-full"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>
   }
-
-  const filteredStudents = studentsInClass.filter(s => s.nama_lengkap.toLowerCase().includes(searchDetail.toLowerCase()) || s.nisn.includes(searchDetail))
 
   return (
     <div className="animate-fade-in font-sans text-slate-800 flex-1 flex flex-col min-h-0 h-full">
@@ -713,7 +1037,9 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
             {semuaKelas.map(c => {
               const isSemua = c === 'Semua Siswa';
               const classTotalStudents = isSemua ? semuaSiswa.length : semuaSiswa.filter(s => s.kelas === c).length;
-              const classReportedStudents = isSemua ? presensiHariIni.length : presensiHariIni.filter(p => p.kelas === c).length;
+              const classReportedStudents = isSemua 
+                ? presensiHariIni.filter(p => p.tipe === activeTipe || (!p.tipe && activeTipe === 'masuk')).length 
+                : presensiHariIni.filter(p => p.kelas === c && (p.tipe === activeTipe || (!p.tipe && activeTipe === 'masuk'))).length;
               const percentage = classTotalStudents > 0 ? Math.round((classReportedStudents / classTotalStudents) * 100) : 0;
               const isSelected = selectedKelas === c;
               
@@ -792,9 +1118,41 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
               </div>
             ) : (
               <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
+              {/* Tab Switcher */}
+              <div className="px-4 sm:px-6 pt-4 shrink-0 flex justify-center sm:justify-start">
+                <div className="bg-slate-100 p-1 rounded-xl flex gap-1 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      setActiveTipe('masuk')
+                      setIsUnlocked(false)
+                    }}
+                    className={`flex-1 sm:flex-none px-6 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+                      activeTipe === 'masuk' 
+                        ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' 
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    🌅 Presensi Masuk (Pagi)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTipe('pulang')
+                      setIsUnlocked(false)
+                    }}
+                    className={`flex-1 sm:flex-none px-6 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+                      activeTipe === 'pulang' 
+                        ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' 
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    🌇 Presensi Pulang (Sore)
+                  </button>
+                </div>
+              </div>
+
               <div className="p-4 sm:p-6 border-b border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
-                <h3 className="font-bold text-lg text-slate-800">Presensi Kelas {selectedKelas}</h3>
+                <h3 className="font-bold text-lg text-slate-800">Presensi Kelas {selectedKelas} ({activeTipe === 'masuk' ? 'Masuk' : 'Pulang'})</h3>
                 <p className="text-xs text-slate-500 mt-0.5">Validasi kehadiran {studentsInClass.length} siswa hari ini.</p>
               </div>
               <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -823,17 +1181,111 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                 </div>
               </div>
             </div>
+
+            {/* Status Filter Pills Bar */}
+            <div className="px-4 py-3 bg-slate-100/70 border-b border-slate-200/80 flex items-center gap-2 overflow-x-auto custom-scrollbar shrink-0">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+                <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+                Filter:
+              </span>
+              <button
+                onClick={() => setStatusFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'all' 
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                Semua ({statusCounts.all})
+              </button>
+              <button
+                onClick={() => setStatusFilter('H')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'H' 
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                Hadir ({statusCounts.H})
+              </button>
+              <button
+                onClick={() => setStatusFilter('T')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'T' 
+                    ? 'bg-orange-600 text-white border-orange-600 shadow-sm' 
+                    : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                Terlambat ({statusCounts.T})
+              </button>
+              <button
+                onClick={() => setStatusFilter('S')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'S' 
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                    : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                Sakit ({statusCounts.S})
+              </button>
+              <button
+                onClick={() => setStatusFilter('I')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'I' 
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-sm' 
+                    : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                Izin ({statusCounts.I})
+              </button>
+              <button
+                onClick={() => setStatusFilter('A')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'A' 
+                    ? 'bg-rose-600 text-white border-rose-600 shadow-sm' 
+                    : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                Alpa ({statusCounts.A})
+              </button>
+              <button
+                onClick={() => setStatusFilter('belum')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
+                  statusFilter === 'belum' 
+                    ? 'bg-slate-700 text-white border-slate-700 shadow-sm' 
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                Belum Presensi ({statusCounts.belum})
+              </button>
+            </div>
             
             <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Set Semua:</span>
-                  <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors">Hadir</button>
-                  <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors">Terlambat</button>
-                  <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit</button>
-                  <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin</button>
-                  <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpa</button>
-                  <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition-colors">Pulang</button>
+                  {activeTipe === 'masuk' ? (
+                    <>
+                      <button onClick={() => handleBulkPresensi('H')} className="px-3 py-1.5 text-xs font-bold rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors">Hadir</button>
+                      <button onClick={() => handleBulkPresensi('T')} className="px-3 py-1.5 text-xs font-bold rounded bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 transition-colors">Terlambat</button>
+                      <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit</button>
+                      <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin</button>
+                      <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpa</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => handleBulkPresensi('P')} className="px-3 py-1.5 text-xs font-bold rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition-colors">Pulang</button>
+                      <button onClick={() => handleBulkPresensi('S')} className="px-3 py-1.5 text-xs font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors">Sakit (Pulang Cepat)</button>
+                      <button onClick={() => handleBulkPresensi('I')} className="px-3 py-1.5 text-xs font-bold rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors">Izin (Pulang Cepat)</button>
+                      <button onClick={() => handleBulkPresensi('A')} className="px-3 py-1.5 text-xs font-bold rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors">Alpha / Bolos</button>
+                    </>
+                  )}
                 </div>
                 <button onClick={() => handleBulkPresensi('kosong')} className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition-colors flex items-center gap-1">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -850,15 +1302,22 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                   Lapor Semua Kelas
                 </button>
                 <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                <button onClick={handleAkhiriSesi} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 flex items-center gap-1.5 transition-colors shadow-sm">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  Selesaikan Presensi
-                </button>
+                {sesiAktif ? (
+                  <button onClick={handleAkhiriSesi} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 flex items-center gap-1.5 transition-colors shadow-sm">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Selesaikan Presensi
+                  </button>
+                ) : (
+                  <button onClick={handleMulaiSesi} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5 transition-colors shadow-sm">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>
+                    Lanjutkan Sesi
+                  </button>
+                )}
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
-              {!sesiAktif && presensiHariIni.length > 0 && (
+              {!sesiAktif && (
                 <div className={`p-4 mx-6 my-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
                   isEditLocked 
                     ? 'bg-amber-50 border-amber-200 text-amber-800' 
@@ -965,10 +1424,10 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                       <td className="px-6 py-3">
                         <div className="flex justify-center relative">
                           <div className="flex items-center gap-2 w-[360px]">
-                            {['H', 'T', 'S', 'I', 'A', 'P'].map(opt => {
-                              const pd = presensiData[s.nisn]
+                            {((activeTipe === 'masuk') ? ['H', 'T', 'S', 'I', 'A'] : ['P', 'S', 'I', 'A']).map(opt => {
+                              const pd = presensiData[s.nisn]?.[activeTipe]
                               const isActive = pd?.status === opt;
-                              const isLocked = pd?.metode === 'qr_scan' || pd?.metode === 'manual_piket'
+                              const isLocked = isRowLocked(s.nisn, activeTipe)
                               const baseColors = {
                                 'H': 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
                                 'T': 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
@@ -979,11 +1438,11 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                               }
                               const activeColors = {
                                 'H': 'bg-emerald-600 text-white border-emerald-600',
-                                'T': 'bg-orange-500 text-indigo-600 border-orange-500',
-                                'S': 'bg-blue-600 text-indigo-600 border-blue-600',
-                                'I': 'bg-purple-600 text-indigo-600 border-purple-600',
-                                'A': 'bg-rose-600 text-indigo-600 border-rose-600',
-                                'P': 'bg-slate-600 text-indigo-600 border-slate-600'
+                                'T': 'bg-orange-500 text-white border-orange-500',
+                                'S': 'bg-blue-600 text-white border-blue-600',
+                                'I': 'bg-purple-600 text-white border-purple-600',
+                                'A': 'bg-rose-600 text-white border-rose-600',
+                                'P': 'bg-slate-600 text-white border-slate-600'
                               }
                               return (
                                 <button 
@@ -996,51 +1455,73 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                                 </button>
                               )
                             })}
-                            {(presensiData[s.nisn]?.status === 'T' || presensiData[s.nisn]?.status === 'P') && (
-                              <input 
-                                type="time" 
-                                value={presensiData[s.nisn]?.time || ''}
-                                onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
-                                disabled={presensiData[s.nisn]?.metode === 'qr_scan' || presensiData[s.nisn]?.metode === 'manual_piket'}
-                                className="ml-2 px-2 py-1.5 text-xs border border-slate-200 rounded-2xl bg-slate-50 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24 shrink-0 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                              />
+                            {(() => {
+                              const status = presensiData[s.nisn]?.[activeTipe]?.status
+                              const showTimePicker = (activeTipe === 'masuk' && status === 'T') ||
+                                                     (activeTipe === 'pulang' && (status === 'P' || status === 'S' || status === 'I'))
+                              if (!showTimePicker) return null
+                              return (
+                                <input 
+                                  type="time" 
+                                  value={presensiData[s.nisn]?.[activeTipe]?.time || ''}
+                                  onChange={(e) => handleTimeChange(s.nisn, e.target.value)}
+                                  disabled={isRowLocked(s.nisn, activeTipe)}
+                                  className="ml-2 px-2 py-1.5 text-xs border border-slate-200 rounded-2xl bg-slate-50 text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-24 shrink-0 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                                />
+                              )
+                            })()}
+                            {presensiData[s.nisn]?.[activeTipe]?.metode === 'qr_scan' && (
+                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0" title="Discan oleh Siswa (QR Code)">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
+                                QR Scan
+                              </div>
                             )}
-                             {presensiData[s.nisn]?.metode === 'qr_scan' && (
-                               <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0" title="Discan oleh Siswa (QR Code)">
-                                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                                 QR Scan
-                                </div>
-                              )}
-                              {presensiData[s.nisn]?.metode === 'manual_piket' && (
-                               <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100 shrink-0" title="Presensi Mandiri Siswa (Meja Piket)">
-                                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                 Mandiri
-                                </div>
-                              )}
-                              {(() => {
-                                const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn)
-                                const coords = rec?.keterangan
-                                const isCoords = coords && /^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/.test(coords)
-                                if (isCoords) {
-                                  return (
-                                    <a 
-                                      href={`https://www.google.com/maps?q=${coords}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded transition-colors shrink-0"
-                                      title="Lihat lokasi presensi di Google Maps"
-                                    >
-                                      📍 Lokasi
-                                    </a>
-                                  )
-                                }
-                                return null
-                              })()}
-                              {!presensiData[s.nisn] && (
-                                <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 shrink-0">
-                                  Belum Presensi
-                                </div>
-                              )}
+                            {presensiData[s.nisn]?.[activeTipe]?.metode === 'manual_piket' && (
+                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100 shrink-0" title="Presensi Mandiri Siswa (Meja Piket)">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                Mandiri
+                              </div>
+                            )}
+                            {(() => {
+                              const rec = presensiHariIni.find(r => r.siswa_nisn === s.nisn && r.tipe === activeTipe)
+                              const coords = rec?.keterangan
+                              const isCoords = coords && /^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/.test(coords)
+                              if (isCoords) {
+                                return (
+                                  <a 
+                                    href={`https://www.google.com/maps?q=${coords}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="ml-2 flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded transition-colors shrink-0"
+                                    title="Lihat lokasi presensi di Google Maps"
+                                  >
+                                    📍 Lokasi
+                                  </a>
+                                )
+                              }
+                              return null
+                            })()}
+                             {!presensiData[s.nisn]?.[activeTipe]?.status ? (
+                              <div className="ml-2 flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 shrink-0">
+                                Belum Presensi
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleKirimNotifLineSiswa(s)}
+                                disabled={sendingLineNisn === s.nisn}
+                                className="ml-2 flex items-center gap-1 text-[10px] font-extrabold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 px-2.5 py-1 rounded-xl transition-all shrink-0 shadow-2xs active:scale-95 disabled:opacity-50"
+                                title="Kirim ulang kartu notifikasi LINE ke HP Orang Tua siswa ini"
+                              >
+                                {sendingLineNisn === s.nisn ? (
+                                  <span className="animate-pulse">Mengirim...</span>
+                                ) : (
+                                  <>
+                                    <span>📱 Kirim LINE</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
                           </div>
                         </div>
                       </td>

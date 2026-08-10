@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
-import ExcelJS from 'exceljs'
-import { saveAs } from 'file-saver'
 
 const getPoinColor = (p) => {
   if (p > 75) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
@@ -34,7 +32,9 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   // History state
   const [records, setRecords] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [filterDate, setFilterDate] = useState(new Date().toISOString().slice(0, 10))
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+  const [datePreset, setDatePreset] = useState('all') // 'all' | 'today' | '7days' | '30days' | 'custom'
   const [filterKelas, setFilterKelas] = useState('all')
   const [allKelas, setAllKelas] = useState([])
 
@@ -45,6 +45,13 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const [exportDateFrom, setExportDateFrom] = useState(new Date().toISOString().slice(0, 10))
   const [exportDateTo, setExportDateTo] = useState(new Date().toISOString().slice(0, 10))
   const [showExportModal, setShowExportModal] = useState(false)
+
+  // Edit record state
+  const [editingRecord, setEditingRecord] = useState(null)
+  const [editForm, setEditForm] = useState({ tanggal: '', jenis: '', poin_diberikan: '', keterangan: '' })
+  const [editSaving, setEditSaving] = useState(false)
+  const [editKatalogSearch, setEditKatalogSearch] = useState('')
+  const [editKatalogResults, setEditKatalogResults] = useState([])
 
   // Rekalkulasi Poin
   const [rekalkulasiLoading, setRekalkulasiLoading] = useState(false)
@@ -60,7 +67,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
 
   useEffect(() => {
     fetchRecords()
-  }, [filterDate, filterKelas, activeTa, semester])
+  }, [filterDateFrom, filterDateTo, filterKelas, activeTa, semester])
 
   const fetchSemesters = async (taId) => {
     const { data } = await supabase.from('semester').select('*').eq('tahun_ajaran_id', taId).order('nomor')
@@ -90,9 +97,21 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
       .eq('tahun_ajaran_id', activeTa.id)
       .eq('semester', semester)
       .order('created_at', { ascending: false })
-    if (filterDate) query = query.eq('tanggal', filterDate)
+
+    if (filterDateFrom && filterDateTo) {
+      if (filterDateFrom === filterDateTo) {
+        query = query.eq('tanggal', filterDateFrom)
+      } else {
+        query = query.gte('tanggal', filterDateFrom).lte('tanggal', filterDateTo)
+      }
+    } else if (filterDateFrom) {
+      query = query.gte('tanggal', filterDateFrom)
+    } else if (filterDateTo) {
+      query = query.lte('tanggal', filterDateTo)
+    }
+
     if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
-    const { data } = await query.limit(100)
+    const { data } = await query.limit(200)
     setRecords(data || [])
     setHistoryLoading(false)
   }
@@ -172,7 +191,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const handleSave = async (e) => {
     e.preventDefault()
     if (!selectedStudent) { alert('Pilih siswa terlebih dahulu.'); return }
-    if (!poinDiberikan) { alert('Isi nilai poin.'); return }
+    if (selectedKatalogs.length === 0) { alert('Pilih poin dari katalog terlebih dahulu.'); return }
     if (!activeTa?.id) { alert('Tahun Ajaran aktif tidak ditemukan.'); return }
     setSaving(true)
     setAlert(null)
@@ -180,39 +199,21 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     const poinNum = parseInt(poinDiberikan)
     const petugasName = session?.nama_guru || session?.email || 'Admin'
 
-    // 1. Insert records
-    let recordsToInsert = []
-    if (selectedKatalogs.length > 0) {
-      recordsToInsert = selectedKatalogs.map(k => ({
-        nisn: selectedStudent.nisn,
-        nama_siswa: selectedStudent.nama_lengkap,
-        kelas: selectedStudent.kelas,
-        tahun_ajaran_id: activeTa.id,
-        semester,
-        catalog_id: k.id,
-        kode_katalog: k.kode,
-        jenis: k.jenis,
-        poin_diberikan: k.poin,
-        keterangan,
-        dicatat_oleh: petugasName,
-        tanggal,
-      }))
-    } else {
-      recordsToInsert = [{
-        nisn: selectedStudent.nisn,
-        nama_siswa: selectedStudent.nama_lengkap,
-        kelas: selectedStudent.kelas,
-        tahun_ajaran_id: activeTa.id,
-        semester,
-        catalog_id: null,
-        kode_katalog: null,
-        jenis: keterangan || 'Manual',
-        poin_diberikan: poinNum,
-        keterangan,
-        dicatat_oleh: petugasName,
-        tanggal,
-      }]
-    }
+    // 1. Insert records — hanya dari katalog (input manual dikunci)
+    const recordsToInsert = selectedKatalogs.map(k => ({
+      nisn: selectedStudent.nisn,
+      nama_siswa: selectedStudent.nama_lengkap,
+      kelas: selectedStudent.kelas,
+      tahun_ajaran_id: activeTa.id,
+      semester,
+      catalog_id: k.id,
+      kode_katalog: k.kode,
+      jenis: k.jenis,
+      poin_diberikan: k.poin,
+      keterangan,
+      dicatat_oleh: petugasName,
+      tanggal,
+    }))
 
     const { error: recErr } = await supabase.from('point_records').insert(recordsToInsert)
     if (recErr) { alert('Gagal menyimpan: ' + recErr.message); setSaving(false); return }
@@ -285,6 +286,8 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     query = query.order('tanggal').order('created_at')
     const { data: rows } = await query
 
+    const ExcelJS = await import('exceljs')
+    const { saveAs } = await import('file-saver')
     const wb = new ExcelJS.Workbook()
     const ws = wb.addWorksheet('Laporan Pelanggaran')
     ws.columns = [
@@ -326,6 +329,82 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     const { error } = await supabase.from('point_records').delete().eq('id', rec.id)
     if (error) alert('Gagal hapus: ' + error.message)
     else fetchRecords()
+  }
+
+  // ─── EDIT RECORD ───────────────────────────────────────
+  const handleEditRecord = (rec) => {
+    setEditingRecord(rec)
+    setEditForm({
+      tanggal: rec.tanggal || '',
+      jenis: rec.jenis || '',
+      poin_diberikan: rec.poin_diberikan?.toString() || '',
+      keterangan: rec.keterangan || '',
+    })
+    setEditKatalogSearch('')
+    setEditKatalogResults([])
+  }
+
+  const searchEditKatalog = useCallback(async (q) => {
+    if (!q || q.length < 1) { setEditKatalogResults([]); return }
+    const { data } = await supabase.from('point_catalog')
+      .select('*')
+      .or(`kode.ilike.%${q}%,jenis.ilike.%${q}%,kategori.ilike.%${q}%`)
+      .limit(10)
+    setEditKatalogResults(data || [])
+  }, [])
+
+  useEffect(() => {
+    const timer = setTimeout(() => searchEditKatalog(editKatalogSearch), 300)
+    return () => clearTimeout(timer)
+  }, [editKatalogSearch])
+
+  const handleSaveEdit = async () => {
+    if (!editingRecord) return
+    setEditSaving(true)
+    const newPoin = parseInt(editForm.poin_diberikan)
+    if (isNaN(newPoin)) { alert('Poin harus berupa angka.'); setEditSaving(false); return }
+    const oldPoin = editingRecord.poin_diberikan
+    const poinDiff = newPoin - oldPoin
+
+    // 1. Update record in point_records
+    const { error: updateErr } = await supabase.from('point_records').update({
+      tanggal: editForm.tanggal,
+      jenis: editForm.jenis,
+      poin_diberikan: newPoin,
+      keterangan: editForm.keterangan,
+    }).eq('id', editingRecord.id)
+
+    if (updateErr) {
+      alert('Gagal menyimpan: ' + updateErr.message)
+      setEditSaving(false)
+      return
+    }
+
+    // 2. Update student_points if poin changed
+    if (poinDiff !== 0 && activeTa?.id) {
+      const { data: spData } = await supabase.from('student_points')
+        .select('*')
+        .eq('nisn', editingRecord.nisn)
+        .eq('tahun_ajaran_id', activeTa.id)
+        .eq('semester', semester)
+        .maybeSingle()
+
+      if (spData) {
+        const newTotalPoin = spData.total_poin + poinDiff
+        await supabase.from('student_points').update({
+          total_poin: newTotalPoin,
+          updated_at: new Date().toISOString(),
+        }).eq('nisn', editingRecord.nisn)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', semester)
+      }
+    }
+
+    setSuccessMsg(`✓ Record untuk ${editingRecord.nama_siswa} berhasil diperbarui.`)
+    setTimeout(() => setSuccessMsg(''), 4000)
+    setEditingRecord(null)
+    setEditSaving(false)
+    fetchRecords()
   }
 
   const handleRekalkulasiPoin = async () => {
@@ -511,15 +590,17 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              {/* Poin */}
+              {/* Poin — selalu dikunci, otomatis dari katalog */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Poin <span className="text-red-500">*</span></label>
-                <input type="number" value={poinDiberikan} onChange={e => setPoinDiberikan(e.target.value)} required
-                  disabled={selectedKatalogs.length > 0}
-                  placeholder="-5 atau +10" className={`w-full px-3 py-2 border rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed ${parseInt(poinDiberikan) > 0 ? 'text-emerald-700 border-emerald-200' : parseInt(poinDiberikan) < 0 ? 'text-red-700 border-red-200' : 'border-slate-200'}`} />
-                {selectedKatalogs.length > 0 && (
-                  <p className="text-[10px] text-slate-400 mt-1">Nilai poin otomatis dihitung dari katalog pilihan.</p>
-                )}
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Poin
+                  <span className="ml-1.5 text-[10px] font-normal text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">dari katalog</span>
+                </label>
+                <input type="number" value={poinDiberikan} readOnly
+                  placeholder="Pilih katalog terlebih dahulu"
+                  className={`w-full px-3 py-2 border rounded-xl text-sm font-bold bg-slate-50 text-slate-500 cursor-not-allowed select-none ${parseInt(poinDiberikan) > 0 ? 'text-emerald-700 border-emerald-200 bg-emerald-50' : parseInt(poinDiberikan) < 0 ? 'text-red-700 border-red-200 bg-red-50' : 'border-slate-200'}`} />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {selectedKatalogs.length > 0 ? 'Nilai poin otomatis dihitung dari katalog pilihan.' : '⬆ Pilih dari katalog poin di atas.'}
+                </p>
               </div>
               {/* Petugas */}
               <div>
@@ -534,10 +615,11 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
               <input value={keterangan} onChange={e => setKeterangan(e.target.value)} placeholder="Catatan tambahan (opsional)..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
             </div>
 
-            <button type="submit" disabled={saving || !selectedStudent || !poinDiberikan}
+            <button type="submit" disabled={saving || !selectedStudent || selectedKatalogs.length === 0}
               className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-sm transition-all shadow-sm flex items-center justify-center gap-2">
               {saving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : (
-                <><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v14a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Simpan Poin</>
+                <><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v14a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                {selectedKatalogs.length === 0 ? 'Pilih Katalog Terlebih Dahulu' : 'Simpan Poin'}</>
               )}
             </button>
           </form>
@@ -549,8 +631,71 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
         <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center gap-3">
           <h3 className="font-bold text-slate-800 text-sm flex-1">Riwayat Pencatatan</h3>
           <div className="flex flex-wrap gap-2 items-center">
-            <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)}
-              className="px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+            {/* Preset Tanggal */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+              <button
+                type="button"
+                onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setDatePreset('all') }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${datePreset === 'all' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Semua
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const t = new Date().toISOString().slice(0, 10)
+                  setFilterDateFrom(t); setFilterDateTo(t); setDatePreset('today')
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${datePreset === 'today' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date()
+                  const from = new Date(now.setDate(now.getDate() - 7)).toISOString().slice(0, 10)
+                  const to = new Date().toISOString().slice(0, 10)
+                  setFilterDateFrom(from); setFilterDateTo(to); setDatePreset('7days')
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${datePreset === '7days' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                7 Hari
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date()
+                  const from = new Date(now.setDate(now.getDate() - 30)).toISOString().slice(0, 10)
+                  const to = new Date().toISOString().slice(0, 10)
+                  setFilterDateFrom(from); setFilterDateTo(to); setDatePreset('30days')
+                }}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${datePreset === '30days' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                30 Hari
+              </button>
+            </div>
+
+            {/* Custom Range Input */}
+            <div className="flex items-center gap-1 bg-white border border-slate-200 px-2 py-1 rounded-xl text-xs">
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={e => { setFilterDateFrom(e.target.value); setDatePreset('custom') }}
+                title="Dari Tanggal"
+                className="bg-transparent outline-none font-medium text-slate-700 cursor-pointer"
+              />
+              <span className="text-slate-400 font-bold text-[10px]">s/d</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={e => { setFilterDateTo(e.target.value); setDatePreset('custom') }}
+                title="Sampai Tanggal"
+                className="bg-transparent outline-none font-medium text-slate-700 cursor-pointer"
+              />
+            </div>
+
+            {/* Filter Kelas */}
             <select value={filterKelas} onChange={e => setFilterKelas(e.target.value)}
               className="px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
               <option value="all">Semua Kelas</option>
@@ -586,7 +731,6 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
                     <td className="px-4 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{rec.nama_siswa}</td>
                     <td className="px-4 py-2.5"><span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">{rec.kelas}</span></td>
                     <td className="px-4 py-2.5 text-slate-700">
-                      {rec.kode_katalog && <span className="font-mono text-[10px] font-bold text-indigo-600 mr-1">[{rec.kode_katalog}]</span>}
                       {rec.jenis}
                     </td>
                     <td className="px-4 py-2.5 text-center">
@@ -598,9 +742,14 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
                     <td className="px-4 py-2.5 text-xs text-slate-500 hidden lg:table-cell">{rec.dicatat_oleh}</td>
                     {!readOnly && (
                       <td className="px-4 py-2.5 text-center">
-                        <button onClick={() => handleDeleteRecord(rec)} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => handleEditRecord(rec)} title="Edit record" className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button onClick={() => handleDeleteRecord(rec)} title="Hapus record" className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -656,6 +805,101 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
               <div className="flex gap-3 pt-1">
                 <button onClick={() => setShowExportModal(false)} className="flex-1 py-2 text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl">Batal</button>
                 <button onClick={handleExportLaporan} className="flex-1 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors">Download Excel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4" onClick={() => setEditingRecord(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-white">
+              <div>
+                <h3 className="font-bold text-slate-800">Edit Record Poin</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{editingRecord.nama_siswa} — {editingRecord.kelas}</p>
+              </div>
+              <button onClick={() => setEditingRecord(null)} className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Tanggal */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Tanggal</label>
+                <input type="date" value={editForm.tanggal}
+                  onChange={e => setEditForm(f => ({ ...f, tanggal: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+
+              {/* Jenis / Pelanggaran */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Jenis Pelanggaran / Prestasi</label>
+                <input type="text" value={editForm.jenis}
+                  onChange={e => setEditForm(f => ({ ...f, jenis: e.target.value }))}
+                  placeholder="Masukkan jenis..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+
+              {/* Pilih dari Katalog */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Ganti dari Katalog <span className="text-slate-400 font-normal">(opsional)</span></label>
+                <div className="relative">
+                  <input type="text" value={editKatalogSearch}
+                    onChange={e => setEditKatalogSearch(e.target.value)}
+                    placeholder="Cari kode atau jenis..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                  {editKatalogResults.length > 0 && (
+                    <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+                      {editKatalogResults.map(k => (
+                        <button key={k.id} type="button" onClick={() => {
+                          setEditForm(f => ({ ...f, jenis: k.jenis, poin_diberikan: k.poin.toString() }))
+                          setEditKatalogSearch('')
+                          setEditKatalogResults([])
+                        }}
+                          className="w-full text-left px-4 py-2.5 hover:bg-indigo-50 transition-colors flex items-center gap-3">
+                          <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded shrink-0">{k.kode}</span>
+                          <span className="text-sm text-slate-800 flex-1 min-w-0 truncate">{k.jenis}</span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${k.poin < 0 ? 'text-red-700 bg-red-50' : 'text-emerald-700 bg-emerald-50'}`}>{k.poin > 0 ? '+' : ''}{k.poin}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Poin */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Poin</label>
+                <input type="number" value={editForm.poin_diberikan}
+                  onChange={e => setEditForm(f => ({ ...f, poin_diberikan: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none ${parseInt(editForm.poin_diberikan) > 0 ? 'text-emerald-700 border-emerald-200' : parseInt(editForm.poin_diberikan) < 0 ? 'text-red-700 border-red-200' : 'border-slate-200'}`} />
+                {editingRecord.poin_diberikan !== parseInt(editForm.poin_diberikan) && !isNaN(parseInt(editForm.poin_diberikan)) && (
+                  <p className="text-[10px] text-amber-600 mt-1 font-medium">
+                    ⚠️ Poin berubah dari {editingRecord.poin_diberikan} → {editForm.poin_diberikan}. Total poin siswa akan disesuaikan otomatis.
+                  </p>
+                )}
+              </div>
+
+              {/* Keterangan */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Keterangan</label>
+                <input type="text" value={editForm.keterangan}
+                  onChange={e => setEditForm(f => ({ ...f, keterangan: e.target.value }))}
+                  placeholder="Catatan tambahan (opsional)..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setEditingRecord(null)} className="flex-1 py-2.5 text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">Batal</button>
+                <button onClick={handleSaveEdit} disabled={editSaving || !editForm.jenis || !editForm.poin_diberikan}
+                  className="flex-1 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  {editSaving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : (
+                    <>
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      Simpan Perubahan
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>

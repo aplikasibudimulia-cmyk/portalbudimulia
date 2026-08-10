@@ -80,11 +80,11 @@ function StatCard({ icon, label, value, color, bgColor, onClick, isActive, subte
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col gap-2 p-4 rounded-2xl border-2 transition-all duration-200 text-left w-full
-        ${isActive
-          ? `border-[${color}] shadow-lg scale-[1.02]`
+      className={`flex flex-col gap-2 p-4 rounded-2xl border-2 transition-all duration-200 text-left w-full ${
+        isActive
+          ? 'shadow-lg scale-[1.02]'
           : 'border-slate-200 hover:border-indigo-200 hover:shadow-md hover:scale-[1.01]'
-        }`}
+      }`}
       style={{ background: isActive ? bgColor : 'white', borderColor: isActive ? color : '' }}
     >
       <div className="flex items-center justify-between">
@@ -434,7 +434,7 @@ export default function LaporanPengumuman() {
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm print:static">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div className="flex items-center gap-3">
-            <img src="/logo.png?v=1782401880" alt="Logo" className="h-8 sm:h-10 object-contain shrink-0" />
+            <img src="/logo.png?v=1784818000" alt="Logo" className="h-8 sm:h-10 object-contain shrink-0" />
             <div className="min-w-0">
               <p className="text-[9px] sm:text-[10px] font-semibold text-indigo-500 uppercase tracking-widest">Laporan Pengumuman</p>
               <h1 className="text-sm sm:text-lg font-black text-slate-900 leading-tight truncate sm:whitespace-normal" title={type?.nama}>

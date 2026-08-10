@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
-import * as XLSX from 'xlsx-js-style'
-import ExcelJS from 'exceljs'
 import { getSemesterAktif } from '../utils/semesterUtils'
 import { useConfirm } from '../utils/useConfirm'
 
@@ -83,199 +81,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
   const [kelolaSemesterRombel, setKelolaSemesterRombel] = useState('')
   const [maxNamaWidth, setMaxNamaWidth] = useState(260)
 
-  // --- Synchronization between teachers of same subject ---
-  const [syncAvailable, setSyncAvailable] = useState(null)
-  const [showSyncModal, setShowSyncModal] = useState(false)
-  const [syncSelections, setSyncSelections] = useState({})
-  const [syncProcessing, setSyncProcessing] = useState(false)
-  const [syncFilterRombel, setSyncFilterRombel] = useState('')
 
-  const checkForSync = async () => {
-    if (!selectedMapelId || !selectedSemesterId || !activeTa) {
-      setSyncAvailable(null)
-      return
-    }
-
-    try {
-      // Get all components for this mapel, TA, semester across ALL teachers
-      const { data: allKomp, error: kompErr } = await supabase.from('nilai_komponen')
-        .select('*')
-        .eq('tahun_ajaran_id', activeTa.id)
-        .eq('mata_pelajaran_id', selectedMapelId)
-        .eq('semester_id', selectedSemesterId)
-      
-      if (kompErr || !allKomp) return
-
-      // My components
-      const mine = allKomp.filter(k => k.guru_id === session.id)
-      const myKelas = [...new Set(mine.flatMap(k => k.target_kelas || []))]
-      const myRombels = [...new Set(myKelas.map(c => c.replace(/\D/g, '')))].filter(Boolean).sort()
-
-      if (myRombels.length === 0) { setSyncAvailable(null); return }
-
-      // Other teachers sharing at least one rombel with me
-      const otherTeachersKomp = allKomp.filter(k =>
-        k.guru_id !== session.id &&
-        k.target_kelas?.some(c => myRombels.includes(c.replace(/\D/g, '')))
-      )
-
-      if (otherTeachersKomp.length === 0) { setSyncAvailable(null); return }
-
-      // Pick first other teacher
-      const groupedByGuru = otherTeachersKomp.reduce((acc, k) => {
-        if (!acc[k.guru_id]) acc[k.guru_id] = []
-        acc[k.guru_id].push(k)
-        return acc
-      }, {})
-      const otherGuruId = Object.keys(groupedByGuru)[0]
-      const otherKomp = groupedByGuru[otherGuruId]
-
-      const { data: guruInfo } = await supabase.from('guru')
-        .select('nama_guru').eq('id', otherGuruId).maybeSingle()
-      const otherGuruName = guruInfo?.nama_guru || 'Guru Lain'
-
-      const getMatchKey = (k) => `${(k.bab_nama || '').trim().toLowerCase()}|${(k.nama || '').trim().toLowerCase()}`
-
-      // Build diff per rombel
-      const added = []
-      const modified = []
-      const removed = []
-
-      myRombels.forEach(rombel => {
-        const mineR = mine.filter(k => k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel))
-        const otherR = otherKomp.filter(k => k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel))
-        if (otherR.length === 0) return
-
-        otherR.forEach(oth => {
-          const matchedMine = mineR.find(m => getMatchKey(m) === getMatchKey(oth))
-          if (!matchedMine) {
-            added.push({ ...oth, _rombel: rombel })
-          } else {
-            const isDiff =
-              (matchedMine.deskripsi || '') !== (oth.deskripsi || '') ||
-              Number(matchedMine.bobot) !== Number(oth.bobot) ||
-              matchedMine.metode_hitung !== oth.metode_hitung ||
-              matchedMine.is_nilai_visible !== oth.is_nilai_visible
-            if (isDiff) modified.push({ mine: matchedMine, other: oth, _rombel: rombel })
-          }
-        })
-
-        mineR.forEach(m => {
-          const matchedOther = otherR.find(oth => getMatchKey(oth) === getMatchKey(m))
-          if (!matchedOther) removed.push({ ...m, _rombel: rombel })
-        })
-      })
-
-      if (added.length > 0 || modified.length > 0 || removed.length > 0) {
-        const allRombels = [...new Set([
-          ...added.map(i => i._rombel),
-          ...modified.map(i => i._rombel),
-          ...removed.map(i => i._rombel)
-        ])].sort()
-        setSyncAvailable({ otherGuruId, otherGuruName, allRombels, diff: { added, modified, removed } })
-        setSyncFilterRombel(prev => allRombels.includes(prev) ? prev : allRombels[0])
-      } else {
-        setSyncAvailable(null)
-      }
-    } catch (e) {
-      console.error('Error checking for sync:', e)
-    }
-  }
-
-  const handleExecuteSync = async () => {
-    if (!syncAvailable || !activeTa || !selectedMapelId || !selectedSemesterId || !syncFilterRombel) return
-    setSyncProcessing(true)
-    try {
-      const rombel = syncFilterRombel
-      const classesForRombel = targetKelasList.filter(c => c.replace(/\D/g, '') === rombel)
-      
-      const { added, modified, removed } = syncAvailable.diff
-
-      // Only process items that belong to the currently selected rombel
-      const addedForRombel = added
-        .map((item, origIdx) => ({ item, origIdx }))
-        .filter(({ item }) => item._rombel === rombel)
-      const modifiedForRombel = modified
-        .map((item, origIdx) => ({ item, origIdx }))
-        .filter(({ item }) => item._rombel === rombel)
-      const removedForRombel = removed
-        .map((item, origIdx) => ({ item, origIdx }))
-        .filter(({ item }) => item._rombel === rombel)
-
-      // 1. ADD NEW COMPONENTS
-      const inserts = []
-      addedForRombel.forEach(({ item: oth, origIdx }) => {
-        if (syncSelections[`add_${origIdx}`] !== false) {
-          inserts.push({
-            bab_nama: oth.bab_nama,
-            nama: oth.nama,
-            deskripsi: oth.deskripsi,
-            bobot: oth.bobot,
-            urutan: oth.urutan,
-            target_kelas: classesForRombel,
-            kelas: classesForRombel[0] || 'LINTAS',
-            metode_hitung: oth.metode_hitung,
-            is_nilai_visible: oth.is_nilai_visible,
-            guru_id: session.id,
-            tahun_ajaran_id: activeTa.id,
-            semester_id: selectedSemesterId,
-            mata_pelajaran_id: selectedMapelId,
-            instruksi: oth.instruksi,
-            lampiran_urls: oth.lampiran_urls
-          })
-        }
-      })
-
-      if (inserts.length > 0) {
-        await supabase.from('nilai_komponen').insert(inserts)
-      }
-
-      // 2. MODIFY EXISTING COMPONENTS
-      for (const { item, origIdx } of modifiedForRombel) {
-        if (syncSelections[`mod_${origIdx}`] !== false) {
-          await supabase.from('nilai_komponen').update({
-            deskripsi: item.other.deskripsi,
-            bobot: item.other.bobot,
-            metode_hitung: item.other.metode_hitung,
-            is_nilai_visible: item.other.is_nilai_visible,
-            instruksi: item.other.instruksi,
-            lampiran_urls: item.other.lampiran_urls
-          }).eq('id', item.mine.id)
-        }
-      }
-
-      // 3. REMOVE COMPONENTS
-      const deleteIds = []
-      removedForRombel.forEach(({ item, origIdx }) => {
-        if (syncSelections[`del_${origIdx}`] !== false) {
-          deleteIds.push(item.id)
-        }
-      })
-
-      if (deleteIds.length > 0) {
-        await supabase.from('nilai_siswa').delete().in('komponen_id', deleteIds)
-        await supabase.from('nilai_komponen').delete().in('id', deleteIds)
-      }
-
-      // Log activity
-      await logActivity(
-        session.id,
-        'guru',
-        `Sinkronisasi BAB & TP Kelas ${rombel} dengan Guru ${syncAvailable.otherGuruName}`,
-        { target_kelas: classesForRombel }
-      )
-
-      setShowSyncModal(false)
-      setSyncAvailable(null)
-      await fetchKomponen()
-      alert('Sinkronisasi selesai!')
-    } catch (e) {
-      console.error('Error executing sync:', e)
-      alert('Terjadi kesalahan saat sinkronisasi.')
-    } finally {
-      setSyncProcessing(false)
-    }
-  }
 
   // Session data
   const waliKelas  = session?.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa?.id).map(k => k.kelas) || []
@@ -286,10 +92,11 @@ export default function NilaiGuruSection({ session, activeTa }) {
     if (id && nama && !acc.find(x => x.id === id)) acc.push({ id, nama })
     return acc
   }, [])
+  // activeTargetKelas = ONLY from guru's actual assignments (mapelRaw), never from stale component data
   const uniqueClassesForMapel = [...new Set(
     mapelRaw.filter(m => m.mata_pelajaran_id === selectedMapelId).map(m => m.kelas)
-  )].sort()
-  const activeTargetKelas = targetKelasList.filter(c => uniqueClassesForMapel.includes(c))
+  )].filter(Boolean).sort()
+  const activeTargetKelas = uniqueClassesForMapel
   // Extract unique rombel numbers (7, 8, 9) from class names like "7A", "7B"
   const uniqueRombels = [...new Set(uniqueClassesForMapel.map(c => c.replace(/\D/g, '')))].sort()
 
@@ -388,9 +195,7 @@ export default function NilaiGuruSection({ session, activeTa }) {
     if (classKomponen.length > 0 && students.length > 0) fetchNilai()
   }, [classKompIdsStr, studentNisnsStr])
 
-  useEffect(() => {
-    checkForSync()
-  }, [selectedMapelId, selectedSemesterId, activeTabKelas, komponen])
+
 
   // ─── Fetch Functions ──────────────────────────────────────────────────────
   const fetchConfigAkhir = async () => {
@@ -464,6 +269,8 @@ export default function NilaiGuruSection({ session, activeTa }) {
       const t2Name = isSem1 ? 'PSAS' : 'PSAT';
       
       const missingKomp = [];
+      const toUpdateKomp = []; // existing PSTS/PSAS that need target_kelas expansion
+
       uniqueRombels.forEach(rombel => {
         const classesForRombel = uniqueClassesForMapel.filter(c => c.replace(/\D/g, '') === rombel);
         if (classesForRombel.length === 0) return;
@@ -471,21 +278,44 @@ export default function NilaiGuruSection({ session, activeTa }) {
         const hasT1 = d.find(k => k.semester_id === selectedSemesterId && (k.nama === t1Name || k.bab_nama === t1Name) && k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel));
         if (!hasT1) {
            missingKomp.push({ bab_nama: t1Name, nama: 'Nilai', bobot: 1, urutan: 998, target_kelas: classesForRombel, kelas: classesForRombel[0], metode_hitung: 'rata_rata', is_nilai_visible: false, guru_id: session.id, tahun_ajaran_id: activeTa.id, semester_id: selectedSemesterId, mata_pelajaran_id: selectedMapelId });
+        } else {
+          // Heal: add any newly assigned classes missing from existing PSTS
+          const missingClasses = classesForRombel.filter(c => !(hasT1.target_kelas || []).includes(c));
+          if (missingClasses.length > 0) {
+            const newTargetKelas = [...(hasT1.target_kelas || []), ...missingClasses];
+            toUpdateKomp.push({ id: hasT1.id, target_kelas: newTargetKelas });
+            d = d.map(k => k.id === hasT1.id ? { ...k, target_kelas: newTargetKelas } : k);
+          }
         }
 
         const hasT2 = d.find(k => k.semester_id === selectedSemesterId && (k.nama === t2Name || k.bab_nama === t2Name) && k.target_kelas?.some(c => c.replace(/\D/g, '') === rombel));
         if (!hasT2) {
            missingKomp.push({ bab_nama: t2Name, nama: 'Nilai', bobot: 1, urutan: 999, target_kelas: classesForRombel, kelas: classesForRombel[0], metode_hitung: 'rata_rata', is_nilai_visible: false, guru_id: session.id, tahun_ajaran_id: activeTa.id, semester_id: selectedSemesterId, mata_pelajaran_id: selectedMapelId });
+        } else {
+          // Heal: add any newly assigned classes missing from existing PSAS
+          const missingClasses = classesForRombel.filter(c => !(hasT2.target_kelas || []).includes(c));
+          if (missingClasses.length > 0) {
+            const newTargetKelas = [...(hasT2.target_kelas || []), ...missingClasses];
+            toUpdateKomp.push({ id: hasT2.id, target_kelas: newTargetKelas });
+            d = d.map(k => k.id === hasT2.id ? { ...k, target_kelas: newTargetKelas } : k);
+          }
         }
       });
 
+      // Insert missing PSTS/PSAS
       if (missingKomp.length > 0) {
         const { data: inserted } = await supabase.from('nilai_komponen').insert(missingKomp).select();
         if (inserted) {
           d = [...d, ...inserted];
-          // re-sort based on urutan
           d.sort((a,b) => a.urutan - b.urutan);
         }
+      }
+
+      // Update existing PSTS/PSAS with missing classes
+      if (toUpdateKomp.length > 0) {
+        await Promise.all(toUpdateKomp.map(u =>
+          supabase.from('nilai_komponen').update({ target_kelas: u.target_kelas }).eq('id', u.id)
+        ));
       }
     }
 
@@ -875,6 +705,87 @@ export default function NilaiGuruSection({ session, activeTa }) {
       diinput_oleh: session.id, updated_at: new Date().toISOString()
     }, { onConflict: 'komponen_id,siswa_nisn' })
     setSavingCell(null)
+  }
+
+  const handlePasteGrid = async (e, startRowIdx, startColIdx, orderedKomponen) => {
+    const clipboardText = e.clipboardData?.getData('text')
+    if (!clipboardText) return
+
+    const rawRows = clipboardText.trimEnd().split(/\r?\n/)
+    const grid = rawRows.map(row => row.split('\t'))
+
+    if (grid.length === 1 && grid[0].length === 1) {
+      return
+    }
+
+    e.preventDefault()
+
+    const upsertPayloads = []
+    const newNilaiDataUpdates = {}
+
+    for (let r = 0; r < grid.length; r++) {
+      const targetRow = startRowIdx + r
+      if (targetRow >= students.length) break
+
+      const student = students[targetRow]
+      if (!student) continue
+
+      for (let c = 0; c < grid[r].length; c++) {
+        const targetCol = startColIdx + c
+        if (targetCol >= orderedKomponen.length) break
+
+        const komponen = orderedKomponen[targetCol]
+        if (!komponen) continue
+
+        let valStr = grid[r][c].trim().replace(',', '.')
+        let numVal = valStr === '' ? null : Number(valStr)
+
+        if (numVal !== null && (isNaN(numVal) || numVal < 0 || numVal > 100)) {
+          if (isNaN(numVal)) continue
+          numVal = Math.max(0, Math.min(100, numVal))
+        }
+
+        if (!newNilaiDataUpdates[komponen.id]) {
+          newNilaiDataUpdates[komponen.id] = {}
+        }
+        newNilaiDataUpdates[komponen.id][student.nisn] = numVal
+
+        upsertPayloads.push({
+          komponen_id: komponen.id,
+          siswa_nisn: student.nisn,
+          nilai: numVal,
+          diinput_oleh: session.id,
+          updated_at: new Date().toISOString()
+        })
+
+        const inputEl = document.querySelector(`input[data-grade-row="${targetRow}"][data-grade-col="${targetCol}"]`)
+        if (inputEl) {
+          inputEl.value = numVal !== null ? numVal : ''
+        }
+      }
+    }
+
+    if (upsertPayloads.length > 0) {
+      setNilaiData(prev => {
+        const next = { ...prev }
+        Object.keys(newNilaiDataUpdates).forEach(kompId => {
+          next[kompId] = { ...(next[kompId] || {}), ...newNilaiDataUpdates[kompId] }
+        })
+        return next
+      })
+
+      try {
+        const { error } = await supabase
+          .from('nilai_siswa')
+          .upsert(upsertPayloads, { onConflict: 'komponen_id,siswa_nisn' })
+
+        if (error) {
+          console.error("Gagal batch save paste nilai:", error)
+        }
+      } catch (err) {
+        console.error("Error batch save paste nilai:", err)
+      }
+    }
   }
 
   const toggleNewTpTargetKelas = (c) => {
@@ -1602,6 +1513,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       const sekolah = 'SMP BUDI MULIA'
       const tahunAjaran = activeTa?.nama || ''
       
+      const ExcelJS = await import('exceljs')
       const wb = new ExcelJS.Workbook();
       wb.creator = session?.user?.user_metadata?.full_name || 'Guru';
       wb.created = new Date();
@@ -1671,6 +1583,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
     const file = e.target.files?.[0]; if (!file) return
     setUploadResult(null); setUploadProgress({ status: 'reading' })
     try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer)
       
@@ -1877,189 +1790,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
 
   return (
     <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-8rem)]">
-      {/* Modal Sync Struktur BAB/TP */}
-      {showSyncModal && syncAvailable && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-              <div className="flex-1">
-                <h3 className="font-bold text-slate-800 text-base">Sinkronisasi Struktur BAB & TP</h3>
-                <p className="text-[11px] text-slate-500 font-medium">Bandingkan dan terapkan perubahan dari Guru <span className="font-bold text-slate-700">{syncAvailable.otherGuruName}</span></p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Rombel filter dropdown */}
-                <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">Kelas</span>
-                  <select
-                    value={syncFilterRombel}
-                    onChange={(e) => setSyncFilterRombel(e.target.value)}
-                    className="text-xs font-bold text-slate-800 bg-transparent outline-none cursor-pointer pr-1"
-                  >
-                    {syncAvailable.allRombels.map(r => {
-                      const addCount = syncAvailable.diff.added.filter(i => i._rombel === r).length
-                      const modCount = syncAvailable.diff.modified.filter(i => i._rombel === r).length
-                      const delCount = syncAvailable.diff.removed.filter(i => i._rombel === r).length
-                      return (
-                        <option key={r} value={r}>
-                          Tingkat {r} ({addCount + modCount + delCount} perubahan)
-                        </option>
-                      )
-                    })}
-                  </select>
-                </div>
-                <button onClick={() => setShowSyncModal(false)} className="text-slate-400 hover:text-slate-600 p-1 ml-1">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            
-            <div className="p-4 overflow-y-auto space-y-3 bg-slate-50/50">
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800 leading-relaxed font-medium">
-                💡 <span className="font-bold text-blue-900">Petunjuk:</span> Menampilkan perbedaan untuk <span className="font-bold">Kelas tingkat {syncFilterRombel}</span>. Perubahan terpilih akan langsung diterapkan ke data Anda. Harap hati-hati dengan <span className="text-rose-600 font-bold">Hapus Data</span> karena akan menghapus nilai siswa.
-              </div>
 
-              {(() => {
-                // Filter items for the selected rombel
-                const filteredAdded = syncAvailable.diff.added
-                  .map((item, origIdx) => ({ item, origIdx }))
-                  .filter(({ item }) => item._rombel === syncFilterRombel)
-                const filteredModified = syncAvailable.diff.modified
-                  .map((item, origIdx) => ({ item, origIdx }))
-                  .filter(({ item }) => item._rombel === syncFilterRombel)
-                const filteredRemoved = syncAvailable.diff.removed
-                  .map((item, origIdx) => ({ item, origIdx }))
-                  .filter(({ item }) => item._rombel === syncFilterRombel)
-
-                if (filteredAdded.length === 0 && filteredModified.length === 0 && filteredRemoved.length === 0) {
-                  return (
-                    <div className="text-center py-8 text-slate-400 text-sm font-medium">
-                      Tidak ada perbedaan untuk Kelas tingkat {syncFilterRombel}
-                    </div>
-                  )
-                }
-
-                // Collect all BABs in order
-                const allBabs = [...new Set([
-                  ...filteredAdded.map(({ item }) => item.bab_nama || 'Lainnya'),
-                  ...filteredModified.map(({ item }) => item.other.bab_nama || 'Lainnya'),
-                  ...filteredRemoved.map(({ item }) => item.bab_nama || 'Lainnya'),
-                ])]
-
-                return (
-                  <div className="space-y-4">
-                    {allBabs.map(bab => {
-                      const babAdded = filteredAdded.filter(({ item }) => (item.bab_nama || 'Lainnya') === bab)
-                      const babModified = filteredModified.filter(({ item }) => (item.other.bab_nama || 'Lainnya') === bab)
-                      const babRemoved = filteredRemoved.filter(({ item }) => (item.bab_nama || 'Lainnya') === bab)
-
-                      return (
-                        <div key={bab} className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                          {/* BAB header */}
-                          <div className="bg-slate-800 px-4 py-2.5 flex items-center gap-2">
-                            <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.75 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                            <span className="text-xs font-bold text-white">BAB: {bab}</span>
-                            <div className="ml-auto flex gap-1.5">
-                              {babAdded.length > 0 && <span className="text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-bold">+{babAdded.length}</span>}
-                              {babModified.length > 0 && <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full font-bold">~{babModified.length}</span>}
-                              {babRemoved.length > 0 && <span className="text-[9px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-bold">-{babRemoved.length}</span>}
-                            </div>
-                          </div>
-
-                          {/* Items */}
-                          <div className="divide-y divide-slate-100">
-                            {babAdded.map(({ item, origIdx }) => (
-                              <label key={`add_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-emerald-50/30 transition-all cursor-pointer">
-                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
-                                  checked={syncSelections[`add_${origIdx}`] !== false}
-                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`add_${origIdx}`]: e.target.checked })}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Tambah Baru</span>
-                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.nama}</span>
-                                  </div>
-                                  {item.deskripsi && <p className="text-[10px] text-slate-400 italic mt-0.5 truncate">Desc: {item.deskripsi}</p>}
-                                  <div className="flex gap-2 mt-1 text-[9px] text-slate-400 font-bold">
-                                    <span>Bobot: {item.bobot}</span><span>•</span>
-                                    <span>{item.metode_hitung === 'rata_rata' ? 'Rata-rata' : 'Bobot Manual'}</span>
-                                  </div>
-                                </div>
-                              </label>
-                            ))}
-                            {babModified.map(({ item, origIdx }) => (
-                              <label key={`mod_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-blue-50/30 transition-all cursor-pointer">
-                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                                  checked={syncSelections[`mod_${origIdx}`] !== false}
-                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`mod_${origIdx}`]: e.target.checked })}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Perbarui</span>
-                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.other.nama}</span>
-                                  </div>
-                                  <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px] border-t border-slate-100 pt-1.5">
-                                    <div className="text-slate-400 font-medium">
-                                      <span className="font-bold text-slate-500">Anda:</span> Bobot {item.mine.bobot}
-                                      {item.mine.deskripsi && <span className="italic truncate block">"{item.mine.deskripsi}"</span>}
-                                    </div>
-                                    <div className="text-indigo-700 font-medium">
-                                      <span className="font-bold text-indigo-800">Baru:</span> Bobot {item.other.bobot}
-                                      {item.other.deskripsi && <span className="italic truncate block">"{item.other.deskripsi}"</span>}
-                                    </div>
-                                  </div>
-                                </div>
-                              </label>
-                            ))}
-                            {babRemoved.map(({ item, origIdx }) => (
-                              <label key={`del_${origIdx}`} className="flex items-start gap-3 bg-white p-3 hover:bg-rose-50/30 transition-all cursor-pointer">
-                                <input type="checkbox" className="mt-1 rounded border-slate-300 text-rose-600 focus:ring-rose-500 shrink-0"
-                                  checked={syncSelections[`del_${origIdx}`] !== false}
-                                  onChange={(e) => setSyncSelections({ ...syncSelections, [`del_${origIdx}`]: e.target.checked })}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[9px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider shrink-0">Hapus</span>
-                                    <span className="text-[11px] font-bold text-slate-700 truncate">TP: {item.nama}</span>
-                                  </div>
-                                  <p className="text-[10px] text-rose-500 mt-0.5 font-medium">⚠️ Menghapus komponen + semua nilai siswa terkait</p>
-                                </div>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )
-              })()}
-            </div>
-
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
-              <button 
-                type="button" 
-                onClick={() => setShowSyncModal(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50"
-              >
-                Batal
-              </button>
-              <button 
-                type="button"
-                disabled={syncProcessing}
-                onClick={handleExecuteSync}
-                className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
-              >
-                {syncProcessing ? (
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : null}
-                Terapkan Perubahan Terpilih
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
 
       {/* Modal Config Akhir */}
       {showConfigAkhirModal && (
@@ -2279,30 +2010,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
           </div>
         </div>
 
-        {/* Sync Available Banner */}
-        {syncAvailable && (
-          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm shrink-0 animate-pulse-slow">
-            <div className="flex items-center gap-2.5 text-amber-800">
-              <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <div>
-                <p className="text-xs font-bold text-amber-900">Perbedaan Struktur BAB/TP Terdeteksi</p>
-                <p className="text-[10px] text-amber-700 font-medium">Struktur materi Anda berbeda dengan Guru {syncAvailable.otherGuruName} yang juga mengajar {mapelRaw.find(m => m.mata_pelajaran_id === selectedMapelId)?.mata_pelajaran?.nama || 'Mapel sejenis'} di tingkat Kelas {activeTabKelas.replace(/\D/g, '')}.</p>
-              </div>
-            </div>
-            <button onClick={() => {
-              const initSels = {}
-              syncAvailable.diff.added.forEach((_, idx) => { initSels[`add_${idx}`] = true })
-              syncAvailable.diff.modified.forEach((_, idx) => { initSels[`mod_${idx}`] = true })
-              syncAvailable.diff.removed.forEach((_, idx) => { initSels[`del_${idx}`] = true })
-              setSyncSelections(initSels)
-              setShowSyncModal(true)
-            }} className="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all shrink-0 w-fit self-end sm:self-auto">
-              Bandingkan & Sinkronkan
-            </button>
-          </div>
-        )}
+
         
         {/* Upload Progress/Result Messages */}
         {uploadProgress && (
@@ -2506,7 +2214,7 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                           <div className="truncate w-full h-full" title={s.nama_lengkap}>{s.nama_lengkap}</div>
                         </td>
                         <td className={`px-3 py-2.5 text-slate-500 font-mono text-[13px] leading-none border-r border-slate-100 mobile-unsticky ${idx % 2 === 1 ? "bg-sky-50" : "bg-white"} group-hover:bg-slate-200 transition-colors`} style={{ position: "sticky", left: 40 + maxNamaWidth, zIndex: 10, minWidth: 90, maxWidth: 90, width: 90 }}>{s.nisn}</td>
-                        {orderedKomponen.map(k => {
+                        {orderedKomponen.map((k, kIdx) => {
                           const cellKey = `${k.id}-${s.nisn}`
                           const val = nilaiData[k.id]?.[s.nisn]
                           const isSaving = savingCell === cellKey
@@ -2523,14 +2231,58 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
                                 <input
                                   type="number"
                                   min="0" max="100" step="1"
+                                  data-grade-row={idx}
+                                  data-grade-col={kIdx}
                                   defaultValue={val !== undefined && val !== null ? val : ''}
                                   key={`${cellKey}-${val}`}
+                                  onFocus={e => e.target.select()}
+                                  onPaste={e => handlePasteGrid(e, idx, kIdx, orderedKomponen)}
                                   onBlur={e => {
                                     const newVal = e.target.value
                                     const oldVal = val !== undefined && val !== null ? String(val) : ''
                                     if (newVal !== oldVal) handleNilaiChange(k.id, s.nisn, newVal)
                                   }}
-                                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                                  onKeyDown={e => {
+                                    if (['Enter', 'ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(e.key)) {
+                                      let nextRow = idx
+                                      let nextCol = kIdx
+
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        e.target.blur()
+                                        nextRow = e.shiftKey ? idx - 1 : idx + 1
+                                      } else if (e.key === 'ArrowDown') {
+                                        e.preventDefault()
+                                        e.target.blur()
+                                        nextRow = idx + 1
+                                      } else if (e.key === 'ArrowUp') {
+                                        e.preventDefault()
+                                        e.target.blur()
+                                        nextRow = idx - 1
+                                      } else if (e.key === 'ArrowRight') {
+                                        e.preventDefault()
+                                        e.target.blur()
+                                        nextCol = kIdx + 1
+                                      } else if (e.key === 'ArrowLeft') {
+                                        e.preventDefault()
+                                        e.target.blur()
+                                        nextCol = kIdx - 1
+                                      }
+
+                                      if (nextRow < 0) nextRow = 0
+                                      if (nextRow >= students.length) nextRow = students.length - 1
+                                      if (nextCol < 0) nextCol = 0
+                                      if (nextCol >= orderedKomponen.length) nextCol = orderedKomponen.length - 1
+
+                                      setTimeout(() => {
+                                        const targetInput = document.querySelector(`input[data-grade-row="${nextRow}"][data-grade-col="${nextCol}"]`)
+                                        if (targetInput) {
+                                          targetInput.focus()
+                                          targetInput.select()
+                                        }
+                                      }, 15)
+                                    }
+                                  }}
                                   className={`w-16 sm:w-20 mx-auto text-center text-sm font-black px-2 py-2 border border-slate-200 rounded-xl bg-slate-50 hover:border-indigo-300 hover:bg-white focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none transition-all ${valColor}`}
                                   placeholder="—"
                                 />

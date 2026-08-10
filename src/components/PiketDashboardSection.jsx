@@ -12,6 +12,54 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
   const [semuaKelasFull, setSemuaKelasFull] = useState([])
   const [loading, setLoading] = useState(true)
   const [laporanLoading, setLaporanLoading] = useState(false)
+  const [presensiPulangAktif, setPresensiPulangAktif] = useState(false)
+  const [updatingPulang, setUpdatingPulang] = useState(false)
+
+  const fetchPulangStatus = useCallback(async () => {
+    const { data } = await supabase
+      .from('pengaturan_sekolah')
+      .select('setting_value')
+      .eq('setting_key', 'presensi_pulang_aktif')
+      .maybeSingle()
+    setPresensiPulangAktif(data?.setting_value === 'true')
+  }, [])
+
+  useEffect(() => {
+    fetchPulangStatus()
+    const channel = supabase
+      .channel('piket-pengaturan-pulang')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, () => {
+        fetchPulangStatus()
+      })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [fetchPulangStatus])
+
+  const togglePresensiPulang = async () => {
+    const nextState = !presensiPulangAktif
+    setUpdatingPulang(true)
+    try {
+      await supabase.from('pengaturan_sekolah').upsert({
+        setting_key: 'presensi_pulang_aktif',
+        setting_value: nextState ? 'true' : 'false'
+      }, { onConflict: 'setting_key' })
+
+      const todayDateStr = new Date().toLocaleDateString('en-CA')
+      if (nextState) {
+        await supabase.from('sesi_presensi').upsert({
+          tanggal: todayDateStr,
+          status: 'buka',
+          created_at: new Date().toISOString()
+        }, { onConflict: 'tanggal' })
+      }
+
+      setPresensiPulangAktif(nextState)
+    } catch (err) {
+      console.error('Gagal update status presensi pulang:', err)
+    } finally {
+      setUpdatingPulang(false)
+    }
+  }
 
   useEffect(() => {
     fetchDashboardData()
@@ -42,138 +90,238 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
     return () => clearInterval(poll)
   }, [tanggal, filterKelas])
 
+  const lastFiltersRef = React.useRef({
+    activeTaId: null,
+    filterKelas: null,
+    siswaMap: {},
+    fullSiswaMap: {},
+    nisnList: [],
+    siswaData: [],
+    semuaSiswaFullDB: []
+  })
+
   const fetchDashboardData = async (isRealtime = false) => {
     if (!isRealtime) setLoading(true)
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!isRealtime) setLoading(false)
+      return
+    }
     try {
-      let siswaData = []
-      let from = 0
-      let to = 999
-      let hasMore = true
-      while (hasMore) {
-        let query = supabase.from('siswa_lengkap')
-          .select('nisn, nama_lengkap, kelas')
-          .eq('is_aktif', true)
-          .range(from, to)
-        if (filterKelas && filterKelas.length > 0) {
-          query = query.in('kelas', filterKelas)
-        }
-        const { data, error } = await query
-        if (error) {
-          console.error(error)
-          break
-        }
-        if (!data || data.length === 0) {
-          hasMore = false
-        } else {
-          siswaData = [...siswaData, ...data]
-          if (data.length < 1000) {
-            hasMore = false
-          } else {
-            from += 1000
-            to += 1000
-          }
-        }
-      }
-
-      const siswaMap = {}
-      let nisnList = []
-
-      if (siswaData) {
-        setSemuaSiswa(siswaData)
-        const uniqueClasses = [...new Set(siswaData.map(s => s.kelas).filter(Boolean))].sort()
-        setSemuaKelas(uniqueClasses)
-        siswaData.forEach(s => { 
-          siswaMap[s.nisn] = s.kelas 
-          nisnList.push(s.nisn)
-        })
-      }
-
-      // Fetch ALL classes and ALL presence today for the full bar chart
-      let semuaSiswaFullDB = []
-      from = 0
-      to = 999
-      hasMore = true
-      while (hasMore) {
-        const { data, error } = await supabase.from('siswa_lengkap')
-          .select('nisn, kelas')
-          .eq('is_aktif', true)
-          .range(from, to)
-        if (error) {
-          console.error(error)
-          break
-        }
-        if (!data || data.length === 0) {
-          hasMore = false
-        } else {
-          semuaSiswaFullDB = [...semuaSiswaFullDB, ...data]
-          if (data.length < 1000) {
-            hasMore = false
-          } else {
-            from += 1000
-            to += 1000
-          }
-        }
-      }
-
-      const fullSiswaMap = {}
-      if (semuaSiswaFullDB) {
-        const uniqueKelasFull = [...new Set(semuaSiswaFullDB.map(s => s.kelas).filter(Boolean))].sort()
-        setSemuaKelasFull(uniqueKelasFull)
-        semuaSiswaFullDB.forEach(s => { fullSiswaMap[s.nisn] = s.kelas })
-      }
-
-      const { data: presensiFullData } = await supabase.from('presensi_harian').select('siswa_nisn, kelas, status, tipe').eq('tanggal', tanggal)
-      if (presensiFullData) {
-        const syncedFull = presensiFullData
-          .filter(p => p.tipe !== 'pulang')
-          .map(p => ({ ...p, kelas: fullSiswaMap[p.siswa_nisn] || p.kelas }))
-        setPresensiHariIniFull(syncedFull)
-      }
-
-      let presensiQuery = supabase.from('presensi_harian').select('*').eq('tanggal', tanggal)
-      if (filterKelas && filterKelas.length > 0 && nisnList.length > 0) {
-        // Fetch presensi for current students in these classes, ignoring the old class they were saved with
-        presensiQuery = presensiQuery.in('siswa_nisn', nisnList)
-      } else if (filterKelas && filterKelas.length > 0) {
-        // If there are no students in the filtered classes, just force an empty result
-        presensiQuery = presensiQuery.in('siswa_nisn', ['0000000000'])
-      }
-      const { data: presensiDataDB } = await presensiQuery
+      const activeTaId = activeTa?.id
+      const filterKelasStr = JSON.stringify(filterKelas)
       
-      if (presensiDataDB) {
-        // Sync class to current student class
-        const updatedPresensi = presensiDataDB
-          .filter(p => p.tipe !== 'pulang')
-          .map(p => ({ ...p, kelas: siswaMap[p.siswa_nisn] || p.kelas }))
-        setPresensiHariIni(updatedPresensi)
+      const filtersChanged = 
+        lastFiltersRef.current.activeTaId !== activeTaId ||
+        JSON.stringify(lastFiltersRef.current.filterKelas) !== filterKelasStr ||
+        lastFiltersRef.current.siswaData.length === 0
+
+      let siswaData = []
+      let siswaMap = {}
+      let nisnList = []
+      let semuaSiswaFullDB = []
+      let fullSiswaMap = {}
+
+      if (filtersChanged) {
+        // Fetch siswaData
+        let from = 0
+        let to = 999
+        let hasMore = true
+        while (hasMore) {
+          if (typeof navigator !== 'undefined' && !navigator.onLine) break
+          try {
+            let query = supabase.from('siswa_lengkap')
+              .select('nisn, nama_lengkap, kelas')
+              .eq('is_aktif', true)
+              .range(from, to)
+            if (filterKelas && filterKelas.length > 0) {
+              query = query.in('kelas', filterKelas)
+            }
+            const { data, error } = await query
+            if (error) {
+              console.error(error)
+              break
+            }
+            if (!data || data.length === 0) {
+              hasMore = false
+            } else {
+              siswaData = [...siswaData, ...data]
+              if (data.length < 1000) {
+                hasMore = false
+              } else {
+                from += 1000
+                to += 1000
+              }
+            }
+          } catch (e) {
+            console.warn('[PiketDashboard] Error fetching siswaData:', e)
+            break
+          }
+        }
+
+        if (siswaData.length > 0) {
+          setSemuaSiswa(siswaData)
+          const uniqueClasses = [...new Set(siswaData.map(s => s.kelas).filter(Boolean))].sort()
+          setSemuaKelas(uniqueClasses)
+          siswaData.forEach(s => { 
+            siswaMap[s.nisn] = s.kelas 
+            nisnList.push(s.nisn)
+          })
+        }
+
+        // Fetch ALL classes and ALL presence today for the full bar chart
+        from = 0
+        to = 999
+        hasMore = true
+        while (hasMore) {
+          if (typeof navigator !== 'undefined' && !navigator.onLine) break
+          try {
+            const { data, error } = await supabase.from('siswa_lengkap')
+              .select('nisn, kelas')
+              .eq('is_aktif', true)
+              .range(from, to)
+            if (error) {
+              console.error(error)
+              break
+            }
+            if (!data || data.length === 0) {
+              hasMore = false
+            } else {
+              semuaSiswaFullDB = [...semuaSiswaFullDB, ...data]
+              if (data.length < 1000) {
+                hasMore = false
+              } else {
+                from += 1000
+                to += 1000
+              }
+            }
+          } catch (e) {
+            console.warn('[PiketDashboard] Error fetching semuaSiswaFullDB:', e)
+            break
+          }
+        }
+
+        if (semuaSiswaFullDB.length > 0) {
+          const uniqueKelasFull = [...new Set(semuaSiswaFullDB.map(s => s.kelas).filter(Boolean))].sort()
+          setSemuaKelasFull(uniqueKelasFull)
+          semuaSiswaFullDB.forEach(s => { fullSiswaMap[s.nisn] = s.kelas })
+        }
+
+        // Save to cache
+        lastFiltersRef.current = {
+          activeTaId,
+          filterKelas,
+          siswaMap,
+          fullSiswaMap,
+          nisnList,
+          siswaData,
+          semuaSiswaFullDB
+        }
+      } else {
+        // Use cached data
+        siswaData = lastFiltersRef.current.siswaData
+        siswaMap = lastFiltersRef.current.siswaMap
+        nisnList = lastFiltersRef.current.nisnList
+        semuaSiswaFullDB = lastFiltersRef.current.semuaSiswaFullDB
+        fullSiswaMap = lastFiltersRef.current.fullSiswaMap
+      }
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return
+
+      // Fetch dynamic today's presence (always fetch)
+      try {
+        const { data: presensiFullData } = await supabase.from('presensi_harian').select('siswa_nisn, kelas, status, tipe').eq('tanggal', tanggal).range(0, 2999)
+        if (presensiFullData) {
+          const syncedFull = presensiFullData
+            .filter(p => p.tipe !== 'pulang')
+            .map(p => ({ ...p, kelas: fullSiswaMap[p.siswa_nisn] || p.kelas }))
+          setPresensiHariIniFull(syncedFull)
+        }
+      } catch (e) {
+        console.warn('[PiketDashboard] Error fetching presensiHariIniFull:', e)
+      }
+
+      try {
+        let presensiQuery = supabase.from('presensi_harian').select('*').eq('tanggal', tanggal).range(0, 2999)
+        if (filterKelas && filterKelas.length > 0 && nisnList.length > 0) {
+          presensiQuery = presensiQuery.in('siswa_nisn', nisnList)
+        } else if (filterKelas && filterKelas.length > 0) {
+          presensiQuery = presensiQuery.in('siswa_nisn', ['0000000000'])
+        }
+        const { data: presensiDataDB } = await presensiQuery
+        
+        if (presensiDataDB) {
+          const updatedPresensi = presensiDataDB
+            .filter(p => p.tipe !== 'pulang')
+            .map(p => ({ ...p, kelas: siswaMap[p.siswa_nisn] || p.kelas }))
+          setPresensiHariIni(updatedPresensi)
+        }
+      } catch (e) {
+        console.warn('[PiketDashboard] Error fetching presensiHariIni:', e)
       }
 
       const dateObj = new Date(tanggal)
       dateObj.setDate(dateObj.getDate() - 7)
       const startDate = dateObj.toLocaleDateString('en-CA')
 
-      let mingguanQuery = supabase.from('presensi_harian').select('*').gte('tanggal', startDate).lte('tanggal', tanggal).order('tanggal', { ascending: true })
-      if (filterKelas && filterKelas.length > 0 && nisnList.length > 0) {
-        mingguanQuery = mingguanQuery.in('siswa_nisn', nisnList)
-      } else if (filterKelas && filterKelas.length > 0) {
-        mingguanQuery = mingguanQuery.in('siswa_nisn', ['0000000000'])
-      }
-      const { data: presensiMingguanDB } = await mingguanQuery
+      // Fetch ALL weekly presence records with pagination loop (bypassing 1000 row default limit)
+      let presensiMingguanDB = []
+      let fromM = 0
+      let toM = 999
+      let hasMoreM = true
+      while (hasMoreM) {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) break
+        try {
+          let queryM = supabase
+            .from('presensi_harian')
+            .select('siswa_nisn, kelas, status, tipe, tanggal')
+            .gte('tanggal', startDate)
+            .lte('tanggal', tanggal)
+            .range(fromM, toM)
 
-      if (presensiMingguanDB) {
-        // Sync class to current student class
+          if (filterKelas && filterKelas.length > 0 && nisnList.length > 0) {
+            queryM = queryM.in('siswa_nisn', nisnList)
+          } else if (filterKelas && filterKelas.length > 0) {
+            queryM = queryM.in('siswa_nisn', ['0000000000'])
+          }
+
+          const { data: pageData, error } = await queryM
+          if (error) {
+            console.error(error)
+            break
+          }
+          if (!pageData || pageData.length === 0) {
+            hasMoreM = false
+          } else {
+            presensiMingguanDB = [...presensiMingguanDB, ...pageData]
+            if (pageData.length < 1000) {
+              hasMoreM = false
+            } else {
+              fromM += 1000
+              toM += 1000
+            }
+          }
+        } catch (e) {
+          console.warn('[PiketDashboard] Error fetching presensiMingguanDB:', e)
+          break
+        }
+      }
+
+      if (presensiMingguanDB.length > 0) {
         const updatedMingguan = presensiMingguanDB
           .filter(p => p.tipe !== 'pulang')
           .map(p => ({ ...p, kelas: siswaMap[p.siswa_nisn] || p.kelas }))
         setPresensiMingguan(updatedMingguan)
-      }
-
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
+      } else {
+      setPresensiMingguan([])
     }
+
+  } catch (err) {
+    console.error(err)
+  } finally {
+    setLoading(false)
   }
+}
+
 
   const getInitials = (name) => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
@@ -664,7 +812,22 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">Dashboard Presensi</h2>
           <p className="text-sm text-slate-500 font-medium mt-1">Ringkasan harian dan statistik kehadiran siswa.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Tombol Quick-Toggle Sesi Presensi Pulang */}
+          <button
+            onClick={togglePresensiPulang}
+            disabled={updatingPulang}
+            className={`px-4 py-2 text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 ${
+              presensiPulangAktif
+                ? 'bg-blue-600 hover:bg-blue-700 text-white ring-2 ring-blue-300'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+            }`}
+            title="Klik untuk membuka/menutup sesi presensi pulang siswa"
+          >
+            <span className="text-base">{presensiPulangAktif ? '🏠' : '🔒'}</span>
+            <span>{updatingPulang ? 'Memproses...' : presensiPulangAktif ? 'Sesi Pulang: AKTIF' : 'Buka Sesi Pulang'}</span>
+          </button>
+
           <button
             onClick={handlePrintLaporan}
             disabled={laporanLoading}
@@ -755,7 +918,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
             </button>
           </div>
           <div className="flex-1 min-h-[250px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <LineChart data={lineChartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} dy={10} />
@@ -783,7 +946,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
             </button>
           </div>
           <div className="flex-1 min-h-[250px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={barChartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="kelas" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} dy={10} />
@@ -828,7 +991,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
           ) : (
             <>
               <div className="h-[180px] w-full relative">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <PieChart>
                     <Pie
                       data={pieChartData}

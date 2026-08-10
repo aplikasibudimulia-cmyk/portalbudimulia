@@ -1,7 +1,7 @@
 // eBudiMulia Service Worker v1.0
 // Handles: Web Push Notifications
 
-const CACHE_NAME = 'ebudimulia-v1'
+const CACHE_NAME = 'ebudimulia-v2'
 
 // ===== Install Event =====
 self.addEventListener('install', (event) => {
@@ -10,7 +10,17 @@ self.addEventListener('install', (event) => {
 
 // ===== Activate Event =====
 self.addEventListener('activate', (event) => {
-  event.waitUntil(clients.claim())
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cache) => {
+          if (cache !== CACHE_NAME) {
+            return caches.delete(cache)
+          }
+        })
+      )
+    }).then(() => self.clients.claim())
+  )
 })
 
 // ===== Push Event (dari server) =====
@@ -66,13 +76,21 @@ self.addEventListener('message', (event) => {
       tag: tag || 'local-notif',
       data: data || {},
       vibrate: [150, 75, 150],
+    }).catch((err) => {
+      // Abaikan error jika izin notifikasi belum di-granted di browser ini
     })
   }
 })
 
 // ===== Fetch Event (Wajib untuk PWA Installable) =====
 // Chrome mewajibkan adanya event 'fetch' agar muncul prompt "Install App" (Add to Home screen)
+// Hanya intercept GET request dari origin yang sama untuk menghindari gangguan CORS/Auth pada API Supabase.
 self.addEventListener('fetch', (event) => {
-  // Untuk saat ini hanya pass-through (membiarkan browser menangani network request)
-  // tanpa caching offline.
+  if (event.request.method === 'GET' && event.request.url.startsWith(self.location.origin)) {
+    event.respondWith(
+      fetch(event.request).catch((err) => {
+        return caches.match(event.request).then((res) => res || new Response('', { status: 408 }))
+      })
+    )
+  }
 })

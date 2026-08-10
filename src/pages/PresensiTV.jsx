@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
 import { QRCodeSVG } from 'qrcode.react'
+import { dispatchDualNotification } from '../utils/pushNotif'
 
 // Theme Colors Mapping (Based on data-theme config in index.css)
 const THEME_MAP = {
@@ -217,14 +218,15 @@ export default function PresensiTV() {
     setSesiAktif(!!sesi)
   }, [])
 
-  // Fetch 6 latest checked-in students dynamically
+  // Fetch 6 latest checked-in students dynamically (khusus metode kiosk RFID / QR scan)
   const fetchLatestCheckins = useCallback(async () => {
     const todayStr = new Date().toLocaleDateString('en-CA')
     const { data, error } = await supabase
       .from('presensi_harian')
-      .select('siswa_nisn, waktu, status, tipe')
+      .select('siswa_nisn, waktu, status, tipe, metode')
       .eq('tanggal', todayStr)
       .in('status', ['H', 'T', 'P'])
+      .in('metode', ['RFID', 'qr_scan'])
       .order('updated_at', { ascending: false })
       .limit(6)
 
@@ -325,9 +327,19 @@ export default function PresensiTV() {
       .eq('nisn', nisn)
       .maybeSingle()
     if (data) {
-      siswaCache.current[nisn] = { nama: data.nama_lengkap, kelas: data.kelas }
+      // Also check line_bindings for the most up-to-date line_user_id
+      const { data: binding } = await supabase
+        .from('line_bindings')
+        .select('line_user_id')
+        .eq('nisn', nisn)
+        .maybeSingle()
+      siswaCache.current[nisn] = {
+        nama: data.nama_lengkap,
+        kelas: data.kelas,
+        line_user_id: binding?.line_user_id || null
+      }
     }
-    return siswaCache.current[nisn] || { nama: nisn, kelas: '-' }
+    return siswaCache.current[nisn] || { nama: nisn, kelas: '-', line_user_id: null }
   }, [])
 
   // Realtime events listener — instant update via payload, then full refresh
@@ -339,13 +351,17 @@ export default function PresensiTV() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'presensi_harian' }, async (payload) => {
         const rec = payload.new
         if (!rec || rec.tanggal !== todayStr) return
+        // Abaikan presensi manual agar tidak masuk ke Aktivitas Realtime TV
+        if (rec.metode === 'manual' || rec.metode === 'manual_piket') return
 
         // Instant update: prepend with known data, name resolved async
         const siswa = await getSiswaInfo(rec.siswa_nisn)
+        const waktuStr = rec.waktu || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+        
         setLatestPresensi(prev => {
           const updated = [{
             siswa_nisn: rec.siswa_nisn,
-            waktu: rec.waktu || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+            waktu: waktuStr,
             status: rec.status,
             tipe: rec.tipe,
             nama: siswa.nama,
@@ -354,6 +370,21 @@ export default function PresensiTV() {
           return updated
         })
         fetchStats()
+
+        // Triger Dual Notification (In-App + LINE Flex Message) secara asynchronous
+        dispatchDualNotification({
+          title: `Presensi: ${siswa.nama}`,
+          body: `${siswa.nama} (Kelas ${siswa.kelas}) telah melakukan presensi ${rec.tipe === 'pulang' ? 'Pulang' : 'Masuk'} pada ${waktuStr}.`,
+          siswaData: {
+            nama: siswa.nama,
+            nisn: rec.siswa_nisn,
+            kelas: siswa.kelas,
+            status: rec.status,
+            waktu: waktuStr,
+            tipe: rec.tipe,
+            lineUserId: siswa.line_user_id
+          }
+        })
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'presensi_harian' }, async (payload) => {
         const rec = payload.new
@@ -361,6 +392,23 @@ export default function PresensiTV() {
         // On update (e.g. pulang), refresh list fully
         fetchStats()
         fetchLatestCheckins()
+
+        const siswa = await getSiswaInfo(rec.siswa_nisn)
+        const waktuStr = rec.waktu || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+
+        dispatchDualNotification({
+          title: `Update Presensi: ${siswa.nama}`,
+          body: `${siswa.nama} (Kelas ${siswa.kelas}) telah memperbarui status presensi ${rec.tipe === 'pulang' ? 'Pulang' : 'Masuk'} pada ${waktuStr}.`,
+          siswaData: {
+            nama: siswa.nama,
+            nisn: rec.siswa_nisn,
+            kelas: siswa.kelas,
+            status: rec.status,
+            waktu: waktuStr,
+            tipe: rec.tipe,
+            lineUserId: siswa.line_user_id
+          }
+        })
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
         fetchStats()
