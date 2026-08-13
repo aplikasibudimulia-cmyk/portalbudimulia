@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import TemplateGenerator from '../components/TemplateGenerator'
 import AdminRoleSection from '../components/AdminRoleSection'
+import TabunganSiswaSection from '../components/TabunganSiswaSection'
 import AdminGuruSection from '../components/AdminGuruSection'
 import AdminDashboardSection from '../components/AdminDashboardSection'
 import AdminActivityLogSection from '../components/AdminActivityLogSection'
@@ -2621,6 +2622,11 @@ function Admin() {
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
               </button>
+              <button title="Tabungan Siswa" onClick={() => handleMenuNavigation('tabungan_siswa')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tabungan_siswa' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
+              </button>
             </div>
           )}
 
@@ -2936,6 +2942,10 @@ function Admin() {
 
           {activeMenu === 'jadwal_pelajaran' && (
             <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'tabungan_siswa' && (
+            <TabunganSiswaSection session={session} activeTa={activeTa} mode="admin" />
           )}
 
           {activeMenu === 'manajemen_role' && (

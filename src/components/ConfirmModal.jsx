@@ -99,7 +99,7 @@ function ConfirmModal({
     >
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm"
+        className="fixed inset-0 bg-slate-900/65 backdrop-blur-lg"
         onClick={onCancel}
       />
 

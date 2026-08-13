@@ -5,6 +5,7 @@ import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
 import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
+import TabunganSiswaSection from '../components/TabunganSiswaSection'
 import NilaiGuruSection from '../components/NilaiGuruSection'
 import GuruDashboardBerita from '../components/GuruDashboardBerita'
 import AdminTataTertibSection from '../components/AdminTataTertibSection'
@@ -1023,7 +1024,7 @@ export default function DashboardGuru() {
     if (loading) return
     const staticMenus = [
       'dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 
-      'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'password', 
+      'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'tabungan_siswa', 'password', 
       'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
       'pengaturan_poin', 'pengajuan_poin', 'dashboard_eksekutif', 'program_sekolah', 
       'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
@@ -1080,6 +1081,60 @@ export default function DashboardGuru() {
       supabase.removeChannel(presensiChannel)
     }
   }, [navigate])
+
+  // Realtime Tabungan Feature Toggle for Wali Kelas
+  const [showTabunganWaliKelas, setShowTabunganWaliKelas] = useState(true)
+
+  const fetchTabunganWaliKelasSetting = async () => {
+    try {
+      const { data } = await supabase
+        .from('pengaturan_sekolah')
+        .select('setting_value')
+        .eq('setting_key', 'show_tabungan_wali_kelas')
+        .maybeSingle()
+      if (data) {
+        setShowTabunganWaliKelas(data.setting_value === 'true')
+      }
+    } catch (e) {
+      console.error('Error fetching tabungan setting:', e)
+    }
+  }
+
+  useEffect(() => {
+    fetchTabunganWaliKelasSetting()
+
+    const settingsChannel = supabase.channel('guru-global-settings-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, () => {
+        fetchTabunganWaliKelasSetting()
+      })
+      .on('broadcast', { event: 'toggle_tabungan_feature' }, (payload) => {
+        if (payload?.payload?.key === 'show_tabungan_wali_kelas') {
+          setShowTabunganWaliKelas(payload.payload.value)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(settingsChannel)
+    }
+  }, [])
+
+  // Check Admin Role
+  const isAdminUser = useMemo(() => {
+    if (!session) return false
+    const roleStr = String(session?.role || session?.app_role || '').toLowerCase()
+    if (roleStr.includes('admin') || roleStr.includes('superadmin')) return true
+    return session?.roles?.some(r => {
+      const n = String(r.nama || r || '').toLowerCase()
+      return n.includes('admin') || n.includes('superadmin')
+    })
+  }, [session])
+
+  useEffect(() => {
+    if (!isAdminUser && showTabunganWaliKelas === false && activeMenu === 'tabungan_siswa') {
+      setActiveMenu('dashboard')
+    }
+  }, [isAdminUser, showTabunganWaliKelas, activeMenu])
 
   // Fetch full admin resources on-demand when entering an Admin module
   useEffect(() => {
@@ -1174,7 +1229,9 @@ export default function DashboardGuru() {
 
     // 2. Fetch Active Tahun Ajaran
     const { data: activeTaData } = await supabase.from('tahun_ajaran').select('id, nama').eq('is_aktif', true).single()
-    setActiveTa(activeTaData)
+    if (activeTaData) {
+      setActiveTa(prev => (prev?.id === activeTaData.id && prev?.nama === activeTaData.nama) ? prev : activeTaData)
+    }
 
     // 3. Collect all assigned classes across ALL TAs
     const allWaliAssignments = activeSession.kelas || []
@@ -1817,6 +1874,13 @@ export default function DashboardGuru() {
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                       <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
                       {!sidebarCollapsed && <span className="animate-fade-in truncate">Denah Kehadiran</span>}
+                    </button>
+                  )}
+                  {(isAdminUser || (showTabunganWaliKelas !== false && (fitur.has('kelola_presensi_sekolah') || session.kelas?.length > 0))) && (
+                    <button title="Tabungan Siswa" onClick={() => { setActiveMenu('tabungan_siswa'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tabungan_siswa' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
                     </button>
                   )}
                 </div>
@@ -2822,6 +2886,14 @@ export default function DashboardGuru() {
                 activeTa={activeTa} 
                 isFullScreen={hideSidebar}
                 toggleFullScreen={toggleMenuFullScreen}
+              />
+            )}
+
+            {activeMenu === 'tabungan_siswa' && (
+              <TabunganSiswaSection 
+                session={session} 
+                activeTa={activeTa} 
+                mode="guru"
               />
             )}
 

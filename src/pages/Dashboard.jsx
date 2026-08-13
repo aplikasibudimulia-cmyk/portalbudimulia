@@ -11,7 +11,8 @@ import SiswaPoinSection from '../components/SiswaPoinSection'
 import SiswaPengajuanPoinSection from '../components/SiswaPengajuanPoinSection'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import SiswaBKKonsultasiSection from '../components/SiswaBKKonsultasiSection'
-import SiswaJadwalSection from '../components/SiswaJadwalSection'
+import TabunganSiswaSection from '../components/TabunganSiswaSection'
+import BendaharaInputTabunganSection from '../components/BendaharaInputTabunganSection'
 import { requestNotifPermission, showLocalNotif, subscribeToPushNotification } from '../utils/pushNotif'
 
 function Dashboard() {
@@ -25,6 +26,39 @@ function Dashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // Default to collapsed as requested
   const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
   const [showIosHint, setShowIosHint] = useState(false)
+
+  // Status Bendahara Kelas
+  const [isBendahara, setIsBendahara] = useState(false)
+  const [bendaharaKelas, setBendaharaKelas] = useState(null)
+
+  useEffect(() => {
+    if (!studentData?.nisn) return
+    const taId = studentData?.tahun_ajaran_id || null
+    const checkBendahara = async () => {
+      try {
+        let query = supabase
+          .from('bendahara_kelas')
+          .select('*')
+          .eq('siswa_nisn', studentData.nisn)
+
+        if (taId) {
+          query = query.or(`tahun_ajaran_id.eq.${taId},tahun_ajaran_id.is.null`)
+        }
+
+        const { data } = await query.maybeSingle()
+        if (data) {
+          setIsBendahara(true)
+          setBendaharaKelas(data.kelas)
+        } else {
+          setIsBendahara(false)
+          setBendaharaKelas(null)
+        }
+      } catch (err) {
+        console.error('Check bendahara err:', err)
+      }
+    }
+    checkBendahara()
+  }, [studentData])
 
   // Detect iOS (Safari doesn't support requestFullscreen)
   const isIOS = /ipad|iphone|ipod/i.test(navigator.userAgent) || 
@@ -189,6 +223,8 @@ function Dashboard() {
           poinKatalog: true, 
           kalender: true,
           jadwal: true,
+          tabunganOrtuSiswa: true,
+          tabunganWaliKelas: true,
           jadwalSemester: '2'
         }
         pengaturan.forEach(p => {
@@ -202,6 +238,8 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_ortu_siswa') newShowFeature.tabunganOrtuSiswa = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_wali_kelas') newShowFeature.tabunganWaliKelas = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
@@ -449,6 +487,8 @@ function Dashboard() {
           if (p.setting_key === 'show_feature_presensi') newShowFeature.presensi = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_nilai') newShowFeature.nilai = p.setting_value === 'true'
           if (p.setting_key === 'show_feature_poin') newShowFeature.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_ortu_siswa') newShowFeature.tabunganOrtuSiswa = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_wali_kelas') newShowFeature.tabunganWaliKelas = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_total') newShowFeature.poinTotal = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_negatif') newShowFeature.poinNegatif = p.setting_value === 'true'
           if (p.setting_key === 'show_poin_positif') newShowFeature.poinPositif = p.setting_value === 'true'
@@ -496,14 +536,23 @@ function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, handleSettingsUpdate)
       .subscribe()
 
-    // Bulletproof Broadcast Listener
-    const broadcastChannel = supabase.channel('dashboard-updates-all')
+    // Bulletproof Broadcast Listener (ebudimulia-global-settings-broadcast)
+    const broadcastChannel = supabase.channel('ebudimulia-global-settings-broadcast')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, handleSettingsUpdate)
       .on('broadcast', { event: 'berkas_updated' }, (payload) => {
         console.log('[REALTIME DEBUG] Broadcast received:', payload)
         if (payload.payload && (studentData?.enrollments?.map(e => e.kode).includes(payload.payload.kode_siswa) || payload.payload.kode_siswa === studentData.kode || studentData?.nisn === payload.payload.kode_siswa)) {
           handleBerkasUpdate()
         } else if (payload.payload && String(payload.payload.kode_siswa).toLowerCase() === 'all') {
           handleBerkasUpdate()
+        }
+      })
+      .on('broadcast', { event: 'toggle_tabungan_feature' }, (payload) => {
+        if (payload?.payload?.key === 'show_tabungan_ortu_siswa') {
+          setShowFeatureConfig(prev => ({ ...prev, tabunganOrtuSiswa: payload.payload.value }))
+        }
+        if (payload?.payload?.key === 'show_tabungan_wali_kelas') {
+          setShowFeatureConfig(prev => ({ ...prev, tabunganWaliKelas: payload.payload.value }))
         }
       })
       .subscribe()
@@ -744,6 +793,43 @@ function Dashboard() {
                 </button>
               )}
 
+              {/* Tabungan Siswa */}
+              {showFeatureConfig.tabunganOrtuSiswa !== false && (
+                <button 
+                  onClick={() => { setSelectedType('TABUNGAN'); setSidebarOpen(false) }}
+                  title="Tabungan Siswa"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'TABUNGAN' ? 'bg-emerald-50 text-emerald-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'TABUNGAN' ? 'text-emerald-600' : 'text-slate-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
+                </button>
+              )}
+
+              {/* Menu Khusus Bendahara Kelas (Hanya untuk Siswa yang Bertugas & Jika Fitur Aktif) */}
+              {isBendahara && showFeatureConfig.tabunganOrtuSiswa !== false && (
+                <button 
+                  onClick={() => { setSelectedType('INPUT_TABUNGAN'); setSidebarOpen(false) }}
+                  title={`Input Tabungan Kelas ${bendaharaKelas}`}
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'INPUT_TABUNGAN' ? 'bg-amber-50 text-amber-800 border border-amber-200 shadow-sm scale-100' : 'text-amber-700 hover:bg-amber-50/70 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-3'}`}
+                >
+                  <div className="relative shrink-0">
+                    <div className="w-6 h-6 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs">
+                      ✍️
+                    </div>
+                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                    </span>
+                  </div>
+                  {!sidebarCollapsed && (
+                    <div className="text-left animate-fade-in truncate">
+                      <p className="leading-tight font-extrabold text-amber-950 text-xs">Input Tabungan</p>
+                      <p className="text-[10px] text-amber-700 font-semibold truncate">Bendahara {bendaharaKelas}</p>
+                    </div>
+                  )}
+                </button>
+              )}
+
               {/* Jadwal Pelajaran */}
               {showFeatureConfig.jadwal && (
                 <button 
@@ -965,11 +1051,60 @@ function Dashboard() {
         <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
           <div className="w-full space-y-6">
             
-            {/* Kartu Profil selalu muncul di atas */}
-            {studentInfoCard}
+            {/* Header Native Minimalis khusus Menu Spesifik */}
+            {selectedType && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 animate-fade-in">
+                <div className="flex items-start gap-3 min-w-0">
+                  {/* Mobile Hamburger Button (Garis Tiga) */}
+                  <button 
+                    onClick={() => setSidebarOpen(true)} 
+                    className="p-2 -ml-1 text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl md:hidden transition-colors shrink-0 shadow-2xs mt-0.5"
+                    title="Buka Menu Navigasi"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                  </button>
+
+                  <div className="min-w-0">
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 tracking-tight truncate">
+                      {selectedType === 'INPUT_TABUNGAN' ? `Input Tabungan Kelas ${bendaharaKelas}` :
+                       selectedType === 'TABUNGAN' ? 'Tabungan Siswa' : 
+                       selectedType === 'NILAI' ? 'Laporan Nilai Saya' : 
+                       selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : 
+                       selectedType === 'POIN' ? 'Poin & Disiplin' : 
+                       selectedType === 'JADWAL' ? 'Jadwal Pelajaran' : 'Kalender Akademik'}
+                    </h1>
+                    <p className="text-sm text-slate-500 font-medium mt-1 truncate">
+                      Dashboard Siswa • <span className="font-bold text-slate-700">{studentData?.nama_lengkap}</span> ({studentData?.kelas})
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setSelectedType(null)}
+                  className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs shrink-0 self-start sm:self-auto"
+                >
+                  <span>←</span> <span>Kembali ke Beranda</span>
+                </button>
+              </div>
+            )}
+
+            {/* Kartu Profil hanya muncul di Beranda (!selectedType) */}
+            {!selectedType && studentInfoCard}
 
             {/* Konten Spesifik per Menu */}
-            {selectedType === 'NILAI' ? (
+            {selectedType === 'INPUT_TABUNGAN' ? (
+              <BendaharaInputTabunganSection 
+                studentData={studentData}
+                activeTa={{ id: studentData?.tahun_ajaran_id }}
+              />
+            ) : selectedType === 'TABUNGAN' ? (
+              <TabunganSiswaSection 
+                session={null}
+                activeTa={{ id: studentData?.tahun_ajaran_id }}
+                mode="siswa"
+                studentData={studentData}
+              />
+            ) : selectedType === 'NILAI' ? (
               <SiswaNilaiSection studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
               <SiswaPresensiSection studentData={studentData} />

@@ -130,7 +130,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
   useEffect(() => {
     fetchDashboardData()
     setIsUnlocked(false)
-  }, [tanggal, activeTa])
+  }, [tanggal, activeTa?.id])
 
   const latestFetchRef = React.useRef(null)
   React.useEffect(() => {
@@ -1124,7 +1124,6 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                   <button
                     onClick={() => {
                       setActiveTipe('masuk')
-                      setIsUnlocked(false)
                     }}
                     className={`flex-1 sm:flex-none px-6 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
                       activeTipe === 'masuk' 
@@ -1137,7 +1136,6 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
                   <button
                     onClick={() => {
                       setActiveTipe('pulang')
-                      setIsUnlocked(false)
                     }}
                     className={`flex-1 sm:flex-none px-6 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
                       activeTipe === 'pulang' 
