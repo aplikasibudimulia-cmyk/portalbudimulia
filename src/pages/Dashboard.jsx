@@ -433,8 +433,16 @@ function Dashboard() {
 
     setStudentData(data)
 
-    const { data: types } = await supabase
-      .from('jenis_pengumuman').select('*').eq('visible', true).order('urutan')
+    // Parallelize all initial Supabase queries (types, pengaturan, foto)
+    const [
+      { data: types },
+      { data: pengaturan },
+      { data: allFotos }
+    ] = await Promise.all([
+      supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
+      supabase.from('pengaturan_sekolah').select('*'),
+      data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
+    ])
     
     const visible = types ?? []
     
@@ -450,8 +458,6 @@ function Dashboard() {
 
     setMenuTypes(applicableTypes)
     
-    // Fetch pengaturan
-    const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
     if (pengaturan) {
       const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
       const newShowFeature = { 
@@ -499,15 +505,9 @@ function Dashboard() {
       setShowFeatureConfig(newShowFeature)
     }
     
-    // Fetch student profile photos
+    // Process student profile photos (from parallel pre-fetch)
     const urls = []
     if (data.nisn) {
-      // 1. Fetch from 'foto' table
-      const { data: allFotos } = await supabase
-        .from('foto')
-        .select('cloudinary_url, tahun_ajaran_id')
-        .eq('nisn', data.nisn)
-        
       if (allFotos && allFotos.length > 0) {
         const currentYearFoto = allFotos.find(f => f.tahun_ajaran_id === data.tahun_ajaran_id)
         if (currentYearFoto?.cloudinary_url) {
