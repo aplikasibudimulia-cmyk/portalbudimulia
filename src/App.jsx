@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useEffect, Component, lazy, Suspense } from 'react'
 import { supabase } from './supabaseClient'
-import { showLocalNotif, isNotifGranted, initNativePushNotifications } from './utils/pushNotif'
+import { showLocalNotif, isNotifGranted, initNativePushNotifications, requestNotifPermission } from './utils/pushNotif'
 import { loadAccounts } from './utils/credentialStore'
 
 // Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)
@@ -69,6 +69,9 @@ function App() {
       }
     }
     fetchTheme()
+
+    // Minta izin notifikasi sejak awal aplikasi dibuka (Android 13+ status bar tray)
+    requestNotifPermission().catch(() => {})
 
     // 2. Pemeliharaan Sesi Auth & Auto-Refresh Token Supabase secara Global
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {

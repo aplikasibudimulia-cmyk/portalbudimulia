@@ -313,12 +313,16 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
       const channelsToSend = [`notif-ortu-${nisn}`, `notif-ortu-dash-${nisn}`, `app-notif-${nisn}`]
       channelsToSend.forEach(chName => {
         const broadcastCh = supabase.channel(chName, { config: { broadcast: { self: true } } })
-        broadcastCh.subscribe(async (s) => {
-          if (s === 'SUBSCRIBED') {
-            await broadcastCh.send({ type: 'broadcast', event: 'presensi_update', payload })
-            setTimeout(() => supabase.removeChannel(broadcastCh), 4000)
-          }
-        })
+        if (broadcastCh.state === 'joined') {
+          broadcastCh.send({ type: 'broadcast', event: 'presensi_update', payload })
+        } else {
+          broadcastCh.subscribe(async (s) => {
+            if (s === 'SUBSCRIBED') {
+              await broadcastCh.send({ type: 'broadcast', event: 'presensi_update', payload })
+              setTimeout(() => supabase.removeChannel(broadcastCh), 4000)
+            }
+          })
+        }
       })
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY

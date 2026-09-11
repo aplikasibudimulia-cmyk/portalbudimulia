@@ -1,5 +1,15 @@
 {
   "appId": "com.ebudimulia.portal",
   "appName": "eBudimulia",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_launcher",
+      "iconColor": "#4F46E5"
+    },
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
 }
+

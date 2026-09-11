@@ -9,9 +9,8 @@ import { supabase } from '../supabaseClient'
 const SW_PATH = '/sw.js'
 
 // PENTING: Android tidak mengizinkan upgrade importance channel yang sudah ada.
-// Jika sebelumnya channel dibuat dengan IMPORTANCE_DEFAULT, maka IMPORTANCE_HIGH tidak akan berlaku.
-// Solusinya: gunakan channel ID baru setiap kali ada perubahan importance.
-const CHANNEL_ID = 'ebudimulia-notif-v3'
+// Gunakan channel ID ebudimulia_presensi_v5 yang diselaraskan dengan native Android MainActivity.
+const CHANNEL_ID = 'ebudimulia_presensi_v5'
 
 let isChannelInitialized = false
 
@@ -22,7 +21,13 @@ export async function initNotificationChannels() {
   if (isChannelInitialized) return
   if (Capacitor.isNativePlatform()) {
     try {
-      console.log('[Notif] Creating notification channel:', CHANNEL_ID)
+      console.log('[Notif] Ensuring notification channel:', CHANNEL_ID)
+      // Bersihkan channel versi lama
+      await LocalNotifications.deleteChannel({ id: 'ebudimulia-notif-v1' }).catch(() => {})
+      await LocalNotifications.deleteChannel({ id: 'ebudimulia-notif-v2' }).catch(() => {})
+      await LocalNotifications.deleteChannel({ id: 'ebudimulia-notif-v3' }).catch(() => {})
+      await LocalNotifications.deleteChannel({ id: 'ebudimulia-notif-v4' }).catch(() => {})
+
       await LocalNotifications.createChannel({
         id: CHANNEL_ID,
         name: 'eBudiMulia Presensi & Pengumuman',
@@ -30,7 +35,10 @@ export async function initNotificationChannels() {
         importance: 5, // IMPORTANCE_HIGH (5) -> heads up banner & status bar
         visibility: 1, // VISIBILITY_PUBLIC (1)
         vibration: true,
-        sound: 'default',
+        lights: true,
+        lightColor: '#4F46E5',
+        // PENTING: Jangan kirim sound: 'default' karena Capacitor Android mencari file res/raw/default.
+        // Dikosongkan agar Android menggunakan ringtone notifikasi bawaan sistem secara otomatis!
       })
       isChannelInitialized = true
       console.log('[Notif] Channel created successfully:', CHANNEL_ID)
@@ -163,6 +171,8 @@ export async function showLocalNotif(title, body, options = {}) {
       const notifPayload = {
         title: title || 'eBudiMulia',
         body: body || '',
+        largeBody: body || '',
+        summaryText: title || 'Presensi Siswa',
         id: notifId,
         channelId: CHANNEL_ID,
         smallIcon: 'ic_launcher',
@@ -172,18 +182,9 @@ export async function showLocalNotif(title, body, options = {}) {
         extra: {
           targetMenu: 'PRESENSI',
           url: options.data?.url || (options.tag?.includes('ortu') ? '/dashboard-orang-tua?menu=PRESENSI' : '/dashboard?menu=PRESENSI'),
+          imageUrl: options.image || undefined,
           ...options.data
         },
-      }
-
-      // Jika ada gambar/foto selfie, sertakan attachment untuk BigPicture expandable di status bar Android!
-      if (options.image) {
-        notifPayload.attachments = [
-          { id: 'foto_selfie', url: options.image }
-        ]
-        // Set summaryText ke body agar saat notifikasi diusap/diperluas (expanded) di Android,
-        // jam masuk/pulang dan status hadir/terlambat tetap tampil jelas di layar usap
-        notifPayload.summaryText = body || options.summaryText || title || 'Presensi Siswa'
       }
 
       console.log('[showLocalNotif] Scheduling notification:', JSON.stringify(notifPayload))
