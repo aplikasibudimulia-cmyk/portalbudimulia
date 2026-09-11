@@ -134,29 +134,36 @@ export const serializeMisiList = (items) => {
 }
 
 // Komponen Cap Stempel Default (SVG) - Stempel Basah Merah Budi Mulia
-const DefaultSchoolStamp = ({ namaSekolah = 'SMP BUDI MULIA', strokeColor = '#dc2626' }) => (
-  <svg viewBox="0 0 120 120" className="w-full h-full select-none pointer-events-none">
-    <circle cx="60" cy="60" r="56" fill="none" stroke={strokeColor} strokeWidth="2.5" strokeDasharray="4 2" />
-    <circle cx="60" cy="60" r="52" fill="none" stroke={strokeColor} strokeWidth="2" />
-    <circle cx="60" cy="60" r="34" fill="none" stroke={strokeColor} strokeWidth="1.5" />
-    <path d="M 16 60 L 22 57 L 22 63 Z" fill={strokeColor} />
-    <path d="M 104 60 L 98 57 L 98 63 Z" fill={strokeColor} />
-    <path id="circlePathTop" d="M 20 60 A 40 40 0 0 1 100 60" fill="none" />
-    <path id="circlePathBottom" d="M 100 60 A 40 40 0 0 1 20 60" fill="none" />
-    <text fill={strokeColor} fontSize="8.5" fontWeight="900" letterSpacing="1.2">
-      <textPath href="#circlePathTop" startOffset="50%" textAnchor="middle">
-        {namaSekolah.toUpperCase()}
-      </textPath>
-    </text>
-    <text fill={strokeColor} fontSize="7" fontWeight="800" letterSpacing="1">
-      <textPath href="#circlePathBottom" startOffset="50%" textAnchor="middle">
-        ★ TERAKREDITASI ★
-      </textPath>
-    </text>
-    <text x="60" y="58" fill={strokeColor} fontSize="9.5" fontWeight="900" textAnchor="middle">RESMI</text>
-    <text x="60" y="68" fill={strokeColor} fontSize="6.5" fontWeight="700" textAnchor="middle">JAKARTA</text>
-  </svg>
-)
+const DefaultSchoolStamp = ({ namaSekolah = 'SMP BUDI MULIA', strokeColor = '#dc2626' }) => {
+  const stampId = useMemo(() => Math.random().toString(36).substring(2, 9), [])
+  const topPathId = `circlePathTop_${stampId}`
+  const bottomPathId = `circlePathBottom_${stampId}`
+  return (
+    <svg viewBox="0 0 120 120" className="w-full h-full select-none pointer-events-none">
+      <defs>
+        <path id={topPathId} d="M 20 60 A 40 40 0 0 1 100 60" fill="none" />
+        <path id={bottomPathId} d="M 100 60 A 40 40 0 0 1 20 60" fill="none" />
+      </defs>
+      <circle cx="60" cy="60" r="56" fill="none" stroke={strokeColor} strokeWidth="2.5" strokeDasharray="4 2" />
+      <circle cx="60" cy="60" r="52" fill="none" stroke={strokeColor} strokeWidth="2" />
+      <circle cx="60" cy="60" r="34" fill="none" stroke={strokeColor} strokeWidth="1.5" />
+      <path d="M 16 60 L 22 57 L 22 63 Z" fill={strokeColor} />
+      <path d="M 104 60 L 98 57 L 98 63 Z" fill={strokeColor} />
+      <text fill={strokeColor} fontSize="8.5" fontWeight="900" letterSpacing="1.2">
+        <textPath href={`#${topPathId}`} startOffset="50%" textAnchor="middle">
+          {namaSekolah.toUpperCase()}
+        </textPath>
+      </text>
+      <text fill={strokeColor} fontSize="7" fontWeight="800" letterSpacing="1">
+        <textPath href={`#${bottomPathId}`} startOffset="50%" textAnchor="middle">
+          ★ TERAKREDITASI ★
+        </textPath>
+      </text>
+      <text x="60" y="58" fill={strokeColor} fontSize="9.5" fontWeight="900" textAnchor="middle">RESMI</text>
+      <text x="60" y="68" fill={strokeColor} fontSize="6.5" fontWeight="700" textAnchor="middle">JAKARTA</text>
+    </svg>
+  )
+}
 
 // Komponen Tanda Tangan Default (SVG)
 const DefaultSignature = ({ strokeColor = '#0f172a' }) => (
@@ -239,6 +246,11 @@ const KartuPelajarCard = forwardRef(({
   onSelectComponent = null,
   onStartDrag = null
 }, ref) => {
+  const instanceId = useMemo(() => Math.random().toString(36).substring(2, 9), [])
+  const navyGradId = `navyGrad_${instanceId}`
+  const redGradId = `redGrad_${instanceId}`
+  const redGradBottomId = `redGradBottom_${instanceId}`
+
   const theme = getCardTheme(settings.kartu_tema_warna)
   const namaSekolah = settings.kartu_nama_sekolah || 'SMP BUDI MULIA'
   const npsnSekolah = (settings.kartu_npsn_sekolah && settings.kartu_npsn_sekolah !== '20100223') ? settings.kartu_npsn_sekolah : '20106353'
@@ -249,7 +261,29 @@ const KartuPelajarCard = forwardRef(({
   const akreditasiSekolah = settings.kartu_akreditasi || 'TERAKREDITASI A'
   const judulKartu = settings.kartu_judul || 'KARTU TANDA PELAJAR'
   const subjudulKartu = settings.kartu_subjudul || 'SEKOLAH MENENGAH PERTAMA'
-  const masaBerlaku = (settings.kartu_masa_berlaku && settings.kartu_masa_berlaku !== 'AKTIF BELAJAR') ? settings.kartu_masa_berlaku : 'Selama Menjadi Siswa Aktif'
+
+  // Komponen Kustom Tambahan (+ Tambah Komponen)
+  const customComponents = useMemo(() => {
+    if (!settings.kartu_custom_components) return []
+    try {
+      const parsed = typeof settings.kartu_custom_components === 'string'
+        ? JSON.parse(settings.kartu_custom_components)
+        : settings.kartu_custom_components
+      return Array.isArray(parsed) ? parsed.filter(item => !item.text?.includes('20106353')) : []
+    } catch {
+      return []
+    }
+  }, [settings.kartu_custom_components])
+
+  // Cek apakah ada badge kustom untuk masa berlaku agar tidak bertumpuk / teks ganda
+  const hasCustomBerlakuBadge = customComponents.some(c => 
+    c.text && String(c.text).toUpperCase().includes('BERLAKU')
+  )
+  const rawMasaBerlaku = settings.kartu_masa_berlaku
+  const masaBerlaku = (rawMasaBerlaku !== undefined && rawMasaBerlaku !== null)
+    ? (rawMasaBerlaku.trim() === '' ? '' : (rawMasaBerlaku === 'AKTIF BELAJAR' ? 'Selama Menjadi Siswa Aktif' : rawMasaBerlaku))
+    : (hasCustomBerlakuBadge ? '' : 'Selama Menjadi Siswa Aktif')
+
   const footerTeks = settings.kartu_footer_teks || 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA'
   const alamatSekolah = settings.kartu_alamat_sekolah || 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730'
   const namaKepsek = settings.kartu_nama_kepsek || 'Septian Ruswadi, S.Pd'
@@ -311,19 +345,6 @@ const KartuPelajarCard = forwardRef(({
   const biodataWidth = settings.kartu_biodata_width ? `${settings.kartu_biodata_width}px` : undefined
   const biodataLabelWidth = Number(settings.kartu_biodata_label_width) || 85
   const biodataFontSize = settings.kartu_biodata_font_size ? `${settings.kartu_biodata_font_size}px` : '10.5px'
-
-  // Komponen Kustom Tambahan (+ Tambah Komponen)
-  const customComponents = useMemo(() => {
-    if (!settings.kartu_custom_components) return []
-    try {
-      const parsed = typeof settings.kartu_custom_components === 'string'
-        ? JSON.parse(settings.kartu_custom_components)
-        : settings.kartu_custom_components
-      return Array.isArray(parsed) ? parsed.filter(item => !item.text?.includes('20106353')) : []
-    } catch {
-      return []
-    }
-  }, [settings.kartu_custom_components])
 
   const renderCustomComponentItem = (comp) => {
     const compScale = (Number(comp.size) || 100) / 100
@@ -640,22 +661,26 @@ const KartuPelajarCard = forwardRef(({
         {/* 1. HEADER DIAGONAL WAVE BANNER (ELEGAN & RAPI) */}
         <div className="absolute top-0 left-0 right-0 h-16 pointer-events-none z-10">
           <svg viewBox="0 0 510 66" className="w-full h-full" preserveAspectRatio="none">
-            {/* Merah Accent Wave Strip di Bawah Banner Biru */}
-            <path d="M 0,48 C 95,42 175,44 260,46 C 295,24 310,0 310,0 L 324,0 C 308,26 270,52 175,49 C 95,46 0,55 0,55 Z" fill="url(#redGrad)" />
-            {/* Navy Blue Diagonal Banner Foreground */}
-            <path d="M 0,0 L 310,0 C 295,24 260,46 175,44 C 95,42 0,48 0,48 Z" fill="url(#navyGrad)" />
             <defs>
-              <linearGradient id="navyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor={theme.navyHex1} />
-                <stop offset="60%" stopColor={theme.navyHex2} />
-                <stop offset="100%" stopColor={theme.navyHex1} />
+              <linearGradient id={navyGradId} x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor={theme.navyHex1 || '#081b3f'} />
+                <stop offset="60%" stopColor={theme.navyHex2 || '#0f2e66'} />
+                <stop offset="100%" stopColor={theme.navyHex1 || '#081b3f'} />
               </linearGradient>
-              <linearGradient id="redGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor={theme.accentHex1} />
-                <stop offset="50%" stopColor={theme.accentHex2} />
-                <stop offset="100%" stopColor={theme.accentHex2} />
+              <linearGradient id={redGradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={theme.accentHex1 || '#ef4444'} />
+                <stop offset="50%" stopColor={theme.accentHex2 || '#dc2626'} />
+                <stop offset="100%" stopColor={theme.accentHex2 || '#dc2626'} />
               </linearGradient>
             </defs>
+
+            {/* Merah Accent Wave Strip di Bawah Banner Biru (Solid Backing + Gradient) */}
+            <path d="M 0,48 C 95,42 175,44 260,46 C 295,24 310,0 310,0 L 324,0 C 308,26 270,52 175,49 C 95,46 0,55 0,55 Z" fill={theme.accentHex2 || '#dc2626'} />
+            <path d="M 0,48 C 95,42 175,44 260,46 C 295,24 310,0 310,0 L 324,0 C 308,26 270,52 175,49 C 95,46 0,55 0,55 Z" fill={`url(#${redGradId})`} />
+
+            {/* Navy Blue Diagonal Banner Foreground (Solid Backing + Gradient) */}
+            <path d="M 0,0 L 310,0 C 295,24 260,46 175,44 C 95,42 0,48 0,48 Z" fill={theme.navyHex1 || '#081b3f'} />
+            <path d="M 0,0 L 310,0 C 295,24 260,46 175,44 C 95,42 0,48 0,48 Z" fill={`url(#${navyGradId})`} />
           </svg>
 
           {/* Teks Judul Banner */}
@@ -759,11 +784,13 @@ const KartuPelajarCard = forwardRef(({
                       includeMargin={false}
                     />
                   </div>
-                  <div className="flex flex-col">
-                    <p className="text-[6.5px] font-semibold text-slate-700 leading-tight whitespace-nowrap">
-                      Berlaku: {masaBerlaku.replace(/^berlaku:\s*/i, '')}
-                    </p>
-                  </div>
+                  {Boolean(masaBerlaku && !hasCustomBerlakuBadge) && (
+                    <div className="flex flex-col">
+                      <p className="text-[6.5px] font-semibold text-slate-700 leading-tight whitespace-nowrap">
+                        Berlaku: {masaBerlaku.replace(/^berlaku:\s*/i, '')}
+                      </p>
+                    </div>
+                  )}
                 </>
               )
             })}
@@ -916,7 +943,7 @@ const KartuPelajarCard = forwardRef(({
                 scaleVal: fotoScale,
                 rotateVal: fotoRotate,
                 origin: 'center center',
-                className: 'w-[92px] h-[120px] rounded-2xl overflow-hidden border-2 border-slate-300/90 bg-slate-50 relative shadow-xs flex items-center justify-center',
+                className: 'w-[92px] h-[120px] rounded-2xl overflow-hidden border-2 border-indigo-500 bg-slate-50 relative shadow-sm flex items-center justify-center',
                 children: (
                   isValidPhoto && !photoError ? (
                     <img 
@@ -1034,10 +1061,22 @@ const KartuPelajarCard = forwardRef(({
         {/* 3. FOOTER GRAPHIC WAVE BANNER (PERSIS DENGAN GAMBAR CONTOH) */}
         <div className="absolute bottom-0 left-0 right-0 h-6 pointer-events-none z-10 overflow-hidden">
           <svg viewBox="0 0 510 26" className="w-full h-full" preserveAspectRatio="none">
-            {/* Merah Accent Wave di Kiri Bawah */}
+            <defs>
+              <linearGradient id={redGradBottomId} x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={theme.accentHex1 || '#ef4444'} />
+                <stop offset="50%" stopColor={theme.accentHex2 || '#dc2626'} />
+                <stop offset="100%" stopColor={theme.accentHex2 || '#dc2626'} />
+              </linearGradient>
+            </defs>
+
+            {/* Merah Accent Wave di Kiri Bawah (Solid Backing + Gradient) */}
             <path 
               d="M 0,16 C 35,16 65,19 125,24 C 70,24 25,24 0,24 Z" 
-              fill="url(#redGradBottom)" 
+              fill={theme.accentHex2 || '#dc2626'} 
+            />
+            <path 
+              d="M 0,16 C 35,16 65,19 125,24 C 70,24 25,24 0,24 Z" 
+              fill={`url(#${redGradBottomId})`} 
             />
             <path 
               d="M 0,20 C 40,20 75,22 140,26 L 0,26 Z" 
@@ -1056,13 +1095,6 @@ const KartuPelajarCard = forwardRef(({
               fill="white" 
               opacity="0.9" 
             />
-            <defs>
-              <linearGradient id="redGradBottom" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor={theme.accentHex1} />
-                <stop offset="50%" stopColor={theme.accentHex2} />
-                <stop offset="100%" stopColor={theme.accentHex2} />
-              </linearGradient>
-            </defs>
           </svg>
 
           {/* Pill Web Sekolah di Tengah Pita Navy (Persis Gambar Contoh) */}

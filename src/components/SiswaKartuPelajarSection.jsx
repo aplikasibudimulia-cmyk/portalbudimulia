@@ -193,7 +193,75 @@ export const auditStudentCompleteness = (student) => {
 }
 
 export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], onUpdateStudentData }) {
-  const [settings, setSettings] = useState({})
+  // Pengaturan Tampilan Kartu Pelajar dari Admin (dengan default lengkap)
+  const [settings, setSettings] = useState({
+    kartu_nama_sekolah: 'SMP BUDI MULIA',
+    kartu_npsn_sekolah: '20106353',
+    kartu_instansi_sekolah: 'DINAS PENDIDIKAN PROVINSI DKI JAKARTA',
+    kartu_akreditasi: 'TERAKREDITASI A',
+    kartu_judul: 'KARTU TANDA PELAJAR',
+    kartu_subjudul: 'SEKOLAH MENENGAH PERTAMA',
+    kartu_alamat_sekolah: 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730',
+    kartu_nama_kepsek: 'Septian Ruswadi, S.Pd',
+    kartu_nip_kepsek: '-',
+    kartu_tema_warna: 'budi_mulia_resmi',
+    kartu_logo_url: '/logo_budimulia.png',
+    kartu_tanggal_terbit: 'Jakarta, 1 Juli 2026',
+    kartu_web_sekolah: 'smpbudimuliajakarta.sch.id',
+    kartu_masa_berlaku: 'Selama Menjadi Siswa Aktif',
+    kartu_footer_teks: 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA',
+    kartu_visi_sekolah: 'Terwujudnya peserta didik yang beriman, berakhlak mulia, cerdas, berprestasi, berwawasan global, dan berakar pada budaya bangsa.',
+    kartu_misi_sekolah: 
+`1. Menanamkan keimanan, ketakwaan, dan budi pekerti luhur melalui pembiasaan dan pengamalan nilai-nilai keagamaan.
+2. Menyelenggarakan proses pembelajaran yang aktif, inovatif, kreatif, efektif, menyenangkan, dan berbasis teknologi.
+3. Mengembangkan potensi bakat, minat, dan prestasi peserta didik secara optimal di bidang akademik maupun non-akademik.
+4. Menumbuhkan budaya disiplin, cinta tanah air, kepedulian sosial, serta kelestarian lingkungan hidup.`,
+    kartu_ttd_url: '',
+    kartu_ttd_size: 100,
+    kartu_ttd_x: 0,
+    kartu_ttd_y: 0,
+    kartu_ttd_rotate: 0,
+    kartu_cap_url: '',
+    kartu_cap_size: 100,
+    kartu_cap_x: 0,
+    kartu_cap_y: 0,
+    kartu_cap_rotate: -8,
+    kartu_cap_opacity: 90,
+    kartu_bg_logo_size: 100,
+    kartu_bg_logo_x: 0,
+    kartu_bg_logo_y: 0,
+    kartu_bg_logo_opacity: 8,
+    kartu_glossy_effect: false,
+    kartu_belakang_teks: 
+`1. Kartu ini adalah tanda pengenal sah siswa SMP Budi Mulia Jakarta.
+2. Wajib dibawa saat berada di lingkungan sekolah dan kegiatan resmi.
+3. Kartu ini tidak dapat dipindahtangankan kepada orang lain.
+4. Apabila kartu ini hilang atau rusak, segera lapor ke bagian Tata Usaha / Kesiswaan.
+5. Jika menemukan kartu ini, mohon kembalikan ke alamat sekolah di bawah ini.`
+  })
+
+  // Responsive scale untuk kartu preview agar pas sempurna di layar HP / Desktop
+  const [cardScale, setCardScale] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const w = window.innerWidth
+      if (w < 380) return 0.62
+      if (w < 480) return 0.70
+      if (w < 640) return 0.80
+    }
+    return 1
+  })
+
+  useEffect(() => {
+    const updateScale = () => {
+      const w = window.innerWidth
+      if (w < 380) setCardScale(0.62)
+      else if (w < 480) setCardScale(0.70)
+      else if (w < 640) setCardScale(0.80)
+      else setCardScale(1)
+    }
+    window.addEventListener('resize', updateScale)
+    return () => window.removeEventListener('resize', updateScale)
+  }, [])
   const [currentSide, setCurrentSide] = useState('front') // 'front' | 'back'
   const [isFlipping, setIsFlipping] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
@@ -307,12 +375,32 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           .select('setting_key, setting_value')
           .like('setting_key', 'kartu_%')
 
-        if (data) {
-          const sMap = {}
-          data.forEach(item => {
-            sMap[item.setting_key] = item.setting_value
+        if (data && data.length > 0) {
+          setSettings(prev => {
+            const next = { ...prev }
+            data.forEach(item => {
+              next[item.setting_key] = item.setting_value
+            })
+            if (!next.kartu_tema_warna || next.kartu_tema_warna !== 'budi_mulia_resmi') {
+              next.kartu_tema_warna = 'budi_mulia_resmi'
+            }
+            if (!next.kartu_logo_url || next.kartu_logo_url === '/logo.png') {
+              next.kartu_logo_url = '/logo_budimulia.png'
+            }
+            if (!next.kartu_alamat_sekolah || next.kartu_alamat_sekolah.includes('Jl. Mangga Besar No. 2M')) {
+              next.kartu_alamat_sekolah = 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730'
+            }
+            if (!next.kartu_tanggal_terbit || next.kartu_tanggal_terbit.includes('15 Juli 2025')) {
+              next.kartu_tanggal_terbit = 'Jakarta, 1 Juli 2026'
+            }
+            if (!next.kartu_web_sekolah || next.kartu_web_sekolah.includes('ebudimulia.com')) {
+              next.kartu_web_sekolah = 'smpbudimuliajakarta.sch.id'
+            }
+            if (!next.kartu_npsn_sekolah || next.kartu_npsn_sekolah === '20100223') {
+              next.kartu_npsn_sekolah = '20106353'
+            }
+            return next
           })
-          setSettings(sMap)
         }
       } catch (err) {
         console.warn('Gagal memuat pengaturan kartu pelajar:', err)
@@ -1084,30 +1172,24 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           </div>
 
           {/* Kartu Pelajar Render */}
-          <div className="w-full bg-slate-50/80 border border-slate-200/70 rounded-2xl p-4 sm:p-8 flex items-center justify-center overflow-x-auto shadow-inner">
+          <div className="w-full bg-slate-50/80 border border-slate-200/70 rounded-2xl p-2 sm:p-8 flex items-center justify-center overflow-x-auto shadow-inner">
             <div 
               className={`transition-all duration-300 transform ${
                 isFlipping ? 'scale-95 opacity-50 rotate-y-90' : 'scale-100 opacity-100 rotate-y-0'
               }`}
+              style={{
+                width: cardScale < 1 ? `${Math.round(510 * cardScale)}px` : '510px',
+                height: cardScale < 1 ? `${Math.round(322 * cardScale)}px` : '322px',
+                position: 'relative'
+              }}
             >
-              <div className="hidden sm:block">
-                <KartuPelajarCard
-                  student={studentData}
-                  photoUrl={photoUrl}
-                  settings={settings}
-                  side={currentSide}
-                  scale={1}
-                />
-              </div>
-              <div className="sm:hidden" style={{ width: '340px', height: '214px' }}>
-                <KartuPelajarCard
-                  student={studentData}
-                  photoUrl={photoUrl}
-                  settings={settings}
-                  side={currentSide}
-                  scale={340 / 510}
-                />
-              </div>
+              <KartuPelajarCard
+                student={studentData}
+                photoUrl={photoUrl}
+                settings={settings}
+                side={currentSide}
+                scale={cardScale}
+              />
             </div>
           </div>
 
