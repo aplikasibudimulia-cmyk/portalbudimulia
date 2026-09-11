@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
+import { sendFCMPushNotification } from '../utils/fcmSender'
 
 export default function AdminPengajuanPoinSection({ session, activeTa, readOnly = false }) {
   const [activeTab, setActiveTab] = useState('pengajuan') // 'pengajuan' | 'ban'
@@ -343,11 +344,15 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
           created_at: now
         })
 
-        // Kirim realtime broadcast ke HP siswa
-        const notifChannel = supabase.channel(`dashboard-siswa-live-${pengajuan.nisn}`, { config: { broadcast: { self: true } } })
-        notifChannel.subscribe(async (status) => {
-          if (status === 'SUBSCRIBED') {
-            await notifChannel.send({
+        // Kirim realtime broadcast ke HP siswa (kedua channel)
+        const targetChannels = [
+          `dashboard-siswa-live-${pengajuan.nisn}`,
+          `app-notif-${pengajuan.nisn}`
+        ]
+        targetChannels.forEach(chName => {
+          const notifChannel = supabase.channel(chName, { config: { broadcast: { self: true } } })
+          if (notifChannel.state === 'joined') {
+            notifChannel.send({
               type: 'broadcast',
               event: 'pengajuan_poin_update',
               payload: {
@@ -358,11 +363,34 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
                 nisn: pengajuan.nisn
               }
             })
-            setTimeout(() => {
-              supabase.removeChannel(notifChannel)
-            }, 3000)
+          } else {
+            notifChannel.subscribe(async (status) => {
+              if (status === 'SUBSCRIBED') {
+                await notifChannel.send({
+                  type: 'broadcast',
+                  event: 'pengajuan_poin_update',
+                  payload: {
+                    judul: notifJudul,
+                    pesan: notifPesan,
+                    status: targetStatus,
+                    poin: pengajuan.poin_diajukan,
+                    nisn: pengajuan.nisn
+                  }
+                })
+                setTimeout(() => supabase.removeChannel(notifChannel), 3000)
+              }
+            })
           }
         })
+
+        // Kirim Google FCM Push Notification (membangunkan HP walau aplikasi tertutup)
+        sendFCMPushNotification({
+          nisn: pengajuan.nisn,
+          role: 'Siswa',
+          title: notifJudul,
+          body: notifPesan,
+          targetMenu: 'AJUKAN_POIN'
+        }).catch(fcmErr => console.warn('[FCM Poin] Push error:', fcmErr))
       }
     } catch (notifErr) {
       console.warn('Gagal insert notifikasi siswa:', notifErr)
@@ -480,28 +508,57 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
       if (notifInserts.length > 0) {
         await supabase.from('notifikasi').insert(notifInserts)
 
-        // Kirim realtime broadcast untuk masing-masing siswa
+        // Kirim realtime broadcast untuk masing-masing siswa (kedua channel)
         itemsToApprove.forEach(item => {
           const alasanRingkas = item.alasan ? (item.alasan.length > 50 ? item.alasan.slice(0, 50) + '...' : item.alasan) : 'Kegiatan Positif'
-          const notifChannel = supabase.channel(`dashboard-siswa-live-${item.nisn}`, { config: { broadcast: { self: true } } })
-          notifChannel.subscribe(async (status) => {
-            if (status === 'SUBSCRIBED') {
-              await notifChannel.send({
+          const judul = `Pengajuan Poin Disetujui (+${item.poin_diajukan} Poin)`
+          const pesan = `Selamat! Pengajuan poin mandiri Anda untuk "${alasanRingkas}" telah disetujui oleh ${reviewerName}.`
+
+          const targetChannels = [
+            `dashboard-siswa-live-${item.nisn}`,
+            `app-notif-${item.nisn}`
+          ]
+          targetChannels.forEach(chName => {
+            const notifChannel = supabase.channel(chName, { config: { broadcast: { self: true } } })
+            if (notifChannel.state === 'joined') {
+              notifChannel.send({
                 type: 'broadcast',
                 event: 'pengajuan_poin_update',
                 payload: {
-                  judul: `Pengajuan Poin Disetujui (+${item.poin_diajukan} Poin)`,
-                  pesan: `Selamat! Pengajuan poin mandiri Anda untuk "${alasanRingkas}" telah disetujui oleh ${reviewerName}.`,
+                  judul,
+                  pesan,
                   status: 'disetujui',
                   poin: item.poin_diajukan,
                   nisn: item.nisn
                 }
               })
-              setTimeout(() => {
-                supabase.removeChannel(notifChannel)
-              }, 3000)
+            } else {
+              notifChannel.subscribe(async (status) => {
+                if (status === 'SUBSCRIBED') {
+                  await notifChannel.send({
+                    type: 'broadcast',
+                    event: 'pengajuan_poin_update',
+                    payload: {
+                      judul,
+                      pesan,
+                      status: 'disetujui',
+                      poin: item.poin_diajukan,
+                      nisn: item.nisn
+                    }
+                  })
+                  setTimeout(() => supabase.removeChannel(notifChannel), 3000)
+                }
+              })
             }
           })
+
+          sendFCMPushNotification({
+            nisn: item.nisn,
+            role: 'Siswa',
+            title: judul,
+            body: pesan,
+            targetMenu: 'AJUKAN_POIN'
+          }).catch(fcmErr => console.warn('[FCM Bulk Poin] Push error:', fcmErr))
         })
       }
     } catch (nErr) {

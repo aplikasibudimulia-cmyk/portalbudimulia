@@ -159,7 +159,7 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
             android: {
               priority: 'high',
               notification: {
-                channel_id: 'ebudimulia-notif-v3',
+                channel_id: 'ebudimulia_presensi_v5',
                 icon: 'ic_launcher',
                 color: '#4F46E5',
                 sound: 'default',
@@ -263,7 +263,7 @@ export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body
             android: {
               priority: 'high',
               notification: {
-                channel_id: 'ebudimulia-notif-v3',
+                channel_id: 'ebudimulia_presensi_v5',
                 icon: 'ic_launcher',
                 color: '#10B981',
                 sound: 'default',

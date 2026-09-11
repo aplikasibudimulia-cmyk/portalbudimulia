@@ -1,1 +1,0 @@
-import{k as s}from"./index-D2ha3FKN.js";const l=async({userId:a=null,userRole:t,action:i,details:e})=>{try{let r=t;a&&(r=`${t}`);const{error:o}=await s.from("activity_log").insert({aktor:r,aksi:i,detail:e});o&&console.error("Failed to log activity:",o.message)}catch(r){console.error("Error logging activity:",r)}};export{l};
