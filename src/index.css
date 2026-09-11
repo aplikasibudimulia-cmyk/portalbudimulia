@@ -36,6 +36,19 @@
   }
 }
 
+/* Kartu Pelajar selalu menggunakan Plus Jakarta Sans */
+[data-card-side],
+[data-card-side] *,
+[data-card-side] *::before,
+[data-card-side] *::after {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+[data-card-side] .font-mono,
+[data-card-side] .font-mono * {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+}
+
 :root, [data-theme="indigo"] {
   --theme-50: #eef2ff;
   --theme-100: #e0e7ff;

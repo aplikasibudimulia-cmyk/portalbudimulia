@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "475153955201",
+    "project_id": "ebudimulia-d1a16",
+    "storage_bucket": "ebudimulia-d1a16.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475153955201:android:61cb0f1bf92bdf6217d080",
+        "android_client_info": {
+          "package_name": "com.ebudimulia.portal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBWNK5Ot_Fbw9BW2u843NAwSxFkKUx888o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

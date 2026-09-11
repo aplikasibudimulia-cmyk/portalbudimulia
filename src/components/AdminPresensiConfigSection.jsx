@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
+import { getTodayWIB } from '../utils/dateUtils'
 
 // ===== Haversine Distance Calculator =====
 function hitungJarak(lat1, lon1, lat2, lon2) {
@@ -18,9 +19,10 @@ function hitungJarak(lat1, lon1, lat2, lon2) {
 export default function AdminPresensiConfigSection() {
   const [settings, setSettings] = useState({
     qr_interval_detik: '20',
-    jam_mulai_presensi: '06:00',
+    jam_mulai_presensi: '05:00',
     jam_batas_hadir: '07:00',
-    jam_batas_pulang: '14:00',
+    jam_mulai_pulang: '13:00',
+    jam_batas_pulang: '18:00',
     jadwal_otomatis_aktif: 'false',
     hari_aktif_presensi: '1,2,3,4,5',
     presensi_masuk_mode: 'qr',
@@ -201,7 +203,7 @@ export default function AdminPresensiConfigSection() {
     setSaving(true)
     setSaveMsg('')
     const keys = [
-      'qr_interval_detik', 'jam_mulai_presensi', 'jam_batas_hadir', 'jam_batas_pulang',
+      'qr_interval_detik', 'jam_mulai_presensi', 'jam_batas_hadir', 'jam_mulai_pulang', 'jam_batas_pulang',
       'jadwal_otomatis_aktif', 'hari_aktif_presensi', 'presensi_masuk_mode', 'presensi_qr_aktif', 'presensi_pulang_aktif',
       'selfie_required', 'notif_peringatan_aktif', 'jam_mulai_notif_belum_presensi',
       'notif_pengingat_interval_menit',
@@ -214,11 +216,11 @@ export default function AdminPresensiConfigSection() {
         saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
       ])
       setSaving(false)
-      setSaveMsg('✅ Pengaturan disimpan!')
+      setSaveMsg('Pengaturan berhasil disimpan.')
       setTimeout(() => setSaveMsg(''), 3000)
     } catch (err) {
       setSaving(false)
-      setSaveMsg('❌ Gagal menyimpan pengaturan: ' + (err.message || 'Error Supabase'))
+      setSaveMsg('Gagal menyimpan pengaturan: ' + (err.message || 'Error Supabase'))
     }
   }
 
@@ -267,7 +269,7 @@ export default function AdminPresensiConfigSection() {
   const [statHariIni, setStatHariIni] = useState({ hadir: 0, belum: 0, pulang: 0 })
   useEffect(() => {
     const fetchStat = async () => {
-      const today = new Date().toLocaleDateString('en-CA')
+      const today = getTodayWIB()
       const { data } = await supabase.from('presensi_harian').select('siswa_nisn, tipe').eq('tanggal', today)
       if (data) {
         const masukSet = new Set(data.filter(p => !p.tipe || p.tipe === 'masuk').map(p => p.siswa_nisn))
@@ -428,46 +430,55 @@ export default function AdminPresensiConfigSection() {
         <div className="border border-slate-200 rounded-xl p-4 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-700">⏰ Jadwal Otomatis Harian</p>
-              <p className="text-xs text-slate-400 mt-0.5">Atur jam presensi otomatis. Saat jam batas pulang tercapai, presensi hari itu selesai otomatis.</p>
+              <p className="text-sm font-semibold text-slate-700">Jadwal Otomatis Harian</p>
+              <p className="text-xs text-slate-400 mt-0.5">Atur jam presensi otomatis. Sesi masuk dan sesi pulang terbuka otomatis sesuai jam yang ditentukan.</p>
             </div>
             <ToggleSwitch value={settings.jadwal_otomatis_aktif} onChange={v => setSettings(p => ({ ...p, jadwal_otomatis_aktif: v }))} colorOn="bg-violet-500" />
           </div>
 
           {settings.jadwal_otomatis_aktif === 'true' && (
             <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-xs text-violet-800 flex items-start gap-2">
-              <span className="shrink-0 text-base">🗓️</span>
-              <span>Jadwal otomatis <strong>aktif</strong>. Presensi akan dimulai pukul <strong>{settings.jam_mulai_presensi}</strong> dan ditutup otomatis pukul <strong>{settings.jam_batas_pulang}</strong>. QR di layar TV akan menampilkan layar selesai setelahnya.</span>
+              <svg className="w-4 h-4 text-violet-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>Jadwal otomatis <strong>aktif</strong>. Presensi masuk dibuka pukul <strong>{settings.jam_mulai_presensi}</strong>, batas tepat waktu <strong>{settings.jam_batas_hadir}</strong>, presensi pulang dibuka pukul <strong>{settings.jam_mulai_pulang || '13:00'}</strong>, dan presensi hari ini ditutup pukul <strong>{settings.jam_batas_pulang}</strong>.</span>
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Mulai Presensi</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Mulai Masuk</label>
               <input type="time"
                 value={settings.jam_mulai_presensi}
                 onChange={e => setSettings(p => ({ ...p, jam_mulai_presensi: e.target.value }))}
                 className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
               />
-              <p className="text-xs text-slate-400 mt-1">QR mulai aktif</p>
+              <p className="text-[11px] text-slate-400 mt-1">Sesi masuk aktif</p>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Batas Hadir</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Batas Hadir Tepat Waktu</label>
               <input type="time"
                 value={settings.jam_batas_hadir}
                 onChange={e => setSettings(p => ({ ...p, jam_batas_hadir: e.target.value }))}
                 className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
               />
-              <p className="text-xs text-slate-400 mt-1">Lewat ini = Terlambat</p>
+              <p className="text-[11px] text-slate-400 mt-1">Lewat ini = Terlambat</p>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Batas Pulang</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Jam Mulai Pulang</label>
+              <input type="time"
+                value={settings.jam_mulai_pulang || '13:00'}
+                onChange={e => setSettings(p => ({ ...p, jam_mulai_pulang: e.target.value }))}
+                className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">Sesi pulang dibuka otomatis</p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Batas Selesai Presensi</label>
               <input type="time"
                 value={settings.jam_batas_pulang}
                 onChange={e => setSettings(p => ({ ...p, jam_batas_pulang: e.target.value }))}
                 className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-violet-500 outline-none bg-slate-50"
               />
-              <p className="text-xs text-slate-400 mt-1">Presensi selesai otomatis</p>
+              <p className="text-[11px] text-slate-400 mt-1">Presensi ditutup otomatis</p>
             </div>
           </div>
 

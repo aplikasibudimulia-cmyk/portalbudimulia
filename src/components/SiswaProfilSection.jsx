@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 
-export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua = false }) {
+export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua = false, onOpenEditBiodata }) {
   const [enrollments, setEnrollments] = useState([])
   const [rekapKehadiran, setRekapKehadiran] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
   const [dokumenStatus, setDokumenStatus] = useState([])
@@ -118,7 +118,7 @@ export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua 
             </div>
           </div>
 
-          <div className="px-6 md:px-10 pb-8 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+          <div className="px-6 md:px-10 pb-6 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
             <div>
               <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">NIPD</p>
               <p className="font-semibold text-slate-800">{studentData.nipd || '-'}</p>
@@ -137,6 +137,59 @@ export default function SiswaProfilSection({ studentData, menuTypes, isOrangTua 
               <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Tahun Ajaran Aktif</p>
               <p className="font-semibold text-slate-800">{studentData.tahun_ajaran || '-'}</p>
             </div>
+          </div>
+
+          {/* Data Kontak */}
+          <div className="px-6 md:px-10 py-4 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs flex-1">
+              <div>
+                <span className="text-slate-400 font-bold uppercase tracking-wider block">Kontak WhatsApp / HP Orang Tua</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {Array.isArray(studentData.kontak_ortu) && studentData.kontak_ortu.length > 0 ? (
+                    studentData.kontak_ortu.map((k, i) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 shadow-2xs">
+                        <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase">
+                          {k.tag || 'Orang Tua'}
+                        </span>
+                        <span>{k.nomor}</span>
+                        {k.nama && <span className="text-slate-400 font-normal">({k.nama})</span>}
+                      </span>
+                    ))
+                  ) : studentData.no_hp_ortu ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 shadow-2xs">
+                      <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase">
+                        Orang Tua
+                      </span>
+                      <span>{studentData.no_hp_ortu}</span>
+                      {studentData.nama_ortu && <span className="text-slate-400 font-normal">({studentData.nama_ortu})</span>}
+                    </span>
+                  ) : (
+                    <span className="text-amber-600 italic font-normal text-xs">Belum diisi</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-slate-400 font-bold uppercase tracking-wider block">Nomor WhatsApp Siswa</span>
+                <span className="font-bold text-slate-800 text-sm mt-1 block truncate">
+                  {studentData.no_whatsapp ? (
+                    <span className="font-mono">{studentData.no_whatsapp}</span>
+                  ) : (
+                    <span className="text-slate-400 italic font-normal text-xs">Belum diisi</span>
+                  )}
+                </span>
+              </div>
+            </div>
+            {onOpenEditBiodata && (
+              <button
+                type="button"
+                onClick={onOpenEditBiodata}
+                className="px-3.5 py-2 bg-white hover:bg-slate-100 text-indigo-600 border border-indigo-200 rounded-xl text-xs font-bold transition-all shadow-2xs shrink-0 self-start sm:self-auto flex items-center gap-1.5"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                Kelola Kontak Ortu
+              </button>
+            )}
           </div>
         </div>
       )}

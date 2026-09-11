@@ -49,10 +49,19 @@ const FITUR_CATEGORIES = [
       { id: 'lihat_tahap_pembinaan', label: 'Lihat Tahap Pembinaan', desc: 'Melihat kriteria tahap pembinaan siswa' },
       { id: 'catat_poin', label: 'Catat Poin Siswa', desc: 'Input poin pelanggaran/prestasi ke siswa' },
       { id: 'kelola_prestasi_lomba', label: 'Catat Prestasi & Lomba', desc: 'Input, edit, dan sinkronisasi rekam prestasi & keikutsertaan lomba siswa' },
+      { id: 'pendamping_lomba', label: 'Pendamping Lomba', desc: 'Mencatat dan mengelola kegiatan atau perlombaan yang didampingi beserta daftar siswa peserta' },
       { id: 'kelola_poin_siswa', label: 'Kelola Pengaturan Poin', desc: 'Set poin default, reset poin, lihat semua poin siswa' },
       { id: 'akses_rekap_poin', label: 'Lihat Rekap Poin Sekolah', desc: 'Memantau peringkat poin dan rekap pelanggaran sekolah' },
       { id: 'kelola_pengajuan_poin', label: 'Kelola Pengajuan Poin Positif', desc: 'Review, setujui, tolak, atau tandai spam pengajuan poin positif dari siswa' },
       { id: 'lihat_pengajuan_poin', label: 'Lihat Pengajuan Poin (Read Only)', desc: 'Melihat daftar pengajuan poin positif siswa tanpa bisa approve/reject' }
+    ]
+  },
+  {
+    title: 'Keuangan & SPP Siswa',
+    features: [
+      { id: 'kelola_tagihan_spp', label: 'Kelola Tagihan & SPP Siswa', desc: 'Akses Buku Kasir SPP 12 Bulan, catat bayar manual, dan penagihan WhatsApp orang tua' },
+      { id: 'upload_mutasi_bca', label: 'Upload Mutasi BCA (Auto-Reconcile)', desc: 'Upload file Excel mutasi Virtual Account BCA dengan proteksi anti-duplikasi' },
+      { id: 'lihat_laporan_keuangan_spp', label: 'Lihat Laporan Keuangan SPP', desc: 'Melihat rekapitulasi pembayaran SPP siswa dan export laporan (Read-Only)' }
     ]
   },
   {

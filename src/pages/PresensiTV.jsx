@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
 import { QRCodeSVG } from 'qrcode.react'
 import { dispatchDualNotification } from '../utils/pushNotif'
+import { getTodayWIB } from '../utils/dateUtils'
 
 // Theme Colors Mapping (Based on data-theme config in index.css)
 const THEME_MAP = {
@@ -198,7 +199,7 @@ export default function PresensiTV() {
 
   // Fetch stats presensi hari ini
   const fetchStats = useCallback(async () => {
-    const today = new Date().toLocaleDateString('en-CA')
+    const today = getTodayWIB()
     const { data: siswaAll } = await supabase.from('siswa_lengkap').select('nisn').eq('is_aktif', true)
     const total = siswaAll?.length ?? 0
 
@@ -220,7 +221,7 @@ export default function PresensiTV() {
 
   // Fetch 6 latest checked-in students dynamically (khusus metode kiosk RFID / QR scan)
   const fetchLatestCheckins = useCallback(async () => {
-    const todayStr = new Date().toLocaleDateString('en-CA')
+    const todayStr = getTodayWIB()
     const { data, error } = await supabase
       .from('presensi_harian')
       .select('siswa_nisn, waktu, status, tipe, metode')
@@ -344,7 +345,7 @@ export default function PresensiTV() {
 
   // Realtime events listener — instant update via payload, then full refresh
   useEffect(() => {
-    const todayStr = new Date().toLocaleDateString('en-CA')
+    const todayStr = getTodayWIB()
 
     const channel = supabase
       .channel('presensi-tv-realtime')

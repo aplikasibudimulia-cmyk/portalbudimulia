@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { getTodayWIB } from '../utils/dateUtils'
 
 export default function PiketDashboardSection({ session, activeTa, filterKelas }) {
-  const [tanggal, setTanggal] = useState(new Date().toLocaleDateString('en-CA'))
+  const [tanggal, setTanggal] = useState(getTodayWIB())
   const [semuaKelas, setSemuaKelas] = useState([])
   const [semuaSiswa, setSemuaSiswa] = useState([])
   const [presensiHariIni, setPresensiHariIni] = useState([])
@@ -44,7 +45,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
         setting_value: nextState ? 'true' : 'false'
       }, { onConflict: 'setting_key' })
 
-      const todayDateStr = new Date().toLocaleDateString('en-CA')
+      const todayDateStr = getTodayWIB()
       if (nextState) {
         await supabase.from('sesi_presensi').upsert({
           tanggal: todayDateStr,
@@ -852,6 +853,16 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
               <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
             </svg>
             Presensi Manual Siswa
+          </a>
+          <a
+            href="/presensi-susulan-siswa"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0"
+            title="Buka tab Presensi Susulan untuk siswa yang lupa presensi pagi (selalu dicatat Hadir)"
+          >
+            <span>📝</span>
+            <span>Presensi Susulan Siswa</span>
           </a>
           <input 
             type="date" 

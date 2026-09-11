@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
+import { getTodayWIB } from '../utils/dateUtils'
 
 // Constants
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
@@ -43,25 +44,35 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
   useEffect(() => {
     fetchAllWidgets()
     
-    // Setup realtime untuk presensi hari ini & sesi_presensi
-    const channel = supabase.channel(`siswa-dashboard-widgets-${studentData.nisn}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, () => {
-        fetchPresensi()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
-        fetchPresensi()
-      })
-      .subscribe()
+    if (!studentData?.nisn) return
 
-    return () => supabase.removeChannel(channel)
-  }, [studentData.nisn])
+    let channel = null
+    try {
+      const channelName = `sdw-${studentData.nisn}-${Math.random().toString(36).slice(2)}`
+      channel = supabase.channel(channelName)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, () => {
+          fetchPresensi()
+          fetchRekapBulan()
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
+          fetchPresensi()
+        })
+        .subscribe()
+    } catch (err) {
+      console.warn('Realtime subscription error in SiswaDashboardWidgets:', err)
+    }
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
+  }, [studentData?.nisn])
 
   useEffect(() => {
     fetchDokumenStatus()
   }, [menuTypes])
 
   const fetchPresensi = async () => {
-    const today = new Date().toLocaleDateString('en-CA')
+    const today = getTodayWIB()
     const [{ data: prData }, { data: sesi }, { data: settings }] = await Promise.all([
       supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
       supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
@@ -72,146 +83,170 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     setSesiPresensiAktif(!!sesi || pulAktif)
   }
 
-  const fetchAllWidgets = async () => {
-    setLoading(true)
-    const today = new Date()
-    const todayStr = today.toLocaleDateString('en-CA')
-    const thisMonthPrefix = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
-
+  const fetchRekapBulan = async () => {
+    if (!studentData?.nisn) return
     try {
-      // 1. Fetch Presensi Hari Ini
-      const reqPresensiHariIni = supabase.from('presensi_harian').select('*').eq('tanggal', todayStr).eq('siswa_nisn', studentData.nisn)
-      
-      // 2. Fetch Rekap Presensi Bulan Ini
+      const todayStr = getTodayWIB()
+      const [yearNum, monthNum] = todayStr.split('-').map(Number)
+      const thisMonthPrefix = todayStr.slice(0, 7)
       const startOfMonth = `${thisMonthPrefix}-01`
-      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+      const lastDay = new Date(yearNum, monthNum, 0).getDate()
       const endOfMonth = `${thisMonthPrefix}-${String(lastDay).padStart(2, '0')}`
-      const reqRekapBulan = supabase.from('presensi_harian').select('status, tipe').eq('siswa_nisn', studentData.nisn).gte('tanggal', startOfMonth).lte('tanggal', endOfMonth)
-      
-      // 3. Fetch Nilai Terbaru
-      const reqNilai = supabase.from('nilai_siswa')
-        .select(`
-          nilai,
-          nilai_komponen!inner (nama, is_nilai_visible, mata_pelajaran!inner (nama))
-        `)
+
+      const { data, error } = await supabase
+        .from('presensi_harian')
+        .select('status, tipe')
         .eq('siswa_nisn', studentData.nisn)
-        .eq('nilai_komponen.is_nilai_visible', true)
-        .order('updated_at', { ascending: false })
-        .limit(3)
-        
-      // 4. Fetch Berita Sekolah
-      const reqBerita = supabase.from('berita_sekolah')
-        .select('*')
-        .eq('is_published', true)
-        .contains('target_role', ['siswa'])
-        .order('published_at', { ascending: false })
-        .limit(3)
-        
-      // 5. Fetch Settings (Countdown & Presensi Pulang)
-      const reqSettings = supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa', 'presensi_pulang_aktif'])
+        .gte('tanggal', startOfMonth)
+        .lte('tanggal', endOfMonth)
 
-      // 6. Fetch Poin
-      const reqPoin = supabase.from('student_points').select('total_poin, poin_default').eq('nisn', studentData.nisn).eq('tahun_ajaran_id', studentData.tahun_ajaran_id).order('semester', { ascending: false }).limit(1).maybeSingle()
+      if (error) throw error
 
-      // 7. Fetch Sesi Presensi
-      const reqSesi = supabase.from('sesi_presensi').select('*').eq('tanggal', todayStr).maybeSingle()
-
-      const [resHariIni, resRekap, resNilai, resBerita, resSettings, resPoin, resSesi] = await Promise.all([
-        reqPresensiHariIni, reqRekapBulan, reqNilai, reqBerita, reqSettings, reqPoin, reqSesi
-      ])
-
-      // Set Sesi Presensi
-      const pulAktifVal = resSettings.data?.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
-      const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
-      setSesiPresensiAktif(!!resSesi.data || pulAktif)
-
-      // Set Presensi Hari ini
-      if (resHariIni.data) setPresensiHariIni(resHariIni.data)
-      
-      // Set Rekap Bulan Ini
-      if (resRekap.data) {
-        const records = resRekap.data.filter(p => !p.tipe || p.tipe !== 'pulang')
+      if (data) {
+        const records = data.filter(p => !p.tipe || p.tipe !== 'pulang')
         const rekap = { H: 0, T: 0, S: 0, I: 0, A: 0, total: records.length }
-        records.forEach(p => {
-          if (rekap[p.status] !== undefined) rekap[p.status]++
-        })
+        records.forEach(p => { if (rekap[p.status] !== undefined) rekap[p.status]++ })
         setRekapBulan(rekap)
       }
+    } catch (err) {
+      console.warn('Widget rekap error:', err)
+    }
+  }
 
-      // Set Nilai
-      if (resNilai.data) {
-        setNilaiTerbaru(resNilai.data)
-      }
+  const fetchAllWidgets = async () => {
+    if (!studentData?.nisn) {
+      setLoading(false)
+      return
+    }
+    
+    const todayStr = getTodayWIB()
+    const now = new Date()
 
-      // Set Berita
-      if (resBerita.data) {
-        const applicableBerita = resBerita.data.filter(b => {
-          if (!b.target_kelas || b.target_kelas.length === 0) return true
-          return b.target_kelas.includes(studentData.kelas)
-        })
-        setBerita(applicableBerita)
-      }
+    // Set motivasi immediately
+    setMotivasi(MOTIVASI_LIST[Math.floor(Math.random() * MOTIVASI_LIST.length)])
+    
+    // Immediately stop loading - widgets will populate as data arrives
+    setLoading(false)
 
-      // Set Countdown & Default Poin
-      let defaultPoinSiswa = 100
-      if (resSettings.data) {
-        const labelStr = resSettings.data.find(s => s.setting_key === 'countdown_label')?.setting_value
-        const dateStr = resSettings.data.find(s => s.setting_key === 'countdown_date')?.setting_value
-        const poinStr = resSettings.data.find(s => s.setting_key === 'poin_default_siswa')?.setting_value
-        if (poinStr) defaultPoinSiswa = parseInt(poinStr)
+    // Fire all queries independently - each one updates its own state when done
+    // No Promise.all or Promise.allSettled - so a slow/failing query never blocks others
+
+    // 1. Presensi Hari Ini
+    supabase.from('presensi_harian').select('*').eq('tanggal', todayStr).eq('siswa_nisn', studentData.nisn)
+      .then(({ data }) => { if (data) setPresensiHariIni(data) })
+      .catch(err => console.warn('Widget presensi error:', err))
+
+    // 2. Rekap Presensi Bulan Ini
+    fetchRekapBulan()
+
+    // 3. Nilai Terbaru
+    supabase.from('nilai_siswa')
+      .select('nilai, nilai_komponen(nama, is_nilai_visible, mata_pelajaran(nama))')
+      .eq('siswa_nisn', studentData.nisn)
+      .order('id', { ascending: false })
+      .limit(6)
+      .then(({ data }) => {
+        if (data) {
+          const valid = data.filter(n => n.nilai_komponen?.is_nilai_visible !== false).slice(0, 3)
+          setNilaiTerbaru(valid)
+        }
+      })
+      .catch(err => console.warn('Widget nilai error:', err))
+
+    // 4. Berita Sekolah
+    supabase.from('berita_sekolah')
+      .select('*')
+      .eq('is_published', true)
+      .contains('target_role', ['siswa'])
+      .order('published_at', { ascending: false })
+      .limit(3)
+      .then(({ data }) => {
+        if (data) {
+          const applicable = data.filter(b => {
+            if (!b.target_kelas || b.target_kelas.length === 0) return true
+            return b.target_kelas.includes(studentData.kelas)
+          })
+          setBerita(applicable)
+        }
+      })
+      .catch(err => console.warn('Widget berita error:', err))
+
+    // 5. Settings (Countdown & Presensi Pulang)
+    supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa', 'presensi_pulang_aktif'])
+      .then(({ data: settingsData }) => {
+        if (!settingsData) return
+        const pulAktifVal = settingsData.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
+        const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
+        
+        // Also check sesi_presensi for active session
+        supabase.from('sesi_presensi').select('*').eq('tanggal', todayStr).maybeSingle()
+          .then(({ data: sesiData }) => {
+            setSesiPresensiAktif(!!sesiData || pulAktif)
+          })
+          .catch(() => setSesiPresensiAktif(pulAktif))
+
+        // Set countdown
+        const labelStr = settingsData.find(s => s.setting_key === 'countdown_label')?.setting_value
+        const dateStr = settingsData.find(s => s.setting_key === 'countdown_date')?.setting_value
+        const poinStr = settingsData.find(s => s.setting_key === 'poin_default_siswa')?.setting_value
+        const defaultPoin = poinStr ? parseInt(poinStr) : 100
 
         if (labelStr && dateStr) {
           const targetDate = new Date(dateStr)
-          if (targetDate >= today) {
-            const diffTime = Math.abs(targetDate - today)
+          if (targetDate >= now) {
+            const diffTime = Math.abs(targetDate - now)
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
             setCountdown({ label: labelStr, days: diffDays })
           }
         }
-      }
 
-      // Set Poin Data
-      const currentPoin = resPoin.data?.total_poin ?? defaultPoinSiswa
-      const maxPoin = resPoin.data?.poin_default ?? defaultPoinSiswa
-      setPoinData({ current: currentPoin, max: maxPoin })
-      
-    } catch (err) {
-      console.error("Error fetching widgets:", err)
-    } finally {
-      setLoading(false)
-    }
+        // Fetch poin with the default from settings
+        supabase.from('student_points').select('total_poin, poin_default').eq('nisn', studentData.nisn).eq('tahun_ajaran_id', studentData.tahun_ajaran_id).order('semester', { ascending: false }).limit(1).maybeSingle()
+          .then(({ data: poinResData }) => {
+            const currentPoin = poinResData?.total_poin ?? defaultPoin
+            const maxPoin = poinResData?.poin_default ?? defaultPoin
+            setPoinData({ current: currentPoin, max: maxPoin })
+          })
+          .catch(() => setPoinData({ current: defaultPoin, max: defaultPoin }))
+      })
+      .catch(err => console.warn('Widget settings error:', err))
   }
 
   const fetchDokumenStatus = async () => {
-    if (!menuTypes || menuTypes.length === 0) return
-    const { data: berkas } = await supabase.from('berkas_pengumuman').select('*').eq('kode_siswa', studentData.kode)
-    
-    const status = menuTypes.map(type => {
-      const b = berkas?.find(x => x.kode_jenis === (type.dokumen_kode_jenis || type.kode_jenis))
-      const hasFile = b?.file_url && b.file_url !== '-'
-      // Check persyaratan
-      let accessible = hasFile
-      if (accessible && type.persyaratan && type.persyaratan.length > 0) {
-        const notMet = type.persyaratan.find(req => !b?.persyaratan_terpenuhi?.[req.id])
-        if (notMet) accessible = false
-      }
-      if (b?.is_accessible === false) accessible = false
+    if (!menuTypes || menuTypes.length === 0 || !studentData?.kode) return
+    try {
+      const { data: berkas } = await supabase.from('berkas_pengumuman').select('*').eq('kode_siswa', studentData.kode)
       
-      return {
-        id: type.id,
-        nama: type.nama,
-        hasFile,
-        accessible,
-        isNew: false
-      }
-    })
-    setDokumenStatus(status)
+      const status = menuTypes.map(type => {
+        const b = berkas?.find(x => x.kode_jenis === (type.dokumen_kode_jenis || type.kode_jenis))
+        const hasFile = b?.file_url && b.file_url !== '-'
+        // Check persyaratan
+        let accessible = hasFile
+        if (accessible && type.persyaratan && type.persyaratan.length > 0) {
+          const notMet = type.persyaratan.find(req => !b?.persyaratan_terpenuhi?.[req.id])
+          if (notMet) accessible = false
+        }
+        if (b?.is_accessible === false) accessible = false
+        
+        return {
+          id: type.id,
+          nama: type.nama,
+          hasFile,
+          accessible,
+          isNew: false
+        }
+      })
+      setDokumenStatus(status)
+    } catch (err) {
+      console.warn("Error fetching dokumen status:", err)
+    }
   }
 
-  if (loading) {
+  if (loading && !presensiHariIni && !rekapBulan.total && nilaiTerbaru.length === 0) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-pulse">
+        <div className="h-36 bg-slate-100 rounded-2xl"></div>
+        <div className="h-36 bg-slate-100 rounded-2xl"></div>
       </div>
     )
   }

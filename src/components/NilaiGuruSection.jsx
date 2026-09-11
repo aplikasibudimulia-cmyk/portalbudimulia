@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { getSemesterAktif } from '../utils/semesterUtils'
 import { useConfirm } from '../utils/useConfirm'
+import { downloadFile } from '../utils/fileDownloader'
 
 // ─── Icons ───────────────────────────────────────────────────────────────────
 const IconPlus = () => <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -695,13 +696,20 @@ export default function NilaiGuruSection({ session, activeTa }) {
     return true;
   }
 
-  const handleNilaiChange = async (komponenId, nisn, nilai) => {
+  const handleNilaiChange = async (komponenId, nisn, rawVal) => {
     const cellKey = `${komponenId}-${nisn}`
+    let val = rawVal === '' ? null : Number(rawVal)
+    if (val !== null && !isNaN(val)) {
+      val = Math.max(0, Math.min(100, val))
+    } else if (isNaN(val)) {
+      val = null
+    }
+
     setSavingCell(cellKey)
-    setNilaiData(prev => ({ ...prev, [komponenId]: { ...(prev[komponenId] || {}), [nisn]: nilai === '' ? null : Number(nilai) } }))
+    setNilaiData(prev => ({ ...prev, [komponenId]: { ...(prev[komponenId] || {}), [nisn]: val } }))
     await supabase.from('nilai_siswa').upsert({
       komponen_id: komponenId, siswa_nisn: nisn,
-      nilai: nilai === '' ? null : Number(nilai),
+      nilai: val,
       diinput_oleh: session.id, updated_at: new Date().toISOString()
     }, { onConflict: 'komponen_id,siswa_nisn' })
     setSavingCell(null)
@@ -1560,14 +1568,9 @@ const colWidths = Array(totalCols).fill({ wch: 10 })
       }
 
       const buffer = await wb.xlsx.writeBuffer()
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
       const clsName = selectedExportClasses.length > 1 ? 'MultiKelas' : selectedExportClasses[0];
-      a.download = `Nilai_${mapelNama}_${clsName}_Sem${sem?.nomor || '-'}.xlsx`
-      a.click()
-      window.URL.revokeObjectURL(url)
+      const filename = `Nilai_${mapelNama}_${clsName}_Sem${sem?.nomor || '-'}.xlsx`
+      await downloadFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
       
 

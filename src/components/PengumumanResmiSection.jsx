@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
+import { downloadPdf } from '../utils/fileDownloader'
 
 export default function PengumumanResmiSection({ session, activeTa }) {
   const isKepalaSekolah = session?.roles?.some(r => r.nama.toLowerCase().includes('kepala sekolah'))
@@ -366,7 +367,7 @@ export default function PengumumanResmiSection({ session, activeTa }) {
       doc.text('_______________________', 140, bottomY + 30)
     }
 
-    doc.save(`surat-resmi-kepsek-${item.nomor_surat || item.id}.pdf`)
+    await downloadPdf(doc, `surat-resmi-kepsek-${item.nomor_surat || item.id}.pdf`)
   }
 
   // Filter announcements

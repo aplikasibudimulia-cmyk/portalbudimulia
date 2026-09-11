@@ -19,7 +19,8 @@ export default function AdminBerandaConfigSection() {
     poinPositif: true,
     poinLeaderboard: true,
     poinTataTertib: true,
-    poinKatalog: true
+    poinKatalog: true,
+    kartuPelajar: true
   })
   const [showCalendar, setShowCalendar] = useState({
     siswa: true,
@@ -32,6 +33,7 @@ export default function AdminBerandaConfigSection() {
   })
   const [jadwalSemester, setJadwalSemester] = useState('2')
   const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
+  const [showTagihanOrtu, setShowTagihanOrtu] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
   
@@ -62,6 +64,7 @@ export default function AdminBerandaConfigSection() {
         if (item.setting_key === 'show_poin_leaderboard') newShowFeature.poinLeaderboard = item.setting_value === 'true'
         if (item.setting_key === 'show_poin_tata_tertib') newShowFeature.poinTataTertib = item.setting_value === 'true'
         if (item.setting_key === 'show_poin_katalog') newShowFeature.poinKatalog = item.setting_value === 'true'
+        if (item.setting_key === 'show_feature_kartu_pelajar') newShowFeature.kartuPelajar = item.setting_value === 'true'
         if (item.setting_key === 'show_calendar_siswa') newShowCalendar.siswa = item.setting_value === 'true'
         if (item.setting_key === 'show_calendar_guru') newShowCalendar.guru = item.setting_value === 'true'
         if (item.setting_key === 'show_calendar_ortu') newShowCalendar.ortu = item.setting_value === 'true'
@@ -69,6 +72,7 @@ export default function AdminBerandaConfigSection() {
         if (item.setting_key === 'show_jadwal_ortu') newShowJadwal.ortu = item.setting_value === 'true'
         if (item.setting_key === 'jadwal_semester_aktif') loadedSemester = item.setting_value || '2'
         if (item.setting_key === 'link_grup_ortu') setLinkGrupOrtu(item.setting_value || '')
+        if (item.setting_key === 'show_tagihan_ortu') setShowTagihanOrtu(item.setting_value === 'true')
       })
       setShowProfile(newShowProfile)
       setShowFeature(newShowFeature)
@@ -98,13 +102,15 @@ export default function AdminBerandaConfigSection() {
         { setting_key: 'show_poin_leaderboard', setting_value: showFeature.poinLeaderboard.toString() },
         { setting_key: 'show_poin_tata_tertib', setting_value: showFeature.poinTataTertib.toString() },
         { setting_key: 'show_poin_katalog', setting_value: showFeature.poinKatalog.toString() },
+        { setting_key: 'show_feature_kartu_pelajar', setting_value: showFeature.kartuPelajar.toString() },
         { setting_key: 'show_calendar_siswa', setting_value: showCalendar.siswa.toString() },
         { setting_key: 'show_calendar_guru', setting_value: showCalendar.guru.toString() },
         { setting_key: 'show_calendar_ortu', setting_value: showCalendar.ortu.toString() },
         { setting_key: 'show_jadwal_siswa', setting_value: showJadwal.siswa.toString() },
         { setting_key: 'show_jadwal_ortu', setting_value: showJadwal.ortu.toString() },
         { setting_key: 'jadwal_semester_aktif', setting_value: jadwalSemester },
-        { setting_key: 'link_grup_ortu', setting_value: linkGrupOrtu }
+        { setting_key: 'link_grup_ortu', setting_value: linkGrupOrtu },
+        { setting_key: 'show_tagihan_ortu', setting_value: showTagihanOrtu.toString() }
       ]
  
       for (const item of settingsToSave) {
@@ -200,6 +206,10 @@ export default function AdminBerandaConfigSection() {
             <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.poin} onChange={() => toggleFeature('poin')} />
             <span className="text-xs font-medium text-slate-700">Poin Siswa (Master)</span>
           </label>
+          <label className="flex items-center gap-2 p-2 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={showFeature.kartuPelajar} onChange={() => toggleFeature('kartuPelajar')} />
+            <span className="text-xs font-medium text-slate-700">Kartu Pelajar Digital</span>
+          </label>
         </div>
 
         {showFeature.poin && (
@@ -277,6 +287,25 @@ export default function AdminBerandaConfigSection() {
               <option value="2">Semester 2</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800 mb-1">Akses Menu Tagihan & SPP Siswa (Portal Orang Tua)</h3>
+        <p className="text-xs text-slate-500 mb-3">Tentukan apakah menu informasi Tagihan & SPP (Nomor VA BCA & Status 12 Bulan) ditampilkan di akun orang tua.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex items-center gap-2.5 p-3 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 transition-colors">
+            <input 
+              type="checkbox" 
+              className="w-4 h-4 text-emerald-600 rounded" 
+              checked={showTagihanOrtu} 
+              onChange={(e) => setShowTagihanOrtu(e.target.checked)} 
+            />
+            <div>
+              <span className="text-xs font-bold text-slate-800">Tampilkan Menu Tagihan & SPP ke Orang Tua</span>
+              <p className="text-[10px] text-slate-400 mt-0.5">Jika dinonaktifkan, menu Tagihan & SPP akan disembunyikan dari dashboard orang tua.</p>
+            </div>
+          </label>
         </div>
       </div>
  

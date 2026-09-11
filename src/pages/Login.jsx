@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { getCameraStream } from '../utils/cameraUtils'
+import { initNativePushNotifications } from '../utils/pushNotif'
+import { saveAccount, loadAccounts, removeAccount } from '../utils/credentialStore'
 // bcrypt diverifikasi server-side via fn_login RPC (tidak perlu di browser)
 
 
@@ -36,6 +38,134 @@ function Login() {
   const [loading, setLoading] = useState(false)
   const [notification, setNotification] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Saved Accounts / Quick Login Switcher
+  const [savedAccounts, setSavedAccounts] = useState(() => loadAccounts())
+  const [directLoginId, setDirectLoginId] = useState(null) // id akun yang sedang direct-login
+
+  const saveAccountToHistory = (account) => {
+    try {
+      const updated = saveAccount(account)
+      setSavedAccounts(updated)
+    } catch (e) {
+      console.warn('Failed to save account:', e)
+    }
+  }
+
+  const removeSavedAccount = (id, e) => {
+    e.stopPropagation()
+    try {
+      const updated = removeAccount(id)
+      setSavedAccounts(updated)
+    } catch (e) {
+      console.warn('Failed to remove account:', e)
+    }
+  }
+
+  const handleSelectSavedAccount = (acc) => {
+    setLoginRole(acc.role)
+    setUsername(acc.username)
+    setPassword(acc.password)
+    setNotification({ type: 'success', message: `Memilih akun ${acc.displayName}` })
+  }
+
+  // Direct Login: klik kartu akun → langsung login via RPC tanpa isi form manual
+  const handleDirectLogin = async (acc) => {
+    if (directLoginId) return // cegah double-tap
+    setDirectLoginId(acc.id)
+    setNotification(null)
+
+    try {
+      let rpcRole = 'murid'
+      let sessionKey = 'siswa_session'
+      let targetPath = '/dashboard'
+
+      if (acc.role === 'Orang Tua') {
+        rpcRole = 'orang_tua'
+        sessionKey = 'orangtua_session'
+        targetPath = '/dashboard-orang-tua'
+      } else if (acc.role === 'Guru / Staff') {
+        rpcRole = 'staff'
+        sessionKey = 'guru_session'
+        targetPath = '/dashboard-guru'
+      }
+
+      // Login langsung via RPC server-side
+      const { data: result, error } = await supabase.rpc('fn_login', {
+        p_username: acc.username,
+        p_password: acc.password,
+        p_role: rpcRole
+      })
+
+      if (error || !result?.ok) {
+        const errMsg = result?.msg || error?.message || 'Gagal login.'
+        setNotification({ type: 'error', message: errMsg })
+        setDirectLoginId(null)
+        return
+      }
+
+      // Bersihkan session aktif lama agar tidak konflik
+      localStorage.removeItem('siswa_session')
+      localStorage.removeItem('guru_session')
+      localStorage.removeItem('orangtua_session')
+
+      let sessionData = {}
+      if (acc.role === 'Guru / Staff') {
+        const g = result.guru
+        sessionData = { id: g.id, kode: g.kode, nama_guru: g.nama_guru, user_name: g.user_name, foto_url: g.foto_url, roles: g.roles || [], kelas: g.kelas || [], akun_id: result.akun_id, app_role: result.role }
+        localStorage.setItem(sessionKey, JSON.stringify(sessionData))
+        logActivity({ userId: g.id, userRole: result.role, action: 'Pegawai Login', details: `${g.nama_guru} login via eBudiMulia.` })
+      } else {
+        sessionData = { ...result.siswa, kode: result.kode || null, kelas: result.kelas || null, tahun_ajaran_id: result.tahun_ajaran_id || null, tahun_ajaran: result.tahun_ajaran || null, akun_id: result.akun_id, role: result.role }
+        localStorage.setItem(sessionKey, JSON.stringify(sessionData))
+        initNativePushNotifications({ nisn: result.siswa?.nisn || result.siswa?.id, role: acc.role })
+        logActivity({ userRole: acc.role, action: `${acc.role} Login`, details: `${result.siswa?.nama_lengkap || acc.displayName} login via eBudiMulia.` })
+      }
+
+      navigate(targetPath)
+    } catch (err) {
+      const msg = err?.message || ''
+      const isTimeout = msg.includes('connection pool') || msg.includes('statement timeout') || msg.includes('AbortError') || msg.includes('Failed to fetch')
+      setNotification({ type: 'error', message: isTimeout ? '⏳ Server sedang sibuk. Silakan tunggu 5 detik lalu coba lagi.' : (msg || 'Terjadi kesalahan sistem.') })
+      setDirectLoginId(null)
+    }
+  }
+
+
+  // Deep Link Listener (@capacitor/app)
+  useEffect(() => {
+    let listener = null
+    const setupDeepLink = async () => {
+      try {
+        const { App } = await import('@capacitor/app')
+        listener = await App.addListener('appUrlOpen', (event) => {
+          if (!event?.url) return
+          try {
+            const urlObj = new URL(event.url)
+            const u = urlObj.searchParams.get('u')?.trim()
+            const p = urlObj.searchParams.get('p')?.trim()
+            const r = urlObj.searchParams.get('r')?.trim()?.toLowerCase()
+            if (u && p) {
+              setUsername(u)
+              setPassword(p)
+              if (r === 'guru' || r === 'staff') setLoginRole('Guru / Staff')
+              else if (r === 'orang_tua' || r === 'ortu') setLoginRole('Orang Tua')
+              else setLoginRole('Siswa')
+              setNotification({ type: 'success', message: 'Kredensial login dari link WhatsApp berhasil dimuat!' })
+            }
+          } catch (err) {
+            console.warn('Error parsing deep link URL:', err)
+          }
+        })
+      } catch (e) {
+        // App plugin fallback
+      }
+    }
+    setupDeepLink()
+    return () => {
+      if (listener && listener.remove) listener.remove()
+    }
+  }, [])
 
   // Onboarding izin perangkat — disabled by default as requested
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -197,8 +327,13 @@ function Login() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('add_account') === 'true' || params.get('switch') === 'true') {
+      return
+    }
     if (localStorage.getItem('siswa_session')) navigate('/dashboard')
     if (localStorage.getItem('guru_session')) navigate('/dashboard-guru')
+    if (localStorage.getItem('orangtua_session')) navigate('/dashboard-orang-tua')
   }, [navigate])
 
   const handleLogin = async (e) => {
@@ -308,7 +443,9 @@ function Login() {
 
         if (error || !result?.ok) {
           setLoading(false)
-          setNotification({ type: 'error', message: result?.msg || error?.message || 'Terjadi kesalahan sistem.' })
+          const errMsg = error?.message || result?.msg || ''
+          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
+          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
           return
         }
 
@@ -322,7 +459,19 @@ function Login() {
           role: result.role
         }
 
+        saveAccountToHistory({
+          id: `siswa_${result.siswa?.nisn || result.siswa?.id || username}`,
+          role: 'Siswa',
+          username: username.trim(),
+          password: password.trim(),
+          displayName: result.siswa?.nama_lengkap || result.siswa?.nama || username,
+          className: result.kelas || result.siswa?.kelas || '',
+          avatarUrl: result.siswa?.foto_url || null,
+          lastLogin: Date.now()
+        })
+
         localStorage.setItem('siswa_session', JSON.stringify(sessionData))
+        initNativePushNotifications({ nisn: result.siswa?.nisn || result.siswa?.id, role: 'Siswa' })
         logActivity({ userRole: 'Siswa', action: 'Siswa Login', details: `Siswa ${result.siswa?.nama_lengkap} login via eBudiMulia.` })
         navigate('/dashboard')
 
@@ -336,7 +485,9 @@ function Login() {
 
         if (error || !result?.ok) {
           setLoading(false)
-          setNotification({ type: 'error', message: result?.msg || error?.message || 'Terjadi kesalahan sistem.' })
+          const errMsg = error?.message || result?.msg || ''
+          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
+          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
           return
         }
 
@@ -350,7 +501,19 @@ function Login() {
           role: result.role
         }
 
+        saveAccountToHistory({
+          id: `ortu_${result.siswa?.nisn || result.siswa?.id || username}`,
+          role: 'Orang Tua',
+          username: username.trim(),
+          password: password.trim(),
+          displayName: `Orang Tua (${result.siswa?.nama_lengkap || result.siswa?.nama || username})`,
+          className: result.kelas || result.siswa?.kelas || '',
+          avatarUrl: null,
+          lastLogin: Date.now()
+        })
+
         localStorage.setItem('orangtua_session', JSON.stringify(sessionData))
+        initNativePushNotifications({ nisn: result.siswa?.nisn || result.siswa?.id, role: 'Orang Tua' })
         logActivity({ userRole: 'Orang Tua', action: 'Orang Tua Login', details: `Orang Tua dari ${result.siswa?.nama_lengkap} (NISN: ${result.siswa?.nisn || result.siswa?.id}) login via portal.` })
         navigate('/dashboard-orang-tua')
 
@@ -364,7 +527,9 @@ function Login() {
 
         if (error || !result?.ok) {
           setLoading(false)
-          setNotification({ type: 'error', message: result?.msg || error?.message || 'Terjadi kesalahan sistem.' })
+          const errMsg = error?.message || result?.msg || ''
+          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
+          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
           return
         }
 
@@ -381,13 +546,31 @@ function Login() {
           app_role: result.role
         }
 
+        saveAccountToHistory({
+          id: `guru_${g.id || g.user_name || username}`,
+          role: 'Guru / Staff',
+          username: username.trim(),
+          password: password.trim(),
+          displayName: g.nama_guru || username,
+          className: (g.roles && g.roles.length > 0) ? g.roles.map(r => typeof r === 'string' ? r : (r.nama || '')).filter(Boolean).join(', ') : (g.jabatan || 'Guru/Staff'),
+          avatarUrl: g.foto_url || null,
+          lastLogin: Date.now()
+        })
+
         localStorage.setItem('guru_session', JSON.stringify(sessionData))
+        initNativePushNotifications({ nisn: String(g.id), role: 'Guru' })
         logActivity({ userId: g.id, userRole: result.role, action: 'Pegawai Login', details: `${g.nama_guru} login via eBudiMulia.` })
         navigate('/dashboard-guru')
       }
 
     } catch (err) {
-      setNotification({ type: 'error', message: err.message || 'Terjadi kesalahan sistem.' })
+      const msg = err?.message || ''
+      const isTimeout = msg.includes('connection pool') || msg.includes('statement timeout') || msg.includes('AbortError') || msg.includes('Failed to fetch') || msg.includes('PGRST003') || msg.includes('57014')
+      if (isTimeout) {
+        setNotification({ type: 'error', message: '⏳ Server sedang sibuk (jam puncak presensi). Silakan tunggu 5 detik lalu coba lagi.' })
+      } else {
+        setNotification({ type: 'error', message: msg || 'Terjadi kesalahan sistem.' })
+      }
       setLoading(false)
     }
   }
@@ -510,6 +693,78 @@ function Login() {
               {loading ? 'Memproses...' : 'Masuk ke Sistem'}
             </button>
           </form>
+
+          {/* Akun Tersimpan di HP Ini (Quick Switcher) */}
+          {savedAccounts.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-slate-100 animate-fade-in">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                  Akun Tersimpan di HP Ini
+                </span>
+                <span className="text-[10px] text-slate-400 font-medium">Klik untuk masuk langsung</span>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {savedAccounts.map((acc) => {
+                  const isLogging = directLoginId === acc.id
+                  return (
+                    <div
+                      key={acc.id}
+                      onClick={() => !directLoginId && handleDirectLogin(acc)}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all duration-200 text-left ${
+                        isLogging
+                          ? 'border-indigo-300 bg-indigo-50 cursor-wait'
+                          : directLoginId
+                          ? 'border-slate-200/80 bg-slate-50/70 opacity-50 cursor-not-allowed'
+                          : 'border-slate-200/80 bg-slate-50/70 hover:bg-indigo-50/60 hover:border-indigo-200 cursor-pointer group'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs ${
+                          acc.role === 'Siswa' ? 'bg-gradient-to-tr from-blue-600 to-indigo-500' :
+                          acc.role === 'Orang Tua' ? 'bg-gradient-to-tr from-amber-500 to-orange-500' :
+                          'bg-gradient-to-tr from-purple-600 to-pink-500'
+                        }`}>
+                          {isLogging ? (
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+                          ) : (
+                            acc.displayName ? acc.displayName.charAt(0).toUpperCase() : 'U'
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`text-xs font-bold truncate transition-colors ${
+                            isLogging ? 'text-indigo-700' : 'text-slate-800 group-hover:text-indigo-700'
+                          }`}>
+                            {isLogging ? 'Sedang masuk...' : acc.displayName}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5">
+                            <span className={`px-1.5 py-0.2 rounded font-bold text-[9px] ${
+                              acc.role === 'Siswa' ? 'bg-blue-100 text-blue-700' :
+                              acc.role === 'Orang Tua' ? 'bg-amber-100 text-amber-700' : 'bg-purple-100 text-purple-700'
+                            }`}>
+                              {acc.role}
+                            </span>
+                            {acc.className && <span className="truncate">• {acc.className}</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); removeSavedAccount(acc.id, e) }}
+                        title="Hapus dari daftar tersimpan"
+                        disabled={!!directLoginId}
+                        className="p-1 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors shrink-0 ml-2 disabled:opacity-30"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
         </div>
 

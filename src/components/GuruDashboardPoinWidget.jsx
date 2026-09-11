@@ -39,15 +39,15 @@ export default function GuruDashboardPoinWidget({ session, activeTa, setActiveMe
 
       // Date range filtering
       if (filterDateFrom && filterDateTo) {
-        if (filterDateFrom === filterDateTo) {
-          query = query.eq('tanggal', filterDateFrom)
-        } else {
-          query = query.gte('tanggal', filterDateFrom).lte('tanggal', filterDateTo)
-        }
+        const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
+        const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
+        query = query.gte('created_at', fromIso).lte('created_at', toIso)
       } else if (filterDateFrom) {
-        query = query.gte('tanggal', filterDateFrom)
+        const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
+        query = query.gte('created_at', fromIso)
       } else if (filterDateTo) {
-        query = query.lte('tanggal', filterDateTo)
+        const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
+        query = query.lte('created_at', toIso)
       }
 
       const { data, error } = await query
@@ -307,7 +307,7 @@ export default function GuruDashboardPoinWidget({ session, activeTa, setActiveMe
                     </p>
                   )}
                   <div className="flex items-center gap-2 mt-1.5 text-[9px] text-slate-400 font-medium">
-                    <span>{formatTanggal(r.tanggal)}</span>
+                    <span>{formatTanggal(r.created_at || r.tanggal)}</span>
                     {r.dicatat_oleh && <span>• oleh {r.dicatat_oleh}</span>}
                   </div>
                 </div>

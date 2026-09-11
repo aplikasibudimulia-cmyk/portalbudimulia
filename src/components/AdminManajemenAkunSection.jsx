@@ -4,6 +4,13 @@ import { supabase } from '../supabaseClient'
 import Papa from 'papaparse'
 import { useConfirm } from '../utils/useConfirm'
 import { cleanOrphanedStudentData } from '../utils/cleanOrphans'
+import ExportKontakModal from './ExportKontakModal'
+import KartuPelajarCard from './KartuPelajarCard'
+import { downloadWorkbook } from '../utils/fileDownloader'
+import { downloadStudentTemplateExcel, parseStudentExcelRows, buildStudentDatabasePayloads, cleanPhone, syncAllTablesNisn, combineAlamatAndRtRw, splitAlamatAndRtRw, toTitleCase, parseDateToIso, formatAlamatJalan, extractRtRwFromRow } from '../utils/studentExcelHelper'
+import TemplateUpdateNisnModal from './TemplateUpdateNisnModal'
+import ModalKelengkapanDataSiswa from './ModalKelengkapanDataSiswa'
+import SmartPhotoUploadModal from './SmartPhotoUploadModal'
 
 // Icons (Simplified as SVGs to reduce dependencies)
 const IconUsers = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -11,6 +18,7 @@ const IconKey = ({ className = 'w-5 h-5' }) => <svg className={className} viewBo
 const IconPlus = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
 const IconUpload = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
 const IconCamera = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+const IconTrash = ({ className = 'w-4 h-4' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
 
 const generateRandom3Digits = () => {
   return Math.floor(100 + Math.random() * 900).toString()
@@ -33,6 +41,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   const [selectedTaFilter, setSelectedTaFilter] = useState(activeTa?.nama || 'all')
   const [selectedClassFilter, setSelectedClassFilter] = useState('all')
   const [summaryFilter, setSummaryFilter] = useState('all')
+  const [quickCardStudent, setQuickCardStudent] = useState(null)
+  const [showTemplateNisnModal, setShowTemplateNisnModal] = useState(false)
+  const [showKelengkapanModal, setShowKelengkapanModal] = useState(false)
+  const [showSmartPhotoModal, setShowSmartPhotoModal] = useState(false)
 
 
 
@@ -86,6 +98,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   const [masterKelasList, setMasterKelasList] = useState([])
   const [newClassNameInput, setNewClassNameInput] = useState('')
+  const [siswaPermanentMap, setSiswaPermanentMap] = useState(new Map())
 
   const fetchMasterKelas = async () => {
     if (!activeTa?.id) return
@@ -205,6 +218,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       nama_ortu: form.nama_ortu || '',
       kode: form.kode || '',
       no_hp: formatPhoneNumber(form.no_hp) || '',
+      jenis_kelamin: form.jenis_kelamin || '',
+      tempat_lahir: form.tempat_lahir || '',
+      tanggal_lahir: form.tanggal_lahir || '',
+      alamat: form.alamat || '',
+      rt_rw: form.rt_rw || '',
+      kelurahan: form.kelurahan || '',
+      kecamatan: form.kecamatan || '',
+      kota: form.kota || '',
       role_ids: [...(form.role_ids || [])].sort()
     };
   };
@@ -257,6 +278,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     const fieldLabels = {
       foreign_id: 'NISN / ID',
       nama: 'Nama Lengkap',
+      jenis_kelamin: 'Jenis Kelamin',
       username: 'Username',
       password: 'Password',
       akun_status: 'Status Akun',
@@ -267,6 +289,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       nama_ortu: 'Nama Orang Tua',
       kode: 'Kode Guru',
       no_hp: 'No. HP',
+      tempat_lahir: 'Tempat Lahir',
+      tanggal_lahir: 'Tanggal Lahir',
+      alamat: 'Alamat (Jalan)',
+      rt_rw: 'RT/RW',
+      kelurahan: 'Kelurahan',
+      kecamatan: 'Kecamatan',
+      kota: 'Kota',
       role_ids: 'Role/Jabatan',
     };
 
@@ -359,6 +388,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
   // Modal Export Excel
   const [showExportModal, setShowExportModal] = useState(false)
+  const [showExportKontakModal, setShowExportKontakModal] = useState(false)
 
   // Modal Cetak Kartu Login
   const [showPrintCardsModal, setShowPrintCardsModal] = useState(false)
@@ -372,6 +402,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
   // State untuk fetch credential real-time dari siswa_permanent
   const [isProcessingPrint, setIsProcessingPrint] = useState(false)
   const [siswaPermanentCredentials, setSiswaPermanentCredentials] = useState({})
+  const [isActionsExpanded, setIsActionsExpanded] = useState(false)
+  const [isFilterCollapsed, setIsFilterCollapsed] = useState(false)
 
   // Helper to map class to a beautiful unique color set
   const getClassColor = (kelas) => {
@@ -516,6 +548,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     if (akunError) console.error('fetchData akunError:', akunError)
     setAkunList(akunData || [])
 
+    // 1b. Fetch fresh siswa_permanent data to ensure parent biodata (nama_ortu, no_hp_ortu, email_ortu, line_user_id) is always fresh & accurate
+    if (activeTab === 'murid' || activeTab === 'orang_tua') {
+      const { data: permList } = await supabase.from('siswa_permanent').select('nisn, nama_lengkap, nama_ortu, no_hp_ortu, email_ortu, no_whatsapp, line_user_id, telegram_ortu, kontak_ortu, tempat_lahir, tanggal_lahir, alamat, kelurahan, kecamatan, kota, no_hp')
+      if (permList) {
+        setSiswaPermanentMap(new Map(permList.map(p => [String(p.nisn || '').trim(), p])))
+      }
+    }
+
     // 2. If Guru tab, fetch Guru specific data
     if (activeTab === 'guru') {
       const { data: gurus } = await supabase.from('guru').select(`
@@ -576,45 +616,48 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       })
 
       return Array.from(uniqueStudentsMap.values()).map(student => {
-        const key = student.nisn || student.id || student.nama_lengkap
+        const key = String(student.nisn || student.id || student.nama_lengkap).trim()
+        const perm = siswaPermanentMap.get(key)
+        const resolvedStudent = perm ? { ...student, ...perm } : student
+
         // Find relevant enrollment based on TA
         let enrollment = null
         if (selectedTaFilter !== 'all') {
-          enrollment = student.enrollments.find(e => e.tahun_ajaran?.trim() === selectedTaFilter?.trim())
+          enrollment = resolvedStudent.enrollments.find(e => e.tahun_ajaran?.trim() === selectedTaFilter?.trim())
         } else {
-          enrollment = student.enrollments.find(e => e.tahun_ajaran?.trim() === activeTa?.nama?.trim())
+          enrollment = resolvedStudent.enrollments.find(e => e.tahun_ajaran?.trim() === activeTa?.nama?.trim())
         }
         
-        if (!enrollment && student.enrollments.length > 0) enrollment = student.enrollments[0]
+        if (!enrollment && resolvedStudent.enrollments.length > 0) enrollment = resolvedStudent.enrollments[0]
 
         // Find Akun
         const targetRole = activeTab === 'orang_tua' ? 'orang_tua' : 'murid'
-        const akun = akunList.find(a => (a.foreign_id === student.nisn || a.foreign_id === student.id?.toString()) && a.role === targetRole)
+        const akun = akunList.find(a => (a.foreign_id === resolvedStudent.nisn || a.foreign_id === resolvedStudent.id?.toString()) && a.role === targetRole)
         
         // Find Foto
-        const foto = allFotos.filter(f => (f.nisn === student.nisn || f.nisn === student.id?.toString()) && f.cloudinary_url)
+        const foto = allFotos.filter(f => (f.nisn === resolvedStudent.nisn || f.nisn === resolvedStudent.id?.toString()) && f.cloudinary_url)
             .sort((a, b) => (b.tahun_ajaran?.nama || '').localeCompare(a.tahun_ajaran?.nama || ''))[0]
 
-        const resolvedKelas = enrollment?.kelas || student.kelas || '-'
+        const resolvedKelas = enrollment?.kelas || resolvedStudent.kelas || '-'
 
         return {
           id: key,
           foreign_id: key,
-          nisn: student.nisn,
-          nama: student.nama_lengkap,
+          nisn: resolvedStudent.nisn,
+          nama: resolvedStudent.nama_lengkap,
           kelas: resolvedKelas,
-          tahun_ajaran: enrollment?.tahun_ajaran || student.tahun_ajaran || '-',
+          tahun_ajaran: enrollment?.tahun_ajaran || resolvedStudent.tahun_ajaran || '-',
           foto_url: foto?.cloudinary_url || null,
           hasAkun: !!akun,
           akun_id: akun?.id,
           username: activeTab === 'orang_tua' 
-            ? (akun?.username || student.ortu_username || '(Belum punya akun)') 
+            ? (akun?.username || resolvedStudent.ortu_username || '(Belum punya akun)') 
             : (activeTab === 'murid' 
-                ? (akun?.username || student.email_aktif || '(Belum punya akun)') 
+                ? (akun?.username || resolvedStudent.email_aktif || '(Belum punya akun)') 
                 : (akun?.username || '(Belum punya akun)')),
           password_exists: !!akun?.password,
           status: akun?.status || 'nonaktif',
-          rawStudent: student
+          rawStudent: resolvedStudent
         }
       })
     } else {
@@ -700,6 +743,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           return akun && (akun.role === 'admin' || akun.role === 'superadmin');
         })
       }
+    } else if (summaryFilter === 'duplicate_phone') {
+      mergedData = mergedData.filter(a => {
+        const sPhone = cleanPhone(a.rawStudent?.no_whatsapp || a.rawStudent?.no_hp)
+        if (!sPhone) return false
+        const currentContacts = a.rawStudent?.kontak_ortu || []
+        const hasMatchingContact = Array.isArray(currentContacts) && currentContacts.some(k => cleanPhone(k.nomor) === sPhone)
+        const oPhone = cleanPhone(a.rawStudent?.no_hp_ortu)
+        return hasMatchingContact || (oPhone && sPhone === oPhone)
+      })
     }
   }
 
@@ -719,27 +771,94 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     
     let defaultWa = ""
     let noHpSiswa = ""
+    let availableContacts = []
     if (activeTab === 'murid' || activeTab === 'orang_tua') {
-      // Tarik langsung dari siswa_permanent untuk jaminan data terbaru dan lengkap (no_hp_ortu & no_whatsapp)
+      // Tarik langsung dari siswa_permanent untuk jaminan data terbaru dan lengkap
       const { data: permData } = await supabase
         .from('siswa_permanent')
-        .select('no_whatsapp, no_hp_ortu')
+        .select('no_whatsapp, no_hp, no_hp_ortu, nama_ortu, kontak_ortu')
         .eq('nisn', row.foreign_id)
         .maybeSingle()
         
-      noHpSiswa = permData?.no_whatsapp || row.rawStudent?.no_whatsapp || ""
+      noHpSiswa = permData?.no_whatsapp || permData?.no_hp || row.rawStudent?.no_whatsapp || ""
+
+      const rawKontak = Array.isArray(permData?.kontak_ortu) ? permData.kontak_ortu : (Array.isArray(row.rawStudent?.kontak_ortu) ? row.rawStudent.kontak_ortu : [])
+      
+      rawKontak.forEach(k => {
+        const clean = formatPhoneNumber(k.nomor) || cleanPhone(k.nomor)
+        if (clean) {
+          let tag = k.tag || 'Orang Tua'
+          if (k.nama && /ayah|papa|bapak|papi/i.test(k.nama) && tag.toLowerCase() === 'ibu') {
+            tag = 'Ayah'
+          } else if (k.nama && /ibu|mama|mami|bunda/i.test(k.nama) && tag.toLowerCase() === 'ayah') {
+            tag = 'Ibu'
+          }
+          const icon = tag === 'Ayah' ? '👨' : tag === 'Ibu' ? '👩' : tag === 'Wali' ? '🤝' : '👥'
+          availableContacts.push({
+            tag,
+            nama: k.nama || '',
+            nomor: clean,
+            label: `${tag}${k.nama ? ` (${k.nama})` : ''}`,
+            icon
+          })
+        }
+      })
+
+      // Jika kontak_ortu kosong tapi ada legacy no_hp_ortu
+      if (availableContacts.length === 0 && permData?.no_hp_ortu) {
+        const clean = formatPhoneNumber(permData.no_hp_ortu) || cleanPhone(permData.no_hp_ortu)
+        if (clean) {
+          availableContacts.push({
+            tag: 'Orang Tua',
+            nama: permData.nama_ortu || '',
+            nomor: clean,
+            label: `Orang Tua${permData.nama_ortu ? ` (${permData.nama_ortu})` : ''}`,
+            icon: '👥'
+          })
+        }
+      }
+
       if (activeTab === 'murid') {
         defaultWa = noHpSiswa
       } else {
-        defaultWa = permData?.no_hp_ortu || row.rawStudent?.no_hp_ortu || ""
+        defaultWa = availableContacts.length > 0 ? availableContacts[0].nomor : (permData?.no_hp_ortu || "")
       }
     } else {
       defaultWa = row.rawGuru?.no_hp || ""
     }
     
     setResetMethod('random')
-    setResetData({ row, generatedPass, waNumber: defaultWa, noHpSiswa })
+    setResetData({ 
+      row, 
+      generatedPass, 
+      waNumber: defaultWa, 
+      noHpSiswa,
+      availableContacts,
+      selectedTag: availableContacts.length > 0 ? availableContacts[0].tag : 'Orang Tua',
+      selectedName: availableContacts.length > 0 ? availableContacts[0].nama : ''
+    })
     setShowResetModal(true)
+  }
+
+  const handleSendDirectWa = (targetPhone, targetTag, targetName) => {
+    if (!resetData) return
+    const { row, generatedPass } = resetData
+    const cleanNum = formatPhoneNumber(targetPhone) || cleanPhone(targetPhone)
+    if (!cleanNum) {
+      alert("Nomor WhatsApp tidak valid.")
+      return
+    }
+    const roleParam = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'siswa' : 'guru')
+    const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
+    
+    let greeting = `Halo Orang Tua dari ${row.nama}`
+    if (targetTag === 'Ayah') greeting = `Halo Bapak ${targetName || ''} (Ayah dari ${row.nama})`.replace('  ', ' ')
+    else if (targetTag === 'Ibu') greeting = `Halo Ibu ${targetName || ''} (Ibu dari ${row.nama})`.replace('  ', ' ')
+    else if (targetTag === 'Wali') greeting = `Halo ${targetName || ''} (Wali dari ${row.nama})`.replace('  ', ' ')
+
+    const message = `${greeting},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
+    const waUrl = `https://wa.me/${cleanNum}?text=${encodeURIComponent(message)}`
+    window.open(waUrl, '_blank')
   }
 
   const executeReset = async (sendWa) => {
@@ -780,10 +899,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       
       if (sendWa) {
         let phone = resetData.waNumber || ""
-        let cleanPhone = formatPhoneNumber(phone)
-        if (!cleanPhone) {
+        let cleanNum = formatPhoneNumber(phone) || cleanPhone(phone)
+        if (!cleanNum) {
           alert("Silakan masukkan Nomor WA tujuan yang valid di kolom yang tersedia.")
-          setIsProcessing(false) // Re-enable buttons if WA is invalid
+          setIsProcessing(false)
           return
         }
 
@@ -795,12 +914,18 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         if (activeTab === 'murid') {
           message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Kode Akses:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         } else if (activeTab === 'orang_tua') {
-          message = `Halo Orang Tua ${row.nama},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
+          const recipientTag = resetData.selectedTag || 'Orang Tua'
+          const recipientName = resetData.selectedName ? ` ${resetData.selectedName}` : ''
+          let greeting = `Halo Orang Tua dari ${row.nama}`
+          if (recipientTag === 'Ayah') greeting = `Halo Bapak${recipientName} (Ayah dari ${row.nama})`
+          else if (recipientTag === 'Ibu') greeting = `Halo Ibu${recipientName} (Ibu dari ${row.nama})`
+          else if (recipientTag === 'Wali') greeting = `Halo${recipientName} (Wali dari ${row.nama})`
+          message = `${greeting},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         } else {
           message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
         }
         
-        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
+        const waUrl = `https://wa.me/${cleanNum}?text=${encodeURIComponent(message)}`
         window.open(waUrl, '_blank')
       }
     }
@@ -865,7 +990,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         
         // Ambil data terbaru langsung dari siswa_permanent untuk menutupi kolom yang belum ada di view siswa_lengkap
         const { data: permData } = await supabase.from('siswa_permanent')
-          .select('nama_lengkap, nama_ortu, no_hp_ortu, email_ortu, telegram_ortu, no_whatsapp, email_aktif')
+          .select('nama_lengkap, nama_ortu, no_hp_ortu, email_ortu, telegram_ortu, no_whatsapp, email_aktif, kontak_ortu, tempat_lahir, tanggal_lahir, alamat, kelurahan, kecamatan, kota, no_hp')
           .eq('nisn', row.foreign_id).maybeSingle();
           
         if (permData) {
@@ -891,12 +1016,34 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       const initialNama = rawStudent?.nama_lengkap || (row?.nama && !row?.nama.startsWith('ebmsiswa.') && !row?.nama.startsWith('ebmortu.') ? row?.nama : '') || '';
 
+      // Susun list kontak orang tua (Tag: Ayah, Ibu, Wali, Orang Tua)
+      let initialKontakOrtu = []
+      if (Array.isArray(rawStudent?.kontak_ortu) && rawStudent.kontak_ortu.length > 0) {
+        initialKontakOrtu = rawStudent.kontak_ortu.map(k => ({
+          tag: k.tag || 'Orang Tua',
+          nama: k.nama || '',
+          nomor: k.nomor || k.no_hp || k.telepon || ''
+        }))
+      } else if (rawStudent?.no_hp_ortu || rawStudent?.nama_ortu) {
+        initialKontakOrtu = [{
+          tag: 'Orang Tua',
+          nama: rawStudent?.nama_ortu || '',
+          nomor: rawStudent?.no_hp_ortu || ''
+        }]
+      }
+
+      // Pisahkan Alamat dan RT/RW serta Jenis Kelamin
+      const { jalan, rtRw } = splitAlamatAndRtRw(rawStudent?.alamat, rawStudent?.rt_rw);
+      const rawJk = String(rawStudent?.jenis_kelamin || rawStudent?.gender || '').trim().toUpperCase();
+      const jkVal = rawJk.startsWith('L') ? 'L' : rawJk.startsWith('P') ? 'P' : (rawStudent?.jenis_kelamin || '');
+
       const formState = {
         isNew: !row,
         row: row,
         original_foreign_id: row?.foreign_id || '',
         foreign_id: row?.foreign_id || '',
         nama: initialNama,
+        jenis_kelamin: jkVal,
         kelas: row?.kelas !== '-' ? row?.kelas : '',
         username: row?.hasAkun ? row.username : (activeTab === 'orang_tua' ? '' : emailAktifVal),
         email_aktif: emailAktifVal,
@@ -908,6 +1055,15 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         akun_status: row?.hasAkun ? row.status : 'aktif',
         telegram_ortu: rawStudent?.telegram_ortu || '',
         no_whatsapp: rawStudent?.no_whatsapp || '',
+        no_hp: rawStudent?.no_hp || rawStudent?.no_whatsapp || '',
+        tempat_lahir: rawStudent?.tempat_lahir || '',
+        tanggal_lahir: rawStudent?.tanggal_lahir ? new Date(rawStudent.tanggal_lahir).toISOString().split('T')[0] : '',
+        alamat: jalan,
+        rt_rw: rtRw,
+        kelurahan: rawStudent?.kelurahan || '',
+        kecamatan: rawStudent?.kecamatan || '',
+        kota: rawStudent?.kota || '',
+        kontak_ortu: initialKontakOrtu,
         no_hp_ortu: rawStudent?.no_hp_ortu || '',
         email_ortu: rawStudent?.email_ortu || '',
         nama_ortu: rawStudent?.nama_ortu || '',
@@ -1078,20 +1234,43 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             new_nisn: biodataForm.foreign_id
           })
           if (rpcError) throw new Error("Gagal memigrasikan NISN: " + rpcError.message)
+          // Sinkronkan NISN di seluruh tabel (Tabungan, Akun Pengguna, SPP, Presensi, Nilai, dll)
+          await syncAllTablesNisn(biodataForm.original_foreign_id, biodataForm.foreign_id)
         }
         
         let uNameSiswa = activeTab === 'murid' ? biodataForm.username_siswa : biodataForm.username;
         let pWordSiswa = biodataForm.password ? biodataForm.password : (biodataForm.isNew && !biodataForm.hasAkun ? '123456' : undefined);
 
+        // Bersihkan dan format array kontak orang tua
+        const cleanKontakOrtu = (biodataForm.kontak_ortu || []).map(k => ({
+          tag: k.tag || 'Orang Tua',
+          nama: (k.nama || '').trim(),
+          nomor: formatPhoneNumber(k.nomor) || String(k.nomor || '').replace(/\D/g, '')
+        })).filter(k => k.nomor || k.nama)
+
+        const primaryOrtu = cleanKontakOrtu.length > 0 ? cleanKontakOrtu[0] : null
+        const primaryOrtuPhone = primaryOrtu?.nomor || formatPhoneNumber(biodataForm.no_hp_ortu) || null
+        const primaryOrtuName = primaryOrtu?.nama || biodataForm.nama_ortu || null
+
         if (activeTab === 'murid') {
+          const combinedAlamat = combineAlamatAndRtRw(biodataForm.alamat, biodataForm.rt_rw);
           const siswaPayload = {
             nisn: biodataForm.foreign_id,
             nama_lengkap: biodataForm.nama,
+            ...(biodataForm.jenis_kelamin ? { jenis_kelamin: biodataForm.jenis_kelamin } : {}),
+            tempat_lahir: biodataForm.tempat_lahir || null,
+            tanggal_lahir: biodataForm.tanggal_lahir || null,
+            alamat: combinedAlamat || null,
+            kelurahan: biodataForm.kelurahan || null,
+            kecamatan: biodataForm.kecamatan || null,
+            kota: biodataForm.kota || null,
+            no_hp: formatPhoneNumber(biodataForm.no_hp) || formatPhoneNumber(biodataForm.no_whatsapp) || null,
             telegram_ortu: biodataForm.telegram_ortu || null,
             no_whatsapp: formatPhoneNumber(biodataForm.no_whatsapp) || null,
-            no_hp_ortu: formatPhoneNumber(biodataForm.no_hp_ortu) || null,
+            kontak_ortu: cleanKontakOrtu,
+            no_hp_ortu: primaryOrtuPhone,
             email_ortu: biodataForm.email_ortu || null,
-            nama_ortu: biodataForm.nama_ortu || null,
+            nama_ortu: primaryOrtuName,
             email_aktif: biodataForm.email_aktif || null
           }
           if (pWordSiswa !== undefined) siswaPayload.kode_akses = pWordSiswa;
@@ -1115,9 +1294,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           }
         } else if (activeTab === 'orang_tua') {
           const ortuPayload = {
-            no_hp_ortu: formatPhoneNumber(biodataForm.no_hp_ortu) || null,
-            email_ortu: biodataForm.email_ortu || null,
-            nama_ortu: biodataForm.nama_ortu || null
+            kontak_ortu: cleanKontakOrtu,
+            no_hp_ortu: primaryOrtuPhone,
+            nama_ortu: primaryOrtuName,
+            email_ortu: biodataForm.email_ortu || null
           }
           if (uNameSiswa) ortuPayload.ortu_username = uNameSiswa;
           if (pWordSiswa !== undefined) ortuPayload.ortu_password = pWordSiswa;
@@ -1484,9 +1664,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
 
+      const taSuffix = activeTa?.nama ? `_${activeTa.nama.replace(/\//g, '_')}` : ''
+
       if (choice === '1' || choice === '3') {
         const sortedFilteredMurid = [...students]
-          .filter(s => activeTa ? s.tahun_ajaran_id === activeTa.id : true)
+          .filter(s => {
+            if (activeTa?.id) {
+              return (s.tahun_ajaran_id === activeTa.id || s.tahun_ajaran === activeTa.nama) && s.is_aktif !== false
+            }
+            return s.is_aktif !== false
+          })
           .sort((a, b) => {
             const classA = a.kelas || ''
             const classB = b.kelas || ''
@@ -1494,12 +1681,26 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
           })
 
+        // Deduplikasi berdasarkan NISN agar tidak ada siswa berulang
+        const seenNisns = new Set()
+        const uniqueFilteredMurid = sortedFilteredMurid.filter(s => {
+          const nisn = String(s.nisn || s.id || '').trim()
+          if (!nisn) return true
+          if (seenNisns.has(nisn)) return false
+          seenNisns.add(nisn)
+          return true
+        })
+
+        if (uniqueFilteredMurid.length === 0 && activeTa) {
+          alert(`Tidak ditemukan data siswa aktif pada tahun ajaran ${activeTa.nama}.`)
+        }
+
         // Ambil semua data siswa_permanent untuk kolom yang tidak ada di view siswa_lengkap
         setProgressText('Mengambil data lengkap siswa...')
-        const allNisns = sortedFilteredMurid.map(s => s.nisn)
+        const allNisns = uniqueFilteredMurid.map(s => s.nisn)
         const { data: permDataAll } = await supabase
           .from('siswa_permanent')
-          .select('nisn, email_aktif, kode_akses, telegram_ortu, ortu_username, ortu_password, no_hp_ortu, email_ortu, nama_ortu, tahun_lulus, jenis_kelamin, no_whatsapp, nipd')
+          .select('nisn, email_aktif, kode_akses, telegram_ortu, ortu_username, ortu_password, no_hp_ortu, email_ortu, nama_ortu, tahun_lulus, jenis_kelamin, no_whatsapp, nipd, tempat_lahir, tanggal_lahir, alamat, kelurahan, kecamatan, kota, kontak_ortu, no_hp')
           .in('nisn', allNisns)
         const permMap = new Map((permDataAll || []).map(p => [p.nisn, p]))
 
@@ -1514,13 +1715,40 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         let currentClass = null
         let currentAbsen = 1
 
-        const dataMurid = sortedFilteredMurid.map(s => {
+        const dataMurid = uniqueFilteredMurid.map(s => {
           if (s.kelas !== currentClass) {
             currentClass = s.kelas
             currentAbsen = 1
           }
           const absen = currentAbsen++
           const perm = permMap.get(s.nisn) || {}
+
+          // Ekstrak kontak ortu terpisah (Ayah, Ibu, Wali, Orang Tua)
+          const kontakList = Array.isArray(perm.kontak_ortu) ? perm.kontak_ortu : (Array.isArray(s.kontak_ortu) ? s.kontak_ortu : [])
+          const kontakAyah = kontakList.find(k => k.tag?.toLowerCase() === 'ayah')
+          const kontakIbu  = kontakList.find(k => k.tag?.toLowerCase() === 'ibu')
+          const kontakWali = kontakList.find(k => k.tag?.toLowerCase() === 'wali')
+          const kontakOrtu = kontakList.find(k => k.tag?.toLowerCase() === 'orang tua')
+
+          const namaAyah = kontakAyah?.nama || ''
+          const noHpAyah = cleanPhone(kontakAyah?.nomor) || ''
+          const namaIbu  = kontakIbu?.nama  || ''
+          const noHpIbu  = cleanPhone(kontakIbu?.nomor)  || ''
+          const namaWali = kontakWali?.nama || ''
+          const noHpWali = cleanPhone(kontakWali?.nomor) || ''
+          const noHpOrtu = cleanPhone(kontakOrtu?.nomor || perm.no_hp_ortu || s.no_hp_ortu) || ''
+          const namaOrtu = kontakOrtu?.nama || perm.nama_ortu || s.nama_ortu || ''
+
+          let tglStr = ''
+          const rawTgl = perm.tanggal_lahir || s.tanggal_lahir
+          if (rawTgl) {
+            try {
+              tglStr = new Date(rawTgl).toISOString().split('T')[0]
+            } catch {
+              tglStr = String(rawTgl)
+            }
+          }
+
           return {
             'No Absen':           absen,
             'KODE PDF (PENTING)': s.kode || '',
@@ -1529,22 +1757,38 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             'Nama Lengkap':       s.nama_lengkap || '',
             'Jenis Kelamin':      perm.jenis_kelamin || s.jenis_kelamin || '',
             'Kelas':              s.kelas || '',
-            'Tahun Ajaran':       s.tahun_ajaran || '',
+            'Tahun Ajaran':       s.tahun_ajaran || activeTa?.nama || '',
             'Tahun Lulus':        perm.tahun_lulus || '',
-            // --- Akun Siswa ---
+
+            // --- Biodata & Kartu Pelajar (Terpisah) ---
+            'Tempat Lahir':       perm.tempat_lahir || s.tempat_lahir || '',
+            'Tanggal Lahir':      tglStr,
+            'Alamat':             perm.alamat || s.alamat || '',
+            'Kelurahan':          perm.kelurahan || s.kelurahan || '',
+            'Kecamatan':          perm.kecamatan || s.kecamatan || '',
+            'Kota':               perm.kota || s.kota || '',
+
+            // --- Kontak Siswa ---
+            'No HP Siswa':        cleanPhone(perm.no_whatsapp || s.no_whatsapp || perm.no_hp || s.no_hp) || '',
             'Email Siswa':        perm.email_aktif || s.email_aktif || '',
             'Username Siswa':     akunMap.get(s.nisn) || '',
             'Kode Akses':         perm.kode_akses || s.kode_akses || '',
-            // --- Kontak Siswa ---
-            'No WhatsApp Siswa':  perm.no_whatsapp || s.no_whatsapp || '',
-            // --- Akun Orang Tua ---
-            'Username Orang Tua': perm.ortu_username || s.ortu_username || '',
-            'Password Orang Tua': perm.ortu_password || s.ortu_password || '',
-            // --- Data Orang Tua ---
-            'Nama Orang Tua':     perm.nama_ortu || s.nama_ortu || '',
-            'No HP Orang Tua':    perm.no_hp_ortu || s.no_hp_ortu || '',
+
+            // --- Kontak Orang Tua / Wali (Terpisah Lengkap) ---
+            'Nama Ayah':          namaAyah,
+            'No HP Ayah':         noHpAyah,
+            'Nama Ibu':           namaIbu,
+            'No HP Ibu':          noHpIbu,
+            'Nama Wali':          namaWali,
+            'No HP Wali':         noHpWali,
+            'Nama Orang Tua':     namaOrtu,
+            'No HP Orang Tua':    noHpOrtu,
             'Email Orang Tua':    perm.email_ortu || s.email_ortu || '',
             'Telegram Orang Tua': perm.telegram_ortu || s.telegram_ortu || '',
+
+            // --- Akun Login Orang Tua ---
+            'Username Orang Tua': perm.ortu_username || s.ortu_username || '',
+            'Password Orang Tua': perm.ortu_password || s.ortu_password || '',
           }
         })
         const wsMurid = XLSX.utils.json_to_sheet(dataMurid)
@@ -1576,7 +1820,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       if (choice === '4') {
         const sortedFilteredMurid = [...students]
-          .filter(s => activeTa ? s.tahun_ajaran_id === activeTa.id : true)
+          .filter(s => {
+            if (activeTa?.id) {
+              return (s.tahun_ajaran_id === activeTa.id || s.tahun_ajaran === activeTa.nama) && s.is_aktif !== false
+            }
+            return s.is_aktif !== false
+          })
           .sort((a, b) => {
             const classA = a.kelas || ''
             const classB = b.kelas || ''
@@ -1584,7 +1833,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
           })
 
-        const dataNisn = sortedFilteredMurid.map(s => {
+        const seenNisns = new Set()
+        const uniqueFilteredMurid = sortedFilteredMurid.filter(s => {
+          const nisn = String(s.nisn || s.id || '').trim()
+          if (!nisn) return true
+          if (seenNisns.has(nisn)) return false
+          seenNisns.add(nisn)
+          return true
+        })
+
+        const dataNisn = uniqueFilteredMurid.map(s => {
           return {
             'NISN Lama': s.nisn,
             'NISN Baru': '',
@@ -1596,11 +1854,24 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         XLSX.utils.book_append_sheet(wb, wsNisn, 'Template Migrasi NISN')
       }
 
-      let filename = 'Export_Data_Pengguna.xlsx'
-      if (choice === '1') filename = 'Export_Data_Murid.xlsx'
+      if (choice === '5') {
+        setShowExportModal(false)
+        const activeOnly = (students || []).filter(s => {
+          if (activeTa?.id) {
+            return (s.tahun_ajaran_id === activeTa.id || s.tahun_ajaran === activeTa.nama) && s.is_aktif !== false
+          }
+          return s.is_aktif !== false
+        })
+        await downloadStudentTemplateExcel(activeOnly, `Template_Siswa_Dan_Alamat${taSuffix}.xlsx`)
+        return
+      }
+
+      let filename = `Export_Data_Pengguna${taSuffix}.xlsx`
+      if (choice === '1') filename = `Export_Data_Murid${taSuffix}.xlsx`
       if (choice === '2') filename = 'Export_Data_Guru.xlsx'
-      if (choice === '4') filename = 'Template_Update_NISN.xlsx'
-      XLSX.writeFile(wb, filename)
+      if (choice === '3') filename = `Export_Semua_Data${taSuffix}.xlsx`
+      if (choice === '4') filename = `Template_Update_NISN${taSuffix}.xlsx`
+      await downloadWorkbook(wb, filename)
 
     } catch (err) {
       alert('Gagal export: ' + err.message)
@@ -1771,7 +2042,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     try {
       const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
-      const wb = XLSX.read(buffer)
+      const wb = XLSX.read(buffer, { cellDates: true })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const data = XLSX.utils.sheet_to_json(ws, { defval: '' })
 
@@ -1782,7 +2053,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       for (const row of data) {
         const nisn = String(row.nisn || row.NISN || row['Nisn'] || '').trim()
-        const nama = String(
+        const nama = toTitleCase(String(
           row.nama_lengkap || 
           row.nama || 
           row['NAMA LENGKAP'] || 
@@ -1790,7 +2061,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           row['NAMA'] || 
           row['Nama'] || 
           ''
-        ).trim()
+        ))
         const kelas = String(
           row.kelas || 
           row.KELAS || 
@@ -1810,7 +2081,10 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           ''
         ).trim()
         const whatsapp = formatPhoneNumber(
+          row['No HP Siswa'] ??
+          row['NO HP SISWA'] ??
           row['No WhatsApp Siswa'] ??
+          row['NO WHATSAPP SISWA'] ??
           row.no_whatsapp ?? 
           row['NO WHATSAPP'] ?? 
           row['No Whatsapp'] ?? 
@@ -1821,6 +2095,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           row['No Telp'] ?? 
           row['No. Telp'] ?? 
           row.no_telp ?? 
+          row.no_hp ??
           row.WA ?? 
           row.wa ?? 
           ''
@@ -1886,8 +2161,34 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         )
         const passwordOrtu = String(_pwOrtuRaw).trim()
 
+        // Baca Tempat & Tanggal Lahir
+        const tempatLahir = toTitleCase(String(row['TEMPAT LAHIR'] ?? row['Tempat Lahir'] ?? row.tempat_lahir ?? row.tempat ?? '').trim())
+        const tanggalLahir = parseDateToIso(row['TANGGAL LAHIR'] ?? row['Tanggal Lahir'] ?? row.tanggal_lahir ?? row.tgl_lahir ?? '')
+
+        // Baca Alamat Lengkap & RT/RW
+        const rtRw = extractRtRwFromRow(row)
+        const rawAlamat = String(row['ALAMAT'] ?? row['Alamat'] ?? row['Alamat Lengkap'] ?? row.alamat ?? '').trim()
+        const alamatRaw = formatAlamatJalan(rawAlamat)
+        const alamat = combineAlamatAndRtRw(alamatRaw, rtRw)
+        const kelurahan = toTitleCase(String(row['KELURAHAN'] ?? row['Kelurahan'] ?? row.kelurahan ?? row.desa ?? '').trim())
+        const kecamatan = toTitleCase(String(row['KECAMATAN'] ?? row['Kecamatan'] ?? row.kecamatan ?? '').trim())
+        const kota = toTitleCase(String(row['KOTA'] ?? row['Kota'] ?? row.kota ?? row.kabupaten ?? '').trim())
+
+        // Baca Kontak Ortu (Ayah, Ibu, Wali)
+        const namaAyah = toTitleCase(String(row['NAMA AYAH'] ?? row['Nama Ayah'] ?? row.nama_ayah ?? '').trim())
+        const noHpAyah = formatPhoneNumber(row['NO HP AYAH'] ?? row['No HP Ayah'] ?? row.no_hp_ayah ?? '')
+        const namaIbu = toTitleCase(String(row['NAMA IBU'] ?? row['Nama Ibu'] ?? row.nama_ibu ?? '').trim())
+        const noHpIbu = formatPhoneNumber(row['NO HP IBU'] ?? row['No HP Ibu'] ?? row.no_hp_ibu ?? '')
+        const namaWali = toTitleCase(String(row['NAMA WALI'] ?? row['Nama Wali'] ?? row.nama_wali ?? '').trim())
+        const noHpWali = formatPhoneNumber(row['NO HP WALI'] ?? row['No HP Wali'] ?? row.no_hp_wali ?? '')
+
         if (nisn && nama) {
-          validRows.push({ nisn, nama, kelas, telegram, whatsapp, noHpOrtu, emailOrtu, namaOrtu, tahunLulus, jk, emailSiswa, usernameSiswa, passwordSiswa, usernameOrtu, passwordOrtu })
+          validRows.push({ 
+            nisn, nama, kelas, telegram, whatsapp, noHpOrtu, emailOrtu, namaOrtu, tahunLulus, jk, 
+            emailSiswa, usernameSiswa, passwordSiswa, usernameOrtu, passwordOrtu,
+            tempatLahir, tanggalLahir, alamat, alamatRaw, rtRw, kelurahan, kecamatan, kota,
+            namaAyah, noHpAyah, namaIbu, noHpIbu, namaWali, noHpWali
+          })
         }
       }
 
@@ -1897,21 +2198,67 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         return
       }
 
-      // Step 1: Bulk Upsert Siswa Permanent (biodata saja)
+      // Ambil data siswa_permanent saat ini untuk menjaga / menggabungkan kontak_ortu
+      const allNisns = validRows.map(r => r.nisn)
+      const { data: existingSiswaList } = await supabase
+        .from('siswa_permanent')
+        .select('nisn, kontak_ortu, no_hp_ortu, nama_ortu, tempat_lahir, tanggal_lahir, alamat, kelurahan, kecamatan, kota')
+        .in('nisn', allNisns)
+
+      const existingMap = new Map((existingSiswaList || []).map(s => [String(s.nisn).trim(), s]))
+
+      // Step 1: Bulk Upsert Siswa Permanent (biodata, alamat, kontak ortu)
       setProgressText(`Menyimpan biodata ${validRows.length} siswa...`)
-      const payloadSiswaList = validRows.map(r => ({
-        nisn: r.nisn,
-        nama_lengkap: r.nama,
-        ...(r.telegram       ? { telegram_ortu: r.telegram }       : {}),
-        ...(r.whatsapp       ? { no_whatsapp: r.whatsapp }         : {}),
-        ...(r.noHpOrtu       ? { no_hp_ortu: r.noHpOrtu }         : {}),
-        ...(r.emailOrtu      ? { email_ortu: r.emailOrtu }         : {}),
-        ...(r.namaOrtu       ? { nama_ortu: r.namaOrtu }           : {}),
-        ...(r.tahunLulus     ? { tahun_lulus: r.tahunLulus }       : {}),
-        ...(r.jk !== null    ? { jenis_kelamin: r.jk }             : {}),
-        ...(r.emailSiswa     ? { email_aktif: r.emailSiswa }       : {}),
-        ...(r.passwordSiswa  ? { kode_akses: r.passwordSiswa }     : {})
-      }))
+      const payloadSiswaList = validRows.map(r => {
+        const old = existingMap.get(r.nisn) || {}
+        let kontakList = Array.isArray(old.kontak_ortu) ? [...old.kontak_ortu] : []
+
+        const addOrUpdateKontak = (tag, nama, nomor) => {
+          if (!nomor && !nama) return
+          const cleanNum = formatPhoneNumber(nomor) || String(nomor || '').replace(/\D/g, '')
+          const idx = kontakList.findIndex(k => k.tag?.toLowerCase() === tag.toLowerCase())
+          if (idx >= 0) {
+            kontakList[idx] = { tag, nama: nama || kontakList[idx].nama || '', nomor: cleanNum || kontakList[idx].nomor || '' }
+          } else {
+            kontakList.push({ tag, nama: nama || '', nomor: cleanNum || '' })
+          }
+        }
+
+        if (r.noHpAyah || r.namaAyah) addOrUpdateKontak('Ayah', r.namaAyah, r.noHpAyah)
+        if (r.noHpIbu || r.namaIbu) addOrUpdateKontak('Ibu', r.namaIbu, r.noHpIbu)
+        if (r.noHpWali || r.namaWali) addOrUpdateKontak('Wali', r.namaWali, r.noHpWali)
+        if (r.noHpOrtu && !r.noHpAyah && !r.noHpIbu && !r.noHpWali) {
+          addOrUpdateKontak('Orang Tua', r.namaOrtu || 'Orang Tua', r.noHpOrtu)
+        }
+
+        const primaryOrtu = kontakList.length > 0 ? kontakList[0] : null
+        const primaryOrtuPhone = primaryOrtu?.nomor || r.noHpOrtu || old.no_hp_ortu || null
+        const primaryOrtuName = primaryOrtu?.nama || r.namaOrtu || old.nama_ortu || null
+
+        const baseAlamat = r.alamatRaw || old.alamat || ''
+        const finalAlamat = combineAlamatAndRtRw(baseAlamat, r.rtRw) || r.alamat || old.alamat || null
+
+        return {
+          nisn: r.nisn,
+          nama_lengkap: r.nama,
+          ...(r.tempatLahir   ? { tempat_lahir: r.tempatLahir }   : {}),
+          ...(r.tanggalLahir  ? { tanggal_lahir: r.tanggalLahir } : {}),
+          ...(finalAlamat     ? { alamat: finalAlamat }           : {}),
+          ...(r.kelurahan     ? { kelurahan: r.kelurahan }         : {}),
+          ...(r.kecamatan     ? { kecamatan: r.kecamatan }         : {}),
+          ...(r.kota          ? { kota: r.kota }                   : {}),
+          ...(r.telegram      ? { telegram_ortu: r.telegram }     : {}),
+          ...(r.whatsapp      ? { no_whatsapp: r.whatsapp, no_hp: r.whatsapp } : {}),
+          kontak_ortu: kontakList,
+          no_hp_ortu: primaryOrtuPhone,
+          nama_ortu: primaryOrtuName,
+          ...(r.emailOrtu     ? { email_ortu: r.emailOrtu }       : {}),
+          ...(r.tahunLulus    ? { tahun_lulus: r.tahunLulus }     : {}),
+          ...(r.jk !== null   ? { jenis_kelamin: r.jk }           : {}),
+          ...(r.emailSiswa    ? { email_aktif: r.emailSiswa }     : {}),
+          ...(r.passwordSiswa ? { kode_akses: r.passwordSiswa }   : {})
+        }
+      })
 
       const { error: errSiswa } = await supabase.from('siswa_permanent').upsert(payloadSiswaList, { onConflict: 'nisn' })
       if (errSiswa) {
@@ -2191,15 +2538,24 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       }
 
       for (const update of updates) {
-        setProgressText(`Mengupdate NISN ${update.nama}...`)
+        setProgressText(`Mengupdate & Menyinkronkan NISN ${update.nama}...`)
         const { error } = await supabase.rpc('update_siswa_nisn', {
           old_nisn: update.oldNisn,
           new_nisn: update.newNisn
         })
 
+        // Selalu sinkronkan NISN ke seluruh tabel sistem (Tabungan, Akun Pengguna, SPP, Presensi, Nilai, dll)
+        await syncAllTablesNisn(update.oldNisn, update.newNisn)
+
         if (error) {
-          console.error(`Gagal mengupdate NISN untuk ${update.nama} (${update.oldNisn} -> ${update.newNisn}):`, error.message)
-          errorCount++
+          console.warn(`RPC update_siswa_nisn untuk ${update.nama} (${update.oldNisn} -> ${update.newNisn}):`, error.message)
+          // Cek apakah siswa di siswa_permanent sudah tercatat dengan newNisn
+          const { data: checkSiswa } = await supabase.from('siswa_permanent').select('nisn').eq('nisn', update.newNisn).maybeSingle()
+          if (checkSiswa) {
+            successCount++
+          } else {
+            errorCount++
+          }
         } else {
           successCount++
         }
@@ -2373,6 +2729,100 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setIsProcessing(false)
   }
 
+  // --- BULK CLEAN DUPLICATE PHONES (Siswa = Ortu) ---
+  const handleCleanDuplicatePhones = async () => {
+    setIsProcessing(true)
+    setProgressText('Menganalisis data kontak...')
+    try {
+      const { data: allSiswa, error: errSiswa } = await supabase
+        .from('siswa_permanent')
+        .select('nisn, nama_lengkap, no_whatsapp, no_hp, no_hp_ortu, kontak_ortu')
+
+      if (errSiswa || !allSiswa) {
+        alert('Gagal mengambil data siswa: ' + (errSiswa?.message || 'Error tidak diketahui'))
+        return
+      }
+
+      const duplicates = []
+
+      for (const s of allSiswa) {
+        const studentPhone = cleanPhone(s.no_whatsapp || s.no_hp)
+        if (!studentPhone) continue
+
+        let hasDuplicate = false
+        const currentContacts = Array.isArray(s.kontak_ortu) ? [...s.kontak_ortu] : []
+        let newContacts = []
+
+        if (currentContacts.length > 0) {
+          newContacts = currentContacts.filter(k => {
+            const kPhone = cleanPhone(k.nomor)
+            if (kPhone && kPhone === studentPhone) {
+              hasDuplicate = true
+              return false // bersihkan duplikasi kontak ortu yang sama dengan nomor siswa
+            }
+            return true
+          })
+        }
+
+        const ortuPhone = cleanPhone(s.no_hp_ortu)
+        if (ortuPhone && ortuPhone === studentPhone) {
+          hasDuplicate = true
+        }
+
+        if (hasDuplicate) {
+          duplicates.push({
+            nisn: s.nisn,
+            nama: s.nama_lengkap,
+            studentPhone,
+            newContacts,
+            newNoHpOrtu: newContacts.length > 0 ? (newContacts[0].nomor || null) : null
+          })
+        }
+      }
+
+      if (duplicates.length === 0) {
+        alert('🎉 Bersih! Tidak ditemukan nomor HP kembar antara siswa dan orang tua. Semua data kontak sudah terpisah.')
+        return
+      }
+
+      const confirmed = await requestConfirm({
+        title: `Bersihkan ${duplicates.length} Data HP Kembar?`,
+        message: `Ditemukan ${duplicates.length} siswa yang nomor HP-nya tercatat ganda sebagai kontak Orang Tua (karena riwayat pengisian lama menduplikasi nomor siswa ke kolom orang tua).\n\nSistem akan membersihkan duplikasi tersebut dari data Orang Tua.\n\n🛡️ Nomor WhatsApp/HP Siswa dijamin TETAP AMAN dan tidak terhapus. Lanjutkan?`,
+        confirmLabel: `Bersihkan (${duplicates.length})`,
+        confirmColor: 'amber',
+        icon: 'warning',
+      })
+
+      if (!confirmed) return
+
+      let cleanedCount = 0
+      for (const item of duplicates) {
+        setProgressText(`Membersihkan (${cleanedCount + 1}/${duplicates.length}): ${item.nama}`)
+        const { error: updateErr } = await supabase
+          .from('siswa_permanent')
+          .update({
+            kontak_ortu: item.newContacts,
+            no_hp_ortu: item.newNoHpOrtu
+          })
+          .eq('nisn', item.nisn)
+
+        if (!updateErr) {
+          cleanedCount++
+        }
+      }
+
+      await fetchData()
+      if (onRefresh) onRefresh()
+      alert(`✅ Selesai! Berhasil membersihkan ${cleanedCount} data nomor HP kembar. Sekarang nomor HP siswa dan orang tua sudah terpisah rapi.`)
+    } catch (err) {
+      console.error('Error saat membersihkan HP kembar:', err)
+      alert('Terjadi kesalahan saat membersihkan data: ' + err.message)
+    } finally {
+      setIsProcessing(false)
+      setProgressText('')
+    }
+  }
+
   // --- LOGIN AS USER (IMPERSONATE) ---
   const handleLoginAsUser = async (row) => {
     if (!row) return
@@ -2458,133 +2908,329 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={csvSiswaInputRef} className="hidden" onChange={handleCsvImportSiswa} />
       <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" ref={bulkUpdateNisnInputRef} className="hidden" onChange={handleBulkUpdateNisn} />
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 shrink-0">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Manajemen Akun & Data Pengguna</h2>
-          <p className="text-slate-500 text-sm mt-1">Satu pintu untuk mengelola biodata, akun login, dan penugasan.</p>
+      {/* Ultra-Compact High-Density Header Bar (Row 1) */}
+      <div className="bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-2xs mb-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        {/* Left: Title & Inline Tabs */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-1.5">
+              <span>👥</span>
+              <span>Manajemen Akun</span>
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-indigo-50 text-indigo-700 border border-indigo-100">
+              {dataForCards.length}
+            </span>
+          </div>
+
+          {/* Inline Tab Switcher */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200/80">
+            {[
+              { id: 'murid', label: 'Murid' },
+              { id: 'orang_tua', label: 'Orang Tua' },
+              { id: 'guru', label: 'Guru & Staff' },
+              { id: 'kelas', label: 'Daftar Kelas' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => { setActiveTab(tab.id); setSearch(''); setSelectedClassFilter('all') }}
+                className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all ${
+                  activeTab === tab.id
+                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
-      <div className="flex flex-wrap items-center gap-2">
-          {activeTab === 'guru' ? (
-            <button onClick={() => csvInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
-              <IconUpload /> Import Excel Guru
-            </button>
-          ) : activeTab === 'murid' ? (
-            <>
-              <button onClick={() => csvSiswaInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
-                <IconUpload /> Import Excel Siswa
-              </button>
-              <button onClick={() => bulkUpdateNisnInputRef.current?.click()} className="px-3 py-2 bg-teal-50 border border-teal-200 text-teal-700 rounded-xl text-sm font-medium hover:bg-teal-100 flex items-center gap-2" title="Update NISN Siswa secara Massal dari Excel">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                Update NISN Massal (Excel)
-              </button>
-            </>
-          ) : null}
-          {activeTab === 'orang_tua' && (
-            <button onClick={handleBulkGenerateOrtu} disabled={isProcessing} className="px-3 py-2 bg-violet-50 border border-violet-200 text-violet-700 rounded-xl text-sm font-medium hover:bg-violet-100 flex items-center gap-2 disabled:opacity-50">
-              <IconPlus className="w-4 h-4" /> Generate Akun Orang Tua
+
+        {/* Right: Compact Action Buttons */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Quick Action: Buat Data Baru */}
+          <button
+            onClick={() => openBiodataModal()}
+            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-all"
+          >
+            <IconPlus className="w-3.5 h-3.5" />
+            <span>Buat Baru</span>
+          </button>
+
+          {/* Quick Action: Cek Kelengkapan Biodata Siswa */}
+          {(activeTab === 'murid' || activeTab === 'orang_tua') && (
+            <button
+              onClick={() => setShowKelengkapanModal(true)}
+              className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+              title="Buka tabel audit kelengkapan biodata siswa (data kosong ditandai warna merah)"
+            >
+              <span>📋</span>
+              <span>Cek Kelengkapan Data</span>
             </button>
           )}
-          <button onClick={() => massPhotoInputRef.current?.click()} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
-            <IconCamera /> Upload Foto Massal
+
+          {/* Quick Action: Unduh Kontak HP */}
+          <button
+            onClick={() => setShowExportKontakModal(true)}
+            disabled={isProcessing}
+            className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+            title="Unduh Kontak HP (.vcf) / Google Contacts (.csv)"
+          >
+            <span>📥</span>
+            <span>Unduh Kontak</span>
           </button>
-          <button onClick={() => setShowExportModal(true)} disabled={isProcessing} className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50" title="Export Excel data pengguna">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export Data
+
+          {/* Quick Action: Cetak Kartu Login */}
+          {activeTab === 'murid' && (
+            <button
+              onClick={handleOpenPrintCardsModal}
+              disabled={isProcessing || isProcessingPrint || mergedData.length === 0}
+              className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+              title="Cetak Kartu Login Siswa"
+            >
+              {isProcessingPrint ? (
+                <div className="w-3.5 h-3.5 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></div>
+              ) : (
+                <span>🖨️</span>
+              )}
+              <span>Cetak Kartu ({mergedData.length})</span>
+            </button>
+          )}
+
+          {/* Aksi Massal Toggle */}
+          <button
+            onClick={() => setIsActionsExpanded(!isActionsExpanded)}
+            className={`px-2 py-1 rounded-lg text-xs font-bold border transition-all flex items-center gap-1 ${
+              isActionsExpanded 
+                ? 'bg-slate-800 text-white border-slate-800' 
+                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+            }`}
+            title="Buka menu import, export, dan foto massal"
+          >
+            <span>⚡</span>
+            <span>Aksi Massal</span>
+            <span className="text-[9px]">{isActionsExpanded ? '▲' : '▼'}</span>
           </button>
+
+          {/* Toggle Fokus Tabel */}
+          <button
+            onClick={() => setIsFilterCollapsed(!isFilterCollapsed)}
+            className={`px-2 py-1 rounded-lg text-xs font-bold border transition-all flex items-center gap-1 ${
+              isFilterCollapsed 
+                ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
+                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+            }`}
+            title="Sembunyikan/tampilkan filter toolbar"
+          >
+            <span>{isFilterCollapsed ? '🔽 Buka Filter' : '👁️ Fokus Tabel'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Collapsible Aksi Massal Tray */}
+      {isActionsExpanded && (
+        <div className="bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 mb-2 flex flex-wrap items-center gap-1.5 animate-fade-in text-xs shrink-0">
+          <span className="font-bold text-slate-500 mr-1">Opsi Massal:</span>
+          {activeTab === 'guru' && (
+            <button onClick={() => csvInputRef.current?.click()} className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-bold flex items-center gap-1">
+              <IconUpload className="w-3.5 h-3.5" /> Import Excel Guru
+            </button>
+          )}
           {activeTab === 'murid' && (
             <>
-              <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
-                className="px-3 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-100 flex items-center gap-2 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18"/><path d="M12 3v18"/><path d="m8 8-4 4 4 4"/><path d="m16 16 4-4-4-4"/></svg>
-                Rapihkan Kode (A-Z)
+              <button 
+                onClick={() => {
+                  const activeOnly = (students || []).filter(s => {
+                    if (activeTa?.id) {
+                      return (s.tahun_ajaran_id === activeTa.id || s.tahun_ajaran === activeTa.nama) && s.is_aktif !== false
+                    }
+                    return s.is_aktif !== false
+                  })
+                  const taSuffix = activeTa?.nama ? `_${activeTa.nama.replace(/\//g, '_')}` : ''
+                  downloadStudentTemplateExcel(activeOnly, `Template_Siswa_Dan_Alamat${taSuffix}.xlsx`)
+                }} 
+                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg font-bold flex items-center gap-1"
+                title={`Download Format Template Excel Lengkap Tahun Ajaran ${activeTa?.nama || 'Aktif'}`}
+              >
+                <span>📥</span> Download Template Siswa
               </button>
-              <button onClick={handleOpenPrintCardsModal} disabled={isProcessing || isProcessingPrint || mergedData.length === 0}
-                className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50" title="Cetak Kartu Login Siswa">
-                {isProcessingPrint ? (
-                  <div className="w-4 h-4 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></div>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                )}
-                {isProcessingPrint ? 'Memuat Data...' : `Cetak Kartu Login (${mergedData.length})`}
+              <button onClick={() => csvSiswaInputRef.current?.click()} className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-bold flex items-center gap-1" title="Import Data Siswa, Alamat & Kontak Ortu dari Excel">
+                <IconUpload className="w-3.5 h-3.5" /> Import Excel Siswa
+              </button>
+              <button onClick={() => setShowTemplateNisnModal(true)} className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 border border-teal-300 text-teal-800 rounded-lg font-bold flex items-center gap-1 transition-colors" title="Download Format Template Excel untuk Update NISN (Bisa Pilih Kelas)">
+                <span>📥</span> Template Update NISN
+              </button>
+              <button onClick={() => bulkUpdateNisnInputRef.current?.click()} className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold flex items-center gap-1 shadow-sm transition-colors" title="Update NISN Siswa secara Massal dari Excel">
+                <span>⚡</span> Update NISN Massal
+              </button>
+              <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
+                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
+                <span>A-Z</span> Rapihkan Kode
+              </button>
+              <button onClick={handleCleanDuplicatePhones} disabled={isProcessing} className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50" title="Bersihkan otomatis kontak orang tua yang kembar/terduplikasi dengan nomor WhatsApp siswa">
+                <span>🧹</span> Bersihkan HP Kembar
               </button>
             </>
           )}
-          <button onClick={() => openBiodataModal()} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
-            <IconPlus /> Buat Data Baru
-          </button>
-        </div>
-      </div>
-
-              {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0">
-          {(activeTab === 'murid' || activeTab === 'orang_tua' ? [
-            { l: activeTab === 'murid' ? 'Total Murid' : 'Total Orang Tua', v: dataForCards.length, type: 'all' },
-            { l: 'Punya Akun', v: dataForCards.filter(m => m.hasAkun).length, type: 'with_akun' },
-            { l: 'Tanpa Akun', v: dataForCards.filter(m => !m.hasAkun).length, type: 'without_akun' },
-            { l: 'Akun Aktif', v: dataForCards.filter(m => m.hasAkun && m.status === 'aktif').length, type: 'active_akun' }
-          ] : [
-            { l: 'Total Guru & Staff', v: dataForCards.length, type: 'all' },
-            { l: 'Punya Akun', v: dataForCards.filter(g => g.hasAkun).length, type: 'with_akun' },
-            { l: 'Tanpa Akun', v: dataForCards.filter(g => !g.hasAkun).length, type: 'without_akun' },
-            { l: 'Admin', v: dataForCards.filter(g => {
-                const akun = akunList.find(a => a.id === g.akun_id);
-                return akun && (akun.role === 'admin' || akun.role === 'superadmin');
-              }).length, type: 'active_akun'
-            }
-          ]).map(stat => (
-            <div 
-              key={stat.l} 
-              onClick={() => setSummaryFilter(stat.type)}
-              className={`bg-white border rounded-xl p-4 shadow-sm cursor-pointer transition-all hover:-translate-y-1 ${summaryFilter === stat.type ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/30' : 'border-slate-200 hover:border-indigo-300'}`}
-            >
-              <p className={`text-sm font-medium ${summaryFilter === stat.type ? 'text-indigo-600' : 'text-slate-500'}`}>{stat.l}</p>
-              <p className={`text-2xl font-bold mt-1 ${summaryFilter === stat.type ? 'text-indigo-900' : 'text-slate-900'}`}>{stat.v}</p>
-            </div>
-          ))}
-        </div>
-
-      {/* Tabs */}
-      <div className="flex gap-6 border-b border-slate-200 mb-6 shrink-0">
-        {[
-          { id: 'murid', label: 'Murid', icon: <IconUsers className="w-4 h-4" /> },
-          { id: 'orang_tua', label: 'Orang Tua', icon: <IconUsers className="w-4 h-4" /> },
-          { id: 'guru', label: 'Guru & Staff', icon: <IconKey className="w-4 h-4" /> },
-          { id: 'kelas', label: 'Daftar Kelas', icon: <IconUsers className="w-4 h-4" /> }
-        ].map(tab => (
-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSearch(''); setSelectedClassFilter('all') }}
-            className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === tab.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Toolbar */}
-      {activeTab !== 'kelas' && (
-        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 flex flex-col md:flex-row gap-3 shrink-0">
-          <div className="relative flex-1">
-            <input type="text" placeholder="Cari nama, username, ID, atau kode..." value={search} onChange={(e) => setSearch(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          </div>
-          {(activeTab === 'murid' || activeTab === 'orang_tua') && (
-            <div className="flex items-center px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-semibold">
-              <span className="mr-2">TA:</span>
-              <select value={selectedTaFilter} onChange={(e) => { setSelectedTaFilter(e.target.value); setSelectedClassFilter('all') }} className="bg-transparent outline-none cursor-pointer">
-                <option value="all">Semua</option>
-                {tahunAjarans?.map(ta => <option key={ta.id} value={ta.nama}>{ta.nama}</option>)}
-              </select>
-            </div>
+          {activeTab === 'orang_tua' && (
+            <>
+              <button 
+                onClick={() => {
+                  const activeOnly = (students || []).filter(s => {
+                    if (activeTa?.id) {
+                      return (s.tahun_ajaran_id === activeTa.id || s.tahun_ajaran === activeTa.nama) && s.is_aktif !== false
+                    }
+                    return s.is_aktif !== false
+                  })
+                  const taSuffix = activeTa?.nama ? `_${activeTa.nama.replace(/\//g, '_')}` : ''
+                  downloadStudentTemplateExcel(activeOnly, `Template_Kontak_Orang_Tua${taSuffix}.xlsx`)
+                }} 
+                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg font-bold flex items-center gap-1"
+                title={`Download Template Excel Kontak Orang Tua Tahun Ajaran ${activeTa?.nama || 'Aktif'}`}
+              >
+                <span>📥</span> Template Kontak Ortu
+              </button>
+              <button onClick={() => csvSiswaInputRef.current?.click()} className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-bold flex items-center gap-1" title="Import Kontak Orang Tua & Biodata Siswa dari Excel">
+                <IconUpload className="w-3.5 h-3.5" /> Import Excel Kontak
+              </button>
+              <button onClick={handleBulkGenerateOrtu} disabled={isProcessing} className="px-2.5 py-1 bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-700 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50">
+                <IconPlus className="w-3.5 h-3.5" /> Generate Akun Ortu
+              </button>
+              <button onClick={handleCleanDuplicatePhones} disabled={isProcessing} className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50" title="Bersihkan otomatis kontak orang tua yang kembar/terduplikasi dengan nomor WhatsApp siswa">
+                <span>🧹</span> Bersihkan HP Kembar
+              </button>
+            </>
           )}
+          {activeTab === 'murid' && (
+            <button 
+              type="button"
+              onClick={() => setShowSmartPhotoModal(true)} 
+              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+              title="Upload foto siswa per kelas berdasarkan urutan nomor absen/file dari fotografer dengan pratinjau visual"
+            >
+              <span>✨</span> Upload Cerdas (Per Kelas)
+            </button>
+          )}
+          <button onClick={() => massPhotoInputRef.current?.click()} className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-bold flex items-center gap-1">
+            <IconCamera className="w-3.5 h-3.5" /> Upload Foto Massal (NISN)
+          </button>
+          <button onClick={() => setShowExportModal(true)} disabled={isProcessing} className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50" title="Export Excel data pengguna">
+            <span>📊</span> Export Excel
+          </button>
         </div>
       )}
 
-      {/* Class Filter (Murid Only) */}
-      {(activeTab === 'murid' || activeTab === 'orang_tua') && uniqueClasses.length > 0 && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2 shrink-0">
-          <button onClick={() => setSelectedClassFilter('all')} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>Semua</button>
-          {uniqueClasses.map(c => (
-            <button key={c} onClick={() => setSelectedClassFilter(c)} className={`px-4 py-1.5 rounded-full text-xs font-medium border ${selectedClassFilter === c ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>{c}</button>
-          ))}
+      {/* Ultra-Compact Toolbar (Row 2: Kelas, Search, TA & Mini Stats Chips) */}
+      {!isFilterCollapsed && activeTab !== 'kelas' && (
+        <div className="bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-2xs mb-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          {/* Class Filter (Pills) */}
+          {(activeTab === 'murid' || activeTab === 'orang_tua') && uniqueClasses.length > 0 && (
+            <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-hide max-w-full sm:max-w-md">
+              <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-0.5">Kelas:</span>
+              <button
+                onClick={() => setSelectedClassFilter('all')}
+                className={`px-2 py-0.5 rounded-lg text-xs font-bold border shrink-0 transition-all ${
+                  selectedClassFilter === 'all'
+                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-2xs'
+                    : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+                }`}
+              >
+                Semua
+              </button>
+              {uniqueClasses.map(c => (
+                <button
+                  key={c}
+                  onClick={() => setSelectedClassFilter(c)}
+                  className={`px-2 py-0.5 rounded-lg text-xs font-bold border shrink-0 transition-all ${
+                    selectedClassFilter === c
+                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-2xs'
+                      : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Search, TA, and Mini Stats */}
+          <div className="flex items-center gap-2 flex-1 justify-end flex-wrap">
+            {/* Search Input */}
+            <div className="relative min-w-[160px] max-w-xs flex-1">
+              <input
+                type="text"
+                placeholder="Cari nama / ID..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold">
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* TA Selector */}
+            {(activeTab === 'murid' || activeTab === 'orang_tua') && (
+              <div className="flex items-center px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold shrink-0">
+                <span className="mr-1 text-[10px] text-indigo-500">TA:</span>
+                <select
+                  value={selectedTaFilter}
+                  onChange={(e) => { setSelectedTaFilter(e.target.value); setSelectedClassFilter('all') }}
+                  className="bg-transparent outline-none cursor-pointer text-xs font-bold"
+                >
+                  <option value="all">Semua TA</option>
+                  {tahunAjarans?.map(ta => <option key={ta.id} value={ta.nama}>{ta.nama}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Mini Summary Chips (Clickable Filters) */}
+            <div className="flex items-center gap-1 shrink-0 text-[11px] font-bold">
+              {(() => {
+                const dupCount = (activeTab === 'murid' || activeTab === 'orang_tua')
+                  ? dataForCards.filter(a => {
+                      const sPhone = cleanPhone(a.rawStudent?.no_whatsapp || a.rawStudent?.no_hp)
+                      if (!sPhone) return false
+                      const currentContacts = a.rawStudent?.kontak_ortu || []
+                      const hasMatchingContact = Array.isArray(currentContacts) && currentContacts.some(k => cleanPhone(k.nomor) === sPhone)
+                      const oPhone = cleanPhone(a.rawStudent?.no_hp_ortu)
+                      return hasMatchingContact || (oPhone && sPhone === oPhone)
+                    }).length
+                  : 0
+
+                const statChips = (activeTab === 'murid' || activeTab === 'orang_tua' ? [
+                  { l: 'Punya Akun', v: dataForCards.filter(m => m.hasAkun).length, type: 'with_akun', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+                  { l: 'Tanpa Akun', v: dataForCards.filter(m => !m.hasAkun).length, type: 'without_akun', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+                  { l: 'Aktif', v: dataForCards.filter(m => m.hasAkun && m.status === 'aktif').length, type: 'active_akun', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+                  ...(dupCount > 0 ? [{ l: '⚠️ HP Kembar', v: dupCount, type: 'duplicate_phone', color: 'bg-rose-50 text-rose-700 border-rose-300' }] : [])
+                ] : [
+                  { l: 'Punya Akun', v: dataForCards.filter(g => g.hasAkun).length, type: 'with_akun', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+                  { l: 'Tanpa Akun', v: dataForCards.filter(g => !g.hasAkun).length, type: 'without_akun', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+                  { l: 'Admin', v: dataForCards.filter(g => {
+                      const akun = akunList.find(a => a.id === g.akun_id);
+                      return akun && (akun.role === 'admin' || akun.role === 'superadmin');
+                    }).length, type: 'active_akun', color: 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                  }
+                ])
+
+                return statChips.map(stat => (
+                  <button
+                    key={stat.l}
+                    onClick={() => setSummaryFilter(summaryFilter === stat.type ? 'all' : stat.type)}
+                    className={`px-2 py-0.5 rounded-lg border transition-all ${
+                      summaryFilter === stat.type
+                        ? 'ring-2 ring-indigo-500 font-black'
+                        : 'opacity-90 hover:opacity-100'
+                    } ${stat.color}`}
+                    title={`Filter ${stat.l}`}
+                  >
+                    <span>{stat.l}: {stat.v}</span>
+                  </button>
+                ))
+              })()}
+            </div>
+          </div>
         </div>
       )}
 
@@ -2690,11 +3336,59 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       </div>
                     </td>
                     <td className="px-4 py-3 cursor-pointer hover:bg-slate-100/80 transition-colors rounded-2xl" onClick={() => openBiodataModal(row)}>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">{row.nama}</p>
                         <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                       </div>
-                      <p className="text-xs text-slate-500 font-mono mt-0.5">{(activeTab === 'murid' || activeTab === 'orang_tua') ? row.foreign_id : `Kode: ${row.kode}`}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-slate-500 font-mono">{(activeTab === 'murid' || activeTab === 'orang_tua') ? row.foreign_id : `Kode: ${row.kode}`}</span>
+                        {(() => {
+                          const kontakList = Array.isArray(row.rawStudent?.kontak_ortu) ? row.rawStudent.kontak_ortu : []
+                          const phone = activeTab === 'murid'
+                            ? (row.rawStudent?.no_whatsapp || row.rawStudent?.no_hp)
+                            : activeTab === 'orang_tua'
+                              ? (kontakList[0]?.nomor || row.rawStudent?.no_hp_ortu)
+                              : row.rawGuru?.no_hp
+                          const digits = String(phone || '').replace(/[^0-9]/g, '')
+                          const hasHp = digits.length >= 7
+
+                          return (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {hasHp ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-0.5" title={`Nomor HP: ${phone}`}>
+                                  <span>📱</span>
+                                  <span>No. HP</span>
+                                  <span className="text-emerald-600 font-black">✓</span>
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-400 border border-slate-200 inline-flex items-center gap-0.5" title="Nomor HP belum terdaftar">
+                                  <span>📱</span>
+                                  <span>No. HP</span>
+                                  <span className="text-slate-400 font-black">✕</span>
+                                </span>
+                              )}
+                              {activeTab === 'orang_tua' && kontakList.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {kontakList.map((k, ki) => (
+                                    <span 
+                                      key={ki} 
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                        k.tag === 'Ayah' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                                        k.tag === 'Ibu' ? 'bg-pink-50 text-pink-800 border-pink-200' :
+                                        k.tag === 'Wali' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                        'bg-purple-50 text-purple-800 border-purple-200'
+                                      }`}
+                                      title={`${k.tag}: ${k.nama || '-'} (${k.nomor || '-'})`}
+                                    >
+                                      {k.tag === 'Ayah' ? '👨' : k.tag === 'Ibu' ? '👩' : k.tag === 'Wali' ? '🤝' : '👥'} {k.tag}{k.nama ? `: ${k.nama.split(' ')[0]}` : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       {row.hasAkun ? (
@@ -2702,39 +3396,63 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                           <p className="text-slate-800 font-medium">{row.username}</p>
                           <div className="flex items-center gap-1 flex-wrap">
                             <span className={`w-fit px-2 py-0.5 rounded text-[10px] font-bold uppercase ${row.status === 'aktif' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{row.status === 'aktif' ? 'Aktif' : 'Nonaktif'}</span>
-                            {activeTab === 'orang_tua' && (
-                              <>
-                                {row.rawStudent?.line_user_id ? (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
-                                ) : (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
-                                )}
-                                {Boolean(row.rawStudent?.nama_ortu && row.rawStudent?.no_hp_ortu && row.rawStudent?.email_ortu) ? (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">📝 Biodata Lengkap</span>
-                                ) : (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
-                                )}
-                              </>
-                            )}
+                            {activeTab === 'orang_tua' && (() => {
+                              const lineTaut = Boolean(row.rawStudent?.line_user_id)
+                              const namaOrtu = row.rawStudent?.nama_ortu?.trim()
+                              const hpOrtu = row.rawStudent?.no_hp_ortu?.trim()
+                              const emailOrtu = row.rawStudent?.email_ortu?.trim()
+
+                              const isFull = Boolean(namaOrtu && hpOrtu && emailOrtu)
+                              const hasHp = Boolean(hpOrtu)
+
+                              return (
+                                <>
+                                  {lineTaut ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
+                                  )}
+                                  {isFull ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title={`Nama: ${namaOrtu} | HP: ${hpOrtu} | Email: ${emailOrtu}`}>📝 Biodata Lengkap</span>
+                                  ) : hasHp ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200" title={`Nama: ${namaOrtu || '-'} | HP: ${hpOrtu}`}>📱 No. HP Terisi</span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
+                                  )}
+                                </>
+                              )
+                            })()}
                           </div>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-1">
                           <p className="text-xs italic text-slate-400 font-medium">(Belum Punya Akun)</p>
-                          {activeTab === 'orang_tua' && (
-                            <div className="flex items-center gap-1 flex-wrap">
-                              {row.rawStudent?.line_user_id ? (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
-                              ) : (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
-                              )}
-                              {Boolean(row.rawStudent?.nama_ortu && row.rawStudent?.no_hp_ortu && row.rawStudent?.email_ortu) ? (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">📝 Biodata Lengkap</span>
-                              ) : (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
-                              )}
-                            </div>
-                          )}
+                          {activeTab === 'orang_tua' && (() => {
+                            const lineTaut = Boolean(row.rawStudent?.line_user_id)
+                            const namaOrtu = row.rawStudent?.nama_ortu?.trim()
+                            const hpOrtu = row.rawStudent?.no_hp_ortu?.trim()
+                            const emailOrtu = row.rawStudent?.email_ortu?.trim()
+
+                            const isFull = Boolean(namaOrtu && hpOrtu && emailOrtu)
+                            const hasHp = Boolean(hpOrtu)
+
+                            return (
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {lineTaut ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 LINE Taut</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">🔴 LINE Belum</span>
+                                )}
+                                {isFull ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title={`Nama: ${namaOrtu} | HP: ${hpOrtu} | Email: ${emailOrtu}`}>📝 Biodata Lengkap</span>
+                                ) : hasHp ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200" title={`Nama: ${namaOrtu || '-'} | HP: ${hpOrtu}`}>📱 No. HP Terisi</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">⚠️ Biodata Belum</span>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
                       )}
                     </td>
@@ -2750,7 +3468,24 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                       )}
                     </td>
                     <td className="px-4 py-3 text-center sticky right-0 bg-white shadow-[-4px_0_10px_rgba(0,0,0,0.05)]">
-                      <div className="flex items-center justify-center gap-2">
+                      <div className="flex items-center justify-center gap-1.5">
+                        {activeTab === 'murid' && (
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setQuickCardStudent({
+                                ...row,
+                                ...(row.rawStudent || {}),
+                                kelas: row.kelas,
+                                tahun_ajaran: row.tahun_ajaran
+                              }); 
+                            }} 
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors" 
+                            title="Lihat Kartu Pelajar Digital"
+                          >
+                            <span className="text-sm">🪪</span>
+                          </button>
+                        )}
                         {row.hasAkun && (
                           <button onClick={(e) => { e.stopPropagation(); handleResetPassword(row); }} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl" title="Reset & Kirim WA">
                             <IconKey className="w-4 h-4" />
@@ -2949,13 +3684,213 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                         </div>
                         <div className="md:col-span-2 grid grid-cols-2 gap-4">
                           <div className="md:col-span-1">
-                            <label className="block text-xs font-medium text-slate-700 mb-1">No. WhatsApp</label>
-                            <input value={biodataForm.no_whatsapp || ''} onChange={e => setBiodataForm({...biodataForm, no_whatsapp: e.target.value})} placeholder="Contoh: 62812xxx" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+                            <label className="block text-xs font-medium text-slate-700 mb-1">No. WhatsApp / HP Siswa</label>
+                            <input value={biodataForm.no_whatsapp || biodataForm.no_hp || ''} onChange={e => setBiodataForm({...biodataForm, no_whatsapp: e.target.value, no_hp: e.target.value})} placeholder="Contoh: 62812xxx" className="w-full px-3 py-2 border rounded-2xl text-sm" />
                           </div>
                           <div className="md:col-span-1">
                             <label className="block text-xs font-medium text-slate-700 mb-1">ID Telegram Orang Tua</label>
                             <input value={biodataForm.telegram_ortu || ''} onChange={e => setBiodataForm({...biodataForm, telegram_ortu: e.target.value})} placeholder="Contoh: 123456789" className="w-full px-3 py-2 border rounded-2xl text-sm" />
                           </div>
+                        </div>
+
+                        {/* Data Tempat, Tanggal Lahir & Jenis Kelamin untuk Kartu Pelajar */}
+                        <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Tempat Lahir</label>
+                            <input 
+                              value={biodataForm.tempat_lahir || ''} 
+                              onChange={e => setBiodataForm({...biodataForm, tempat_lahir: e.target.value})} 
+                              placeholder="Contoh: Jakarta" 
+                              className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Tanggal Lahir</label>
+                            <input 
+                              type="date" 
+                              value={biodataForm.tanggal_lahir || ''} 
+                              onChange={e => setBiodataForm({...biodataForm, tanggal_lahir: e.target.value})} 
+                              className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 mb-1">Jenis Kelamin</label>
+                            <select 
+                              value={biodataForm.jenis_kelamin || ''} 
+                              onChange={e => setBiodataForm({...biodataForm, jenis_kelamin: e.target.value})} 
+                              className="w-full px-3 py-2 border rounded-2xl text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="">-- Pilih Jenis Kelamin --</option>
+                              <option value="L">Laki-Laki (L)</option>
+                              <option value="P">Perempuan (P)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Data Alamat & RT/RW untuk Kartu Pelajar */}
+                        <div className="md:col-span-2 space-y-3 pt-2 border-t border-slate-100">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="sm:col-span-2">
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Alamat (Nama Jalan & No. Rumah)</label>
+                              <input 
+                                value={biodataForm.alamat || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, alamat: e.target.value})} 
+                                placeholder="Contoh: Jl. Pangeran Tubagus Angke No.13" 
+                                className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                              />
+                            </div>
+                            <div className="sm:col-span-1">
+                              <label className="block text-xs font-medium text-slate-700 mb-1">RT / RW</label>
+                              <input 
+                                value={biodataForm.rt_rw || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, rt_rw: e.target.value})} 
+                                placeholder="Contoh: 06/02" 
+                                className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Kelurahan</label>
+                              <input 
+                                value={biodataForm.kelurahan || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, kelurahan: e.target.value})} 
+                                placeholder="Jembatan Lima" 
+                                className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Kecamatan</label>
+                              <input 
+                                value={biodataForm.kecamatan || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, kecamatan: e.target.value})} 
+                                placeholder="Tambora" 
+                                className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 mb-1">Kota / Kabupaten</label>
+                              <input 
+                                value={biodataForm.kota || ''} 
+                                onChange={e => setBiodataForm({...biodataForm, kota: e.target.value})} 
+                                placeholder="Jakarta Barat" 
+                                className="w-full px-3 py-2 border rounded-2xl text-sm" 
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Multi-Kontak Orang Tua / Wali (Tag: Ayah, Ibu, Wali, Orang Tua) */}
+                        <div className="md:col-span-2 bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>👨‍👩‍👧‍👦</span>
+                                <span>Kontak Orang Tua / Wali (Ayah, Ibu, Wali)</span>
+                              </h4>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                Masukkan kontak Ayah, Ibu, atau Wali siswa (terpisah dari nomor WhatsApp siswa pribadi di atas)
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const list = Array.isArray(biodataForm.kontak_ortu) ? [...biodataForm.kontak_ortu] : []
+                                const hasAyah = list.some(k => k.tag?.toLowerCase() === 'ayah')
+                                const hasIbu = list.some(k => k.tag?.toLowerCase() === 'ibu')
+                                const defaultTag = !hasAyah ? 'Ayah' : (!hasIbu ? 'Ibu' : 'Wali')
+                                list.push({ tag: defaultTag, nama: '', nomor: '' })
+                                setBiodataForm({ ...biodataForm, kontak_ortu: list })
+                              }}
+                              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1 shrink-0"
+                            >
+                              <IconPlus className="w-3.5 h-3.5" />
+                              <span>Tambah Kontak Ortu</span>
+                            </button>
+                          </div>
+
+                          {(!biodataForm.kontak_ortu || biodataForm.kontak_ortu.length === 0) ? (
+                            <div className="p-3 bg-white border border-dashed border-slate-300 rounded-xl text-center">
+                              <p className="text-xs text-slate-400">Belum ada nomor kontak orang tua terdaftar.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-2.5">
+                              {biodataForm.kontak_ortu.map((item, idx) => (
+                                <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl shadow-xs grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                                  {/* Pilihan Tag */}
+                                  <div className="sm:col-span-3">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">Peran / Tag</label>
+                                    <select
+                                      value={item.tag || 'Orang Tua'}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], tag: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      className={`w-full text-xs font-bold px-2.5 py-1.5 rounded-lg border outline-none focus:ring-2 focus:ring-violet-400 ${
+                                        item.tag === 'Ayah' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                                        item.tag === 'Ibu' ? 'bg-pink-50 text-pink-800 border-pink-200' :
+                                        item.tag === 'Wali' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                        'bg-slate-50 text-slate-800 border-slate-200'
+                                      }`}
+                                    >
+                                      <option value="Ayah">👨 Ayah</option>
+                                      <option value="Ibu">👩 Ibu</option>
+                                      <option value="Wali">🤝 Wali</option>
+                                      <option value="Orang Tua">👥 Orang Tua</option>
+                                    </select>
+                                  </div>
+
+                                  {/* Nama */}
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-1">Nama Lengkap</label>
+                                    <input
+                                      type="text"
+                                      value={item.nama || ''}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], nama: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      placeholder={`Nama ${item.tag || 'Orang Tua'}`}
+                                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                                    />
+                                  </div>
+
+                                  {/* No HP */}
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-1">No. HP / WhatsApp</label>
+                                    <input
+                                      type="text"
+                                      value={item.nomor || ''}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], nomor: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      placeholder="0812xxxx"
+                                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                                    />
+                                  </div>
+
+                                  {/* Hapus Button */}
+                                  <div className="sm:col-span-1 flex justify-end sm:justify-center pb-0.5">
+                                    <button
+                                      type="button"
+                                      title="Hapus kontak ini"
+                                      onClick={() => {
+                                        const next = biodataForm.kontak_ortu.filter((_, i) => i !== idx)
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    >
+                                      <IconTrash className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : activeTab === 'orang_tua' ? (
@@ -2963,19 +3898,141 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                         <div className="md:col-span-2 bg-violet-50 border border-violet-200 rounded-2xl p-4">
                           <p className="text-xs font-bold text-violet-800 uppercase tracking-wide mb-1">Orangtua dari:</p>
                           <p className="text-lg font-bold text-violet-900">{biodataForm.nama}</p>
-                          <p className="text-xs text-violet-600 font-mono mt-1">NISN: {biodataForm.foreign_id}</p>
-                          {biodataForm.kelas && <p className="text-xs text-violet-600 mt-0.5">Kelas: {biodataForm.kelas}</p>}
+                          <div className="flex items-center gap-3 mt-1 text-xs text-violet-600 font-mono">
+                            <span>NISN: {biodataForm.foreign_id}</span>
+                            {biodataForm.kelas && <span>• Kelas: {biodataForm.kelas}</span>}
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1">Nama Orang Tua</label>
-                          <input value={biodataForm.nama_ortu || ''} onChange={e => setBiodataForm({...biodataForm, nama_ortu: e.target.value})} placeholder="Contoh: Budi Santoso" className="w-full px-3 py-2 border rounded-2xl text-sm" />
+
+                        {/* Multi-Kontak Orang Tua / Wali (Tag: Ayah, Ibu, Wali, Orang Tua) */}
+                        <div className="md:col-span-2 bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>👨‍👩‍👧‍👦</span>
+                                <span>Daftar Kontak Orang Tua / Wali</span>
+                              </h4>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                Kelola kontak Ayah, Ibu, atau Wali untuk keperluan informasi dan notifikasi sekolah
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const list = Array.isArray(biodataForm.kontak_ortu) ? [...biodataForm.kontak_ortu] : []
+                                const hasAyah = list.some(k => k.tag?.toLowerCase() === 'ayah')
+                                const hasIbu = list.some(k => k.tag?.toLowerCase() === 'ibu')
+                                const defaultTag = !hasAyah ? 'Ayah' : (!hasIbu ? 'Ibu' : 'Wali')
+                                list.push({ tag: defaultTag, nama: '', nomor: '' })
+                                setBiodataForm({ ...biodataForm, kontak_ortu: list })
+                              }}
+                              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1 shrink-0"
+                            >
+                              <IconPlus className="w-3.5 h-3.5" />
+                              <span>Tambah Kontak</span>
+                            </button>
+                          </div>
+
+                          {(!biodataForm.kontak_ortu || biodataForm.kontak_ortu.length === 0) ? (
+                            <div className="p-4 bg-white border border-dashed border-slate-300 rounded-xl text-center">
+                              <p className="text-xs text-slate-500 mb-2">Belum ada kontak orang tua terdaftar.</p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBiodataForm({
+                                    ...biodataForm,
+                                    kontak_ortu: [
+                                      { tag: 'Ayah', nama: biodataForm.nama_ortu || '', nomor: biodataForm.no_hp_ortu || '' }
+                                    ]
+                                  })
+                                }}
+                                className="px-3 py-1.5 bg-violet-100 text-violet-700 hover:bg-violet-200 rounded-lg text-xs font-bold transition-colors"
+                              >
+                                + Tambah Kontak Pertama (Ayah)
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2.5">
+                              {biodataForm.kontak_ortu.map((item, idx) => (
+                                <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl shadow-xs grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                                  {/* Pilihan Tag */}
+                                  <div className="sm:col-span-3">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">Peran / Tag</label>
+                                    <select
+                                      value={item.tag || 'Orang Tua'}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], tag: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      className={`w-full text-xs font-bold px-2.5 py-1.5 rounded-lg border outline-none focus:ring-2 focus:ring-violet-400 ${
+                                        item.tag === 'Ayah' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                                        item.tag === 'Ibu' ? 'bg-pink-50 text-pink-800 border-pink-200' :
+                                        item.tag === 'Wali' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                        'bg-slate-50 text-slate-800 border-slate-200'
+                                      }`}
+                                    >
+                                      <option value="Ayah">👨 Ayah</option>
+                                      <option value="Ibu">👩 Ibu</option>
+                                      <option value="Wali">🤝 Wali</option>
+                                      <option value="Orang Tua">👥 Orang Tua</option>
+                                    </select>
+                                  </div>
+
+                                  {/* Nama */}
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-1">Nama Lengkap</label>
+                                    <input
+                                      type="text"
+                                      value={item.nama || ''}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], nama: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      placeholder={`Nama ${item.tag || 'Orang Tua'}`}
+                                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                                    />
+                                  </div>
+
+                                  {/* No HP */}
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-1">No. HP / WhatsApp</label>
+                                    <input
+                                      type="text"
+                                      value={item.nomor || ''}
+                                      onChange={e => {
+                                        const next = [...biodataForm.kontak_ortu]
+                                        next[idx] = { ...next[idx], nomor: e.target.value }
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      placeholder="0812xxxx"
+                                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                                    />
+                                  </div>
+
+                                  {/* Hapus Button */}
+                                  <div className="sm:col-span-1 flex justify-end sm:justify-center pb-0.5">
+                                    <button
+                                      type="button"
+                                      title="Hapus kontak ini"
+                                      onClick={() => {
+                                        const next = biodataForm.kontak_ortu.filter((_, i) => i !== idx)
+                                        setBiodataForm({ ...biodataForm, kontak_ortu: next })
+                                      }}
+                                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    >
+                                      <IconTrash className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1">No HP Orang Tua</label>
-                          <input value={biodataForm.no_hp_ortu || ''} onChange={e => setBiodataForm({...biodataForm, no_hp_ortu: e.target.value})} placeholder="Contoh: 62812xxx" className="w-full px-3 py-2 border rounded-2xl text-sm" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1">Email Orang Tua</label>
+
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-slate-700 mb-1">Email Orang Tua (Opsional)</label>
                           <input type="email" value={biodataForm.email_ortu || ''} onChange={e => setBiodataForm({...biodataForm, email_ortu: e.target.value})} placeholder="Contoh: ortu@email.com" className="w-full px-3 py-2 border rounded-2xl text-sm" />
                         </div>
                       </>
@@ -3993,21 +5050,27 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
               </button>
             </div>
             <div className="p-5">
-              <p className="text-sm text-slate-600 mb-4">Pilih kategori data pengguna yang ingin Anda download ke dalam format Excel:</p>
+              <div className="mb-4 flex items-center justify-between bg-indigo-50 border border-indigo-200/80 px-3 py-2 rounded-xl">
+                <span className="text-xs text-indigo-900 font-medium">Tahun Ajaran Target:</span>
+                <span className="text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded-md border border-indigo-100 shadow-2xs">
+                  {activeTa?.nama || 'Aktif'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mb-3">Pilih format data yang ingin Anda unduh ke dalam format Excel:</p>
               
-              <div className="space-y-3">
-                <button onClick={() => handleExportExcel('1')} className="w-full flex items-start text-left gap-3 p-4 border border-slate-200 rounded-xl hover:border-indigo-300 hover:bg-indigo-50 transition-all group">
-                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-2xl group-hover:bg-indigo-200 transition-colors">
+              <div className="space-y-2.5">
+                <button onClick={() => handleExportExcel('1')} className="w-full flex items-start text-left gap-3 p-3.5 border border-slate-200 rounded-xl hover:border-indigo-300 hover:bg-indigo-50 transition-all group">
+                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl group-hover:bg-indigo-200 transition-colors shrink-0">
                     <IconUsers className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-semibold text-slate-800 group-hover:text-indigo-800">Hanya Data Murid</h4>
-                    <p className="text-xs text-slate-500 mt-0.5">Export khusus biodata dan akun seluruh murid</p>
+                    <h4 className="text-sm font-semibold text-slate-800 group-hover:text-indigo-800">Hanya Data Murid ({activeTa?.nama || 'Aktif'})</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">Export khusus biodata dan akun seluruh murid tahun ajaran aktif</p>
                   </div>
                 </button>
 
-                <button onClick={() => handleExportExcel('2')} className="w-full flex items-start text-left gap-3 p-4 border border-slate-200 rounded-xl hover:border-indigo-300 hover:bg-indigo-50 transition-all group">
-                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-2xl group-hover:bg-indigo-200 transition-colors">
+                <button onClick={() => handleExportExcel('2')} className="w-full flex items-start text-left gap-3 p-3.5 border border-slate-200 rounded-xl hover:border-indigo-300 hover:bg-indigo-50 transition-all group">
+                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl group-hover:bg-indigo-200 transition-colors shrink-0">
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                   </div>
                   <div>
@@ -4016,24 +5079,35 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                   </div>
                 </button>
 
-                <button onClick={() => handleExportExcel('3')} className="w-full flex items-start text-left gap-3 p-4 border border-indigo-200 bg-indigo-50/50 rounded-xl hover:border-indigo-400 hover:bg-indigo-100 transition-all group ring-1 ring-indigo-50 shadow-sm relative overflow-hidden">
+                <button onClick={() => handleExportExcel('3')} className="w-full flex items-start text-left gap-3 p-3.5 border border-indigo-200 bg-indigo-50/50 rounded-xl hover:border-indigo-400 hover:bg-indigo-100 transition-all group ring-1 ring-indigo-50 shadow-xs relative overflow-hidden">
                   <div className="absolute top-0 right-0 px-2 py-0.5 bg-indigo-500 text-white text-[10px] font-bold rounded-bl-lg">REKOMENDASI</div>
-                  <div className="p-2 bg-indigo-600 text-white rounded-2xl group-hover:bg-indigo-700 transition-colors">
+                  <div className="p-2 bg-indigo-600 text-white rounded-xl group-hover:bg-indigo-700 transition-colors shrink-0">
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                   </div>
                   <div>
-                    <h4 className="text-sm font-semibold text-indigo-900">Semua Data (Murid & Guru)</h4>
+                    <h4 className="text-sm font-semibold text-indigo-900">Semua Data (Murid {activeTa?.nama || 'Aktif'} & Guru)</h4>
                     <p className="text-xs text-indigo-700/80 mt-0.5">Data murid dan guru akan dipisah dalam sheet berbeda</p>
                   </div>
                 </button>
 
-                <button onClick={() => handleExportExcel('4')} className="w-full flex items-start text-left gap-3 p-4 border border-slate-200 rounded-xl hover:border-teal-300 hover:bg-teal-50 transition-all group">
-                  <div className="p-2 bg-teal-100 text-teal-600 rounded-2xl group-hover:bg-teal-200 transition-colors">
+                <button onClick={() => handleExportExcel('4')} className="w-full flex items-start text-left gap-3 p-3.5 border border-slate-200 rounded-xl hover:border-teal-300 hover:bg-teal-50 transition-all group">
+                  <div className="p-2 bg-teal-100 text-teal-600 rounded-xl group-hover:bg-teal-200 transition-colors shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                   </div>
                   <div>
-                    <h4 className="text-sm font-semibold text-slate-800 group-hover:text-teal-800">Template Update NISN (Murid)</h4>
+                    <h4 className="text-sm font-semibold text-slate-800 group-hover:text-teal-800">Template Update NISN ({activeTa?.nama || 'Aktif'})</h4>
                     <p className="text-xs text-slate-500 mt-0.5">Download template terisi Nama & NISN Lama untuk update massal</p>
+                  </div>
+                </button>
+
+                <button onClick={() => handleExportExcel('5')} className="w-full flex items-start text-left gap-3 p-3.5 border border-emerald-200 bg-emerald-50/40 rounded-xl hover:border-emerald-400 hover:bg-emerald-50 transition-all group relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-bold rounded-bl-lg">KARTU PELAJAR & ORTU</div>
+                  <div className="p-2 bg-emerald-600 text-white rounded-xl group-hover:bg-emerald-700 transition-colors shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><line x1="15" y1="8" x2="17" y2="8"/><line x1="15" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="17" y2="16"/></svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-emerald-950 group-hover:text-emerald-900">Template Data Lengkap Siswa & Alamat ({activeTa?.nama || 'Aktif'})</h4>
+                    <p className="text-xs text-emerald-800/80 mt-0.5">Format Excel resmi tahun aktif untuk NISN, TTL, Alamat Lengkap & Kontak Ortu (Ayah, Ibu, Wali)</p>
                   </div>
                 </button>
               </div>
@@ -4045,178 +5119,339 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       {/* MODAL RESET PASSWORD & WHATSAPP */}
       {showResetModal && resetData && createPortal(
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden scale-in-center">
-            {/* Header */}
-            <div className="p-6 text-center border-b border-slate-100 bg-slate-50">
-              <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <IconKey className="w-7 h-7" />
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] overflow-y-auto p-3 sm:p-4 flex justify-center items-center min-h-screen">
+          <div className="bg-white rounded-2xl w-full max-w-md my-auto flex flex-col max-h-[85vh] shadow-2xl overflow-hidden animate-scale-in">
+            {/* Header (Sticky / Shrink-0) */}
+            <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                  <IconKey className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-800 leading-tight">
+                    Reset {activeTab === 'murid' ? 'Kode Akses Siswa' : 'Password Orang Tua'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 truncate font-semibold">
+                    Akun: <span className="text-slate-700">{resetData.row.nama}</span>
+                  </p>
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-slate-800 mb-1">Reset {activeTab === 'murid' ? 'Kode Akses' : 'Password'}</h3>
-              <p className="text-sm text-slate-500">Anda akan mereset akun milik <span className="font-semibold text-slate-700">{resetData.row.nama}</span></p>
+              <button 
+                type="button" 
+                onClick={() => setShowResetModal(false)} 
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
+                title="Tutup Modal"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
             </div>
             
-            {/* Body */}
-            <div className="p-6 text-left space-y-4">
-              <p className="text-sm text-slate-600 text-center mb-4">Pilih metode pembuatan sandi login baru untuk keamanan akun:</p>
-
-              {/* Opsi Metode Password */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => handleResetMethodChange('random')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${resetMethod === 'random' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-750'}`}
-                >
-                  🎲 Kode Acak
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleResetMethodChange('manual')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${resetMethod === 'manual' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-750'}`}
-                >
-                  ✍️ Input Manual
-                </button>
-              </div>
-              
-              <div className="space-y-3">
-                {/* Username Row */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Username</span>
-                    <span className="text-xs font-semibold text-slate-700 font-mono break-all pr-2">{resetData.row.username}</span>
-                  </div>
-                  <button 
+            {/* Body (Scrollable & min-h-0 for flex constraint) */}
+            <div className="p-3.5 text-left space-y-2.5 overflow-y-auto flex-1 min-h-0 scrollbar-thin">
+              {/* Opsi Metode Sandi Ringkas */}
+              <div className="flex items-center justify-between bg-slate-100 p-1 rounded-lg">
+                <span className="text-[10px] font-bold text-slate-500 px-1.5">Metode Sandi:</span>
+                <div className="flex gap-1">
+                  <button
                     type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(resetData.row.username)
-                      alert("Username berhasil disalin!")
-                    }}
-                    className="p-1.5 text-slate-400 hover:text-indigo-650 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                    onClick={() => handleResetMethodChange('random')}
+                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded-md transition-all ${resetMethod === 'random' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-700'}`}
                   >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                    Salin
+                    🎲 Acak
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleResetMethodChange('manual')}
+                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded-md transition-all ${resetMethod === 'manual' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    ✍️ Manual
                   </button>
                 </div>
-
-                {/* Password Row */}
-                {resetMethod === 'random' ? (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
-                    <div>
-                      <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">{activeTab === 'murid' ? 'Kode Akses' : 'Password'}</span>
-                      <span className="text-xs font-bold text-indigo-700 font-mono tracking-wider">{resetData.generatedPass}</span>
-                    </div>
+              </div>
+              
+              {/* Username & Password Grid (Samping-sampingan & Kompak) */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200/80 rounded-xl p-2.5">
+                {/* Username */}
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">Username</span>
                     <button 
                       type="button"
                       onClick={() => {
-                        navigator.clipboard.writeText(resetData.generatedPass)
-                        alert(`${activeTab === 'murid' ? 'Kode Akses' : 'Password'} berhasil disalin!`)
+                        navigator.clipboard.writeText(resetData.row.username)
+                        alert("Username berhasil disalin!")
                       }}
-                      className="p-1.5 text-slate-400 hover:text-indigo-650 bg-white border border-slate-200 rounded-lg hover:border-indigo-200 transition-all flex items-center gap-1 text-[10px] font-semibold shadow-sm shrink-0"
+                      className="text-[10px] text-indigo-600 hover:underline font-bold"
                     >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
                       Salin
                     </button>
                   </div>
-                ) : (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
-                    <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                      {activeTab === 'murid' ? 'Ketik Kode Akses Baru' : 'Ketik Password Baru'}
+                  <div className="text-xs font-bold text-slate-800 font-mono truncate" title={resetData.row.username}>
+                    {resetData.row.username}
+                  </div>
+                </div>
+
+                {/* Password / Kode Akses */}
+                <div className="border-l border-slate-200/80 pl-2.5">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">
+                      {activeTab === 'murid' ? 'Kode Akses' : 'Password'}
                     </span>
+                    {resetMethod === 'random' && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(resetData.generatedPass)
+                          alert(`${activeTab === 'murid' ? 'Kode Akses' : 'Password'} berhasil disalin!`)
+                        }}
+                        className="text-[10px] text-indigo-600 hover:underline font-bold"
+                      >
+                        Salin
+                      </button>
+                    )}
+                  </div>
+                  {resetMethod === 'random' ? (
+                    <div className="text-xs font-black text-indigo-700 font-mono tracking-wider truncate">
+                      {resetData.generatedPass}
+                    </div>
+                  ) : (
                     <input
                       type="text"
                       value={resetData.generatedPass || ''}
                       onChange={(e) => setResetData({ ...resetData, generatedPass: e.target.value })}
-                      placeholder="Minimal 4 karakter..."
-                      className="w-full text-xs font-bold text-indigo-700 font-mono tracking-wider bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      placeholder="Min 4 char"
+                      className="w-full text-xs font-bold text-indigo-700 font-mono bg-white border border-slate-300 rounded px-1.5 py-0.5 outline-none"
                     />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* Fast Auto-login Copy Button */}
+              {/* Fast Auto-login Copy Button (1-line) */}
               <button
                 type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(`${resetData.row.username}|${resetData.generatedPass}`)
                   alert("Format Auto-Login berhasil disalin! Tempelkan (paste) langsung ke kolom Username di halaman login untuk langsung mengisi kedua kolom.")
                 }}
-                className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs shadow-sm"
+                className="w-full py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-                Salin Cepat (Format Auto-Login)
+                <span>📋</span>
+                <span>Salin Cepat (Format Auto-Login)</span>
               </button>
               
-              <div className="mt-4 text-left bg-slate-50 border border-slate-200 p-3 rounded-xl">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Nomor WhatsApp Tujuan</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+              {/* WhatsApp Box */}
+              <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700">Nomor WhatsApp Tujuan</label>
+                  {resetData.waNumber && (
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Aktif: {resetData.waNumber}
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick Selection Chips Kontak Ortu */}
+                {activeTab === 'orang_tua' && resetData.availableContacts?.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-500 font-medium">Pilih kontak penerima:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {resetData.availableContacts.map((c, idx) => {
+                        const isSelected = resetData.waNumber === c.nomor
+                        return (
+                          <button
+                            type="button"
+                            key={idx}
+                            onClick={() => setResetData({ 
+                              ...resetData, 
+                              waNumber: c.nomor, 
+                              selectedTag: c.tag, 
+                              selectedName: c.nama 
+                            })}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                              isSelected 
+                                ? 'bg-violet-600 text-white border-violet-600 shadow-xs' 
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300 hover:bg-violet-50/50'
+                            }`}
+                          >
+                            <span>{c.icon}</span>
+                            <span>{c.tag}{c.nama ? ` (${c.nama})` : ''}</span>
+                            <span className={`text-[10px] font-mono ${isSelected ? 'text-violet-100' : 'text-slate-400'}`}>• {c.nomor}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                  <input type="text" value={resetData.waNumber || ''} onChange={(e) => setResetData({...resetData, waNumber: e.target.value})} className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Misal: 62812xxxx" />
+                )}
+
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                  </div>
+                  <input 
+                    type="text" 
+                    value={resetData.waNumber || ''} 
+                    onChange={(e) => setResetData({...resetData, waNumber: e.target.value})} 
+                    className="w-full pl-8 pr-3 py-1.5 text-xs font-mono border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white transition-all" 
+                    placeholder="Nomor WA (contoh: 62812xxxx)" 
+                  />
                 </div>
                 
                 {activeTab === 'orang_tua' && !resetData.waNumber && (
-                  <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 animate-fade-in">
-                    <p className="text-[10px] text-amber-900 font-bold flex items-center gap-1 leading-tight">
-                      ⚠️ Nomor HP Orang Tua belum diisi! Silakan isi nomor secara manual.
+                  <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+                    <p className="text-[10px] text-amber-900 font-bold leading-tight">
+                      ⚠️ Nomor HP Orang Tua belum diisi!
                     </p>
                     {resetData.noHpSiswa && (
                       <button
                         type="button"
                         onClick={() => setResetData({ ...resetData, waNumber: resetData.noHpSiswa })}
-                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold hover:underline block text-left leading-none"
+                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold hover:underline block text-left"
                       >
-                        👉 Hubungkan ke nomor HP Siswa ({resetData.noHpSiswa})
+                        👉 Pakai nomor HP Siswa ({resetData.noHpSiswa})
                       </button>
                     )}
                   </div>
                 )}
-                
-                <p className="text-[10px] text-slate-500 mt-1">Kosongkan jika hanya ingin menyimpan tanpa mengirim WhatsApp.</p>
               </div>
-              
-              <p className="text-xs text-slate-400 mt-4">Pilih tindakan selanjutnya di bawah ini.</p>
             </div>
             
-            {/* Footer Buttons */}
-            <div className="p-4 bg-slate-50 border-t flex flex-col gap-2">
+            {/* Footer Buttons (Sticky / Shrink-0 / Single Row Ringkas) */}
+            <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2 shrink-0">
               <button 
+                type="button"
+                onClick={() => setShowResetModal(false)} 
+                disabled={isProcessing}
+                className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors"
+              >
+                Batal
+              </button>
+              <button 
+                type="button"
+                onClick={() => executeReset(false)} 
+                disabled={isProcessing}
+                className="px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-xl transition-colors"
+              >
+                Hanya Simpan
+              </button>
+              <button 
+                type="button"
                 onClick={() => executeReset(true)} 
                 disabled={isProcessing}
-                className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1EBE5C] text-white py-3 rounded-xl font-semibold shadow-sm transition-colors"
+                className="flex-1 sm:flex-initial px-4 py-2 bg-[#25D366] hover:bg-[#1EBE5C] text-white rounded-xl font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
               >
                 {isProcessing ? (
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                 ) : (
                   <>
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/>
                     </svg>
                     Simpan & Kirim WA
                   </>
                 )}
               </button>
-              
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => executeReset(false)} 
-                  disabled={isProcessing}
-                  className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-xl transition-colors"
-                >
-                  Hanya Simpan
-                </button>
-                <button 
-                  onClick={() => setShowResetModal(false)} 
-                  disabled={isProcessing}
-                  className="flex-1 py-2.5 text-sm font-semibold text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-colors"
-                >
-                  Batal
-                </button>
-              </div>
             </div>
           </div>
         </div>,
         document.body
+      )}
+
+      <ExportKontakModal
+        isOpen={showExportKontakModal}
+        onClose={() => setShowExportKontakModal(false)}
+        initialKelas={selectedClassFilter || 'Semua Siswa'}
+        semuaKelas={uniqueClasses}
+        activeTa={activeTa}
+      />
+
+      <TemplateUpdateNisnModal
+        isOpen={showTemplateNisnModal}
+        onClose={() => setShowTemplateNisnModal(false)}
+        students={students}
+        semuaKelas={uniqueClasses}
+        activeTa={activeTa}
+      />
+
+      {/* Modal Audit Kelengkapan Biodata Siswa (Khusus Tahun Ajaran Aktif) */}
+      <ModalKelengkapanDataSiswa
+        isOpen={showKelengkapanModal}
+        onClose={() => setShowKelengkapanModal(false)}
+        students={getMergedData().filter(s => {
+          const targetTa = activeTa?.nama
+          if (!targetTa) return s.kelas && s.kelas !== '-'
+          const isTaMatch = s.tahun_ajaran === targetTa || 
+            (Array.isArray(s.rawStudent?.enrollments) && s.rawStudent.enrollments.some(e => e.tahun_ajaran?.trim() === targetTa.trim()))
+          return isTaMatch && s.kelas && s.kelas !== '-'
+        })}
+        activeTa={activeTa}
+        masterKelas={getActiveClasses()}
+        onEditStudent={(row) => openBiodataModal(row)}
+      />
+
+      {/* Quick Kartu Pelajar Preview Modal */}
+      {quickCardStudent && createPortal(
+        <div 
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-fade-in" 
+          onClick={() => setQuickCardStudent(null)}
+        >
+          <div 
+            className="bg-slate-900 rounded-3xl p-6 shadow-2xl max-w-xl w-full flex flex-col items-center border border-slate-700" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-full flex justify-between items-center mb-4 text-white border-b border-white/10 pb-3">
+              <div>
+                <h3 className="text-sm font-bold">Kartu Pelajar Siswa</h3>
+                <p className="text-xs text-slate-400">{quickCardStudent.nama_lengkap || quickCardStudent.nama} (NISN: {quickCardStudent.foreign_id || quickCardStudent.nisn})</p>
+              </div>
+              <button 
+                onClick={() => setQuickCardStudent(null)} 
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="overflow-x-auto max-w-full p-2 flex justify-center">
+              <div style={{ transform: 'scale(0.85)', transformOrigin: 'top center', width: '510px', height: '320px' }}>
+                <KartuPelajarCard 
+                  student={quickCardStudent} 
+                  photoUrl={quickCardStudent.foto_url} 
+                  side="front" 
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-2.5 w-full justify-end pt-3 border-t border-white/10">
+              <button 
+                onClick={() => window.print()} 
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-sm"
+              >
+                <span>🖨️ Cetak Kartu</span>
+              </button>
+              <button 
+                onClick={() => setQuickCardStudent(null)} 
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showSmartPhotoModal && (
+        <SmartPhotoUploadModal
+          isOpen={showSmartPhotoModal}
+          onClose={() => setShowSmartPhotoModal(false)}
+          students={students}
+          activeTa={activeTa}
+          tahunAjarans={tahunAjarans}
+          onSuccess={() => {
+            fetchData()
+            onRefresh?.()
+          }}
+        />
       )}
 
       {ConfirmModalComponent}

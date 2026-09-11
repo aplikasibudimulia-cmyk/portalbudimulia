@@ -1,14 +1,65 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
+
+function getSortRank(item) {
+  const str = (item.display_no || item.kode || '').trim()
+  const matchNumbered = str.match(/(?:^[A-Z]+\.)?(\d+)/i)
+  const matchWithLetter = str.match(/(\d+)\.([a-z])/i)
+  if (matchWithLetter && matchWithLetter[1]) {
+    const num = parseInt(matchWithLetter[1], 10)
+    const letterCode = matchWithLetter[2] ? matchWithLetter[2].toLowerCase().charCodeAt(0) - 96 : 0
+    return num * 100 + letterCode
+  }
+  if (matchNumbered && matchNumbered[1]) {
+    return parseInt(matchNumbered[1], 10) * 100
+  }
+  return 99999
+}
+
+function buildArticleGroups(items) {
+  const groups = []
+  let currentGroup = null
+
+  items.forEach(item => {
+    const subKat = item.sub_kategori ? item.sub_kategori.trim() : ''
+    
+    if (subKat) {
+      if (currentGroup && currentGroup.isGroup && currentGroup.fullSubKat === subKat) {
+        currentGroup.items.push(item)
+      } else {
+        const match = subKat.match(/^(\d+)\.\s*(.*)/)
+        const articleNo = match ? match[1] : ''
+        const title = match ? match[2] : subKat
+
+        currentGroup = {
+          isGroup: true,
+          fullSubKat: subKat,
+          articleNo: articleNo,
+          title: title || subKat,
+          items: [item]
+        }
+        groups.push(currentGroup)
+      }
+    } else {
+      currentGroup = null
+      groups.push({
+        isGroup: false,
+        item: item
+      })
+    }
+  })
+
+  return groups
+}
 
 export default function SiswaPoinSection({ 
   siswaNisn, 
   activeTa, 
   showTabPoinSaya = true, 
-  showPoinTotal = true,
+  showPoinTotal = false,
   showPoinNegatif = true,
   showPoinPositif = true,
-  showTabLeaderboard = true, 
+  showTabLeaderboard = false, 
   showTabTataTertib = true, 
   showTabKatalog = true,
   showPointRecords = true
@@ -17,16 +68,18 @@ export default function SiswaPoinSection({
   const [katalogPoin, setKatalogPoin] = useState([])
   const [activeView, setActiveView] = useState(() => {
     if (showTabPoinSaya) return 'poin_saya'
-    if (showTabLeaderboard) return 'leaderboard'
     if (showTabTataTertib) return 'tata_tertib'
     if (showTabKatalog) return 'katalog_poin'
     return 'poin_saya'
   })
   const [katalogTab, setKatalogTab] = useState('negative') // 'negative' | 'positive'
   const [katalogSearch, setKatalogSearch] = useState('')
+  const [historyFilter, setHistoryFilter] = useState('all') // 'all' | 'positive' | 'negative'
+  const [openSubKatalog, setOpenSubKatalog] = useState({})
+  const [openBabKatalog, setOpenBabKatalog] = useState({})
   const [loading, setLoading] = useState(true)
 
-  // State baru untuk data personal siswa & leaderboard
+  // State data personal siswa
   const [myPoints, setMyPoints] = useState(null)
   const [myHistory, setMyHistory] = useState([])
   const [leaderboardList, setLeaderboardList] = useState([])
@@ -138,24 +191,36 @@ export default function SiswaPoinSection({
     return acc
   }, {})
 
-  // Group and search katalog poin
-  const groupedKatalog = (katalogPoin || []).reduce((acc, item) => {
-    if (item.tipe !== katalogTab) return acc
-    
-    const q = katalogSearch.toLowerCase()
-    const match = !q || 
-      (item.kategori || '').toLowerCase().includes(q) || 
-      (item.kode || '').toLowerCase().includes(q) || 
-      (item.jenis || '').toLowerCase().includes(q) || 
-      (item.keterangan || '').toLowerCase().includes(q)
-      
-    if (!match) return acc
-    
-    const kat = item.kategori || 'TANPA KATEGORI'
-    if (!acc[kat]) acc[kat] = []
-    acc[kat].push(item)
-    return acc
-  }, {})
+  // Group and search katalog poin dengan sorting kronologis
+  const groupedKatalog = useMemo(() => {
+    const map = {}
+    ;(katalogPoin || []).forEach((item) => {
+      if (item.tipe !== katalogTab) return
+      const q = katalogSearch.toLowerCase()
+      const match = !q || 
+        (item.kategori || '').toLowerCase().includes(q) || 
+        (item.sub_kategori || '').toLowerCase().includes(q) ||
+        (item.kode || '').toLowerCase().includes(q) || 
+        (item.jenis || '').toLowerCase().includes(q) || 
+        (item.keterangan || '').toLowerCase().includes(q)
+      if (!match) return
+
+      const kat = item.kategori || 'Tanpa Kategori'
+      if (!map[kat]) map[kat] = []
+      map[kat].push(item)
+    })
+
+    Object.keys(map).forEach(kat => {
+      map[kat].sort((a, b) => {
+        const rankA = getSortRank(a)
+        const rankB = getSortRank(b)
+        if (rankA !== rankB) return rankA - rankB
+        return (a.display_no || a.kode || '').localeCompare(b.display_no || b.kode || '', undefined, { numeric: true, sensitivity: 'base' })
+      })
+    })
+
+    return map
+  }, [katalogPoin, katalogTab, katalogSearch])
 
   // Hitung status warna & label kedisiplinan
   const getDisciplineStatus = (poin, max) => {
@@ -173,9 +238,20 @@ export default function SiswaPoinSection({
   const percentVal = Math.max(0, Math.min(100, maxPoin > 0 ? (currentPoin / maxPoin) * 100 : 100))
 
   const displayedHistory = myHistory.filter((rec) => {
-    const isMinus = rec.poin_diberikan < 0
+    const pts = rec.poin ?? rec.poin_diberikan ?? 0
+    const isMinus = pts < 0
     if (isMinus) return showPoinNegatif
     return showPoinPositif
+  })
+
+  const positifCount = displayedHistory.filter(r => (r.poin ?? r.poin_diberikan ?? 0) > 0).length
+  const negatifCount = displayedHistory.filter(r => (r.poin ?? r.poin_diberikan ?? 0) < 0).length
+
+  const filteredHistory = displayedHistory.filter(r => {
+    const pts = r.poin ?? r.poin_diberikan ?? 0
+    if (historyFilter === 'positive') return pts > 0
+    if (historyFilter === 'negative') return pts < 0
+    return true
   })
 
   return (
@@ -185,85 +261,67 @@ export default function SiswaPoinSection({
         {showTabPoinSaya && (
           <button onClick={() => setActiveView('poin_saya')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'poin_saya' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-            ⭐ Poin Saya
+            Riwayat Catatan Poin
           </button>
         )}
         {showTabLeaderboard && (
           <button onClick={() => setActiveView('leaderboard')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'leaderboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-            🏆 Leaderboard
+            Leaderboard
           </button>
         )}
         {showTabTataTertib && (
           <button onClick={() => setActiveView('tata_tertib')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'tata_tertib' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-            📋 Tata Tertib
+            Tata Tertib
           </button>
         )}
         {showTabKatalog && (
           <button onClick={() => setActiveView('katalog_poin')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'katalog_poin' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-            📖 Katalog Poin
+            Katalog Poin
           </button>
         )}
       </div>
 
-      {/* ─── TAB 1: POIN SAYA (PERSONAL SCORE) ───────────────── */}
+      {/* ─── TAB 1: RIWAYAT CATATAN POIN (PERSONAL SCORE) ───────────────── */}
       {activeView === 'poin_saya' && showTabPoinSaya && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {fetchingPersonal ? (
             <div className="flex justify-center py-12">
               <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
             </div>
           ) : (
             <>
-              {/* Point Card Summary */}
-              {showPoinTotal && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm md:col-span-2 space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-extrabold text-slate-800 text-base">Poin Perilaku & Kedisiplinan</h3>
-                        <p className="text-xs text-slate-500">Akumulasi penilaian sikap semester ini</p>
-                      </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${status.color}`}>
-                        {status.label}
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-end">
-                        <span className="text-xs font-bold text-slate-400">STATUS POINT BAR</span>
-                        <span className="text-2xl font-black text-slate-850">
-                          {currentPoin} <span className="text-sm font-medium text-slate-400">/ {maxPoin} Poin</span>
-                        </span>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden">
-                        <div className={`h-3.5 rounded-full transition-all duration-500 ${status.barColor}`} style={{ width: `${percentVal}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-6 rounded-2xl shadow-sm flex flex-col justify-between relative overflow-hidden">
-                    <div className="absolute right-0 bottom-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-xl pointer-events-none" />
-                    <div className="relative z-10">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">Target Sikwa</span>
-                      <h4 className="text-base font-black mt-1 leading-snug">Jaga Reputasi Karakter Anda!</h4>
-                      <p className="text-[11px] text-indigo-200 mt-2 leading-relaxed">
-                        Siswa dengan sisa poin di atas 90 di akhir semester berkesempatan masuk di papan lencana terdisiplin sekolah.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* History List Section */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                  <h4 className="font-bold text-slate-800 text-sm">Riwayat Catatan Pelanggaran & Prestasi</h4>
-                  <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 rounded-full text-xs font-semibold">
-                    {displayedHistory.length} Kasus
-                  </span>
+                <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+                  <div>
+                    <h4 className="font-extrabold text-slate-800 text-sm">Riwayat Catatan Pelanggaran & Prestasi</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">Daftar pencatatan poin resmi oleh pihak sekolah</p>
+                  </div>
+                  
+                  {/* Filter Sub-Tabs */}
+                  <div className="flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl text-xs font-bold">
+                    <button
+                      onClick={() => setHistoryFilter('all')}
+                      className={`px-3 py-1 rounded-lg transition-all ${historyFilter === 'all' ? 'bg-white text-slate-800 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      Semua ({displayedHistory.length})
+                    </button>
+                    <button
+                      onClick={() => setHistoryFilter('positive')}
+                      className={`px-3 py-1 rounded-lg transition-all ${historyFilter === 'positive' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-emerald-700 hover:text-emerald-900'}`}
+                    >
+                      Prestasi (+{positifCount})
+                    </button>
+                    <button
+                      onClick={() => setHistoryFilter('negative')}
+                      className={`px-3 py-1 rounded-lg transition-all ${historyFilter === 'negative' ? 'bg-rose-600 text-white shadow-2xs' : 'text-rose-700 hover:text-rose-900'}`}
+                    >
+                      Pelanggaran (-{negatifCount})
+                    </button>
+                  </div>
                 </div>
 
                 {!showPointRecords ? (
@@ -277,10 +335,15 @@ export default function SiswaPoinSection({
                       Kebijakan sekolah menyembunyikan rincian catatan negatif demi menjaga kerahasiaan siswa. Untuk melihat kronologis kasus, silakan hubungi Guru BK atau Wali Kelas secara langsung.
                     </p>
                   </div>
-                ) : displayedHistory.length === 0 ? (
+                ) : filteredHistory.length === 0 ? (
                   /* No records */
                   <div className="p-8 text-center text-slate-400 text-sm">
-                    🎉 Luar biasa! Belum ada catatan negatif (pelanggaran) atau prestasi yang dilaporkan semester ini.
+                    {historyFilter === 'all' 
+                      ? 'Belum ada catatan pelanggaran atau prestasi yang dilaporkan.'
+                      : historyFilter === 'positive'
+                        ? 'Belum ada catatan poin prestasi.'
+                        : 'Tidak ada catatan pelanggaran tata tertib.'
+                    }
                   </div>
                 ) : (
                   /* Show Mode - Table list & Mobile Card list */
@@ -291,15 +354,16 @@ export default function SiswaPoinSection({
                         <thead>
                           <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             <th className="py-3 px-5">Tanggal</th>
-                            <th className="py-3 px-5">Jenis & Kode</th>
-                            <th className="py-3 px-5">Deskripsi Tindakan</th>
+                            <th className="py-3 px-5">Jenis Catatan</th>
+                            <th className="py-3 px-5">Deskripsi / Keterangan</th>
                             <th className="py-3 px-5 text-center">Poin</th>
                             <th className="py-3 px-5">Dicatat Oleh</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs">
-                          {displayedHistory.map((rec) => {
-                            const isMinus = rec.poin_diberikan < 0
+                          {filteredHistory.map((rec) => {
+                            const pts = rec.poin ?? rec.poin_diberikan ?? 0
+                            const isMinus = pts < 0
                             const dateObj = new Date(rec.tanggal)
                             const formattedDate = dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
                             
@@ -318,11 +382,11 @@ export default function SiswaPoinSection({
                                 </td>
                                 <td className="py-3.5 px-5 text-center whitespace-nowrap">
                                   <span className={`font-black ${isMinus ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                    {isMinus ? '' : '+'}{rec.poin_diberikan}
+                                    {isMinus ? '' : '+'}{pts}
                                   </span>
                                 </td>
                                 <td className="py-3.5 px-5 text-slate-500 whitespace-nowrap font-medium">
-                                  {rec.dicatat_oleh || 'Staf Tata Usaha'}
+                                  {rec.dicatat_oleh || 'Guru / Kesiswaan'}
                                 </td>
                               </tr>
                             )
@@ -333,8 +397,9 @@ export default function SiswaPoinSection({
 
                     {/* Mobile View (Accordion Card List) */}
                     <div className="block md:hidden divide-y divide-slate-100">
-                      {displayedHistory.map((rec) => {
-                        const isMinus = rec.poin_diberikan < 0
+                      {filteredHistory.map((rec) => {
+                        const pts = rec.poin ?? rec.poin_diberikan ?? 0
+                        const isMinus = pts < 0
                         const dateObj = new Date(rec.tanggal)
                         const formattedDate = dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
                         const isExpanded = !!expandedRecords[rec.id]
@@ -357,7 +422,7 @@ export default function SiswaPoinSection({
                               </div>
                               <div className="shrink-0">
                                 <span className={`font-black text-sm ${isMinus ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                  {isMinus ? '' : '+'}{rec.poin_diberikan}
+                                  {isMinus ? '' : '+'}{pts}
                                 </span>
                               </div>
                             </div>
@@ -540,12 +605,12 @@ export default function SiswaPoinSection({
             {/* Sub-tab Switch Tipe Poin */}
             <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit shrink-0">
               <button onClick={() => setKatalogTab('negative')}
-                className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${katalogTab === 'negative' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-                🔴 Pelanggaran (Poin Min)
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${katalogTab === 'negative' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>
+                Pelanggaran (Poin Negatif)
               </button>
               <button onClick={() => setKatalogTab('positive')}
-                className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${katalogTab === 'positive' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
-                🟢 Prestasi (Poin Plus)
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${katalogTab === 'positive' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>
+                Prestasi (Poin Positif)
               </button>
             </div>
           </div>
@@ -575,33 +640,125 @@ export default function SiswaPoinSection({
               Tidak ada data katalog poin yang cocok dengan pencarian Anda.
             </div>
           ) : Object.entries(groupedKatalog).map(([kat, items]) => (
-            <div key={kat} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm animate-fade-in">
-              <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
-                <h4 className="font-bold text-slate-700 text-xs uppercase tracking-wider">{kat}</h4>
+            <div key={kat} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm animate-fade-in">
+              <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
+                <h4 className="font-extrabold text-slate-800 text-xs tracking-tight">{kat}</h4>
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                  {items.length} butir
+                </span>
               </div>
               <div className="divide-y divide-slate-100">
-                {items.map((item) => (
-                  <div key={item.id} className="p-4 hover:bg-slate-50/50 transition-colors flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-mono rounded font-semibold shrink-0">
-                          {item.kode}
-                        </span>
-                        <span className="font-bold text-slate-800 text-sm leading-snug">
-                          {item.jenis}
-                        </span>
+                {buildArticleGroups(items).map((group, gIdx) => {
+                  if (group.isGroup) {
+                    const subKatKey = `${kat}__${group.fullSubKat}`
+                    const isSubOpen = katalogTab === 'negative' ? true : !!openSubKatalog[subKatKey]
+                    return (
+                      <div key={group.fullSubKat || gIdx} className="bg-slate-50/30">
+                        {/* Sub-kategori Header: Dropdown untuk Positif, Baris Header Alami untuk Negatif */}
+                        {katalogTab === 'positive' ? (
+                          <button
+                            type="button"
+                            onClick={() => setOpenSubKatalog(prev => ({ ...prev, [subKatKey]: !prev[subKatKey] }))}
+                            className="w-full bg-emerald-50/60 hover:bg-emerald-100/60 border-emerald-100/80 border-y px-4 sm:px-5 py-2.5 flex items-center justify-between transition-colors text-left select-none group"
+                          >
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs font-black text-emerald-700 border-emerald-200/80 bg-white border px-2 py-0.5 rounded-lg shadow-2xs">
+                                {group.articleNo || '•'}
+                              </span>
+                              <span className="text-xs font-black text-slate-800 tracking-tight">
+                                {group.title}
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                                {group.items.length} butir
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 text-emerald-600">
+                              <span className="text-[11px] font-bold hidden sm:inline">
+                                {isSubOpen ? 'Tutup' : 'Buka'}
+                              </span>
+                              <svg
+                                className={`w-4 h-4 transition-transform duration-200 ${isSubOpen ? 'rotate-180' : ''}`}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                              </svg>
+                            </div>
+                          </button>
+                        ) : (
+                          <div className="bg-slate-100/80 border-y border-slate-200/90 px-4 sm:px-5 py-2.5 flex items-center justify-between">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs font-black text-slate-700 border border-slate-200 bg-white px-2 py-0.5 rounded-lg shadow-2xs">
+                                {group.articleNo || '•'}
+                              </span>
+                              <span className="text-xs font-extrabold text-slate-800 tracking-tight">
+                                {group.title}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-600 bg-slate-200/70 px-2 py-0.5 rounded-full">
+                                {group.items.length} butir
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Sub-kategori Items */}
+                        {isSubOpen && (
+                          <div className="divide-y divide-slate-100 bg-white animate-fade-in">
+                            {group.items.map((item) => (
+                              <div key={item.id} className="p-3.5 pl-6 sm:pl-8 hover:bg-slate-50/50 transition-colors flex items-start justify-between gap-4">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-slate-300 font-bold text-xs">↳</span>
+                                    <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-mono rounded font-bold shrink-0">
+                                      {item.display_no || item.kode}
+                                    </span>
+                                    <span className="font-bold text-slate-800 text-xs sm:text-sm leading-snug">
+                                      {item.jenis}
+                                    </span>
+                                  </div>
+                                  {item.keterangan && (
+                                    <p className="text-xs text-slate-500 leading-relaxed pl-5">
+                                      {item.keterangan}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className={`px-2.5 py-1 rounded-xl font-bold text-xs shrink-0 border shadow-2xs ${item.tipe === 'positive' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                  {item.tipe === 'positive' ? `+${item.poin}` : `-${item.poin}`} Poin
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {item.keterangan && (
-                        <p className="text-xs text-slate-500 leading-relaxed pl-1">
-                          {item.keterangan}
-                        </p>
-                      )}
+                    )
+                  }
+
+                  const item = group.item
+                  return (
+                    <div key={item.id || gIdx} className="p-4 hover:bg-slate-50/50 transition-colors flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-mono rounded font-bold shrink-0">
+                            {item.display_no || item.kode}
+                          </span>
+                          <span className="font-bold text-slate-800 text-sm leading-snug">
+                            {item.jenis}
+                          </span>
+                        </div>
+                        {item.keterangan && (
+                          <p className="text-xs text-slate-500 leading-relaxed pl-1">
+                            {item.keterangan}
+                          </p>
+                        )}
+                      </div>
+                      <div className={`px-3 py-1.5 rounded-xl font-bold text-xs shrink-0 border shadow-2xs ${item.tipe === 'positive' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                        {item.tipe === 'positive' ? `+${item.poin}` : `-${item.poin}`} Poin
+                      </div>
                     </div>
-                    <div className={`px-3 py-1.5 rounded-xl font-bold text-xs shrink-0 border shadow-sm ${item.tipe === 'positive' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                      {item.tipe === 'positive' ? `+${item.poin}` : `-${item.poin}`} Poin
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
+import { downloadFile } from '../utils/fileDownloader'
 
 const EMPTY_FORM = { bab: '', nama_bab: '', pasal: '', nama_pasal: '', nomor: '', isi: '' }
 
@@ -157,7 +158,7 @@ export default function AdminTataTertibSection({ readOnly = false }) {
     ws.eachRow(r => { r.eachCell(c => { c.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } } }) })
     const buf = await wb.xlsx.writeBuffer()
     const today = new Date().toISOString().slice(0, 10)
-    saveAs(new Blob([buf]), `tata-tertib-${today}.xlsx`)
+    await downloadFile(buf, `tata-tertib-${today}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   }
 
   // ─── IMPORT ───────────────────────────────────────────────
@@ -216,7 +217,7 @@ export default function AdminTataTertibSection({ readOnly = false }) {
     ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } }
     ws.addRow({ bab: 'BAB I', nama_bab: 'Tujuan dan Fungsi', pasal: 'Pasal 1', nama_pasal: 'Tujuan', nomor: '01', isi: 'Contoh isi ketentuan pasal ini.' })
     const buf = await wb.xlsx.writeBuffer()
-    saveAs(new Blob([buf]), 'template-tata-tertib.xlsx')
+    await downloadFile(buf, 'template-tata-tertib.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   }
 
   if (loading) return <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" /></div>

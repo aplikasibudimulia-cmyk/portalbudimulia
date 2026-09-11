@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import TagInput from './TagInput'
+import { downloadWorkbook } from '../utils/fileDownloader'
 
 // Helper untuk mem-parse tanggal YYYY-MM-DD secara aman dan konsisten lintas browser
 const parseLocalDate = (dateStr) => {
@@ -532,7 +533,7 @@ export default function ProgramSekolahSection({ session, isAdmin = false, active
     })
     worksheet['!cols'] = Object.keys(maxLens).map(key => ({ wch: maxLens[key] + 2 }))
 
-    XLSX.writeFile(workbook, `Program_Sekolah_${activeTa?.nama?.replace('/', '-') || 'Download'}.xlsx`)
+    await downloadWorkbook(workbook, `Program_Sekolah_${activeTa?.nama?.replace('/', '-') || 'Download'}.xlsx`)
   }
 
   const handleImportExcel = async (e) => {

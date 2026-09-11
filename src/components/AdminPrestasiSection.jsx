@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '../utils/fileDownloader'
 
 export default function AdminPrestasiSection({ session, activeTa, readOnly = false }) {
   const [loading, setLoading] = useState(true)
@@ -416,7 +417,7 @@ export default function AdminPrestasiSection({ session, activeTa, readOnly = fal
   }
 
   // Export to Excel
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (filteredPrestasi.length === 0) {
       setNotifyModal({ show: true, type: 'warning', title: 'Tidak Ada Data', message: 'Tidak ada data prestasi yang dapat di-export.' })
       return
@@ -440,7 +441,7 @@ export default function AdminPrestasiSection({ session, activeTa, readOnly = fal
     const worksheet = XLSX.utils.json_to_sheet(dataToExport)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Prestasi Siswa')
-    XLSX.writeFile(workbook, `Rekap_Prestasi_Siswa_${selectedTaName.replace('/', '_')}.xlsx`)
+    await downloadWorkbook(workbook, `Rekap_Prestasi_Siswa_${selectedTaName.replace('/', '_')}.xlsx`)
   }
 
   // Filter Prestasi List

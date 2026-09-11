@@ -81,12 +81,11 @@ export default function SiswaNilaiSection({ studentData }) {
       .eq('semester_id', selectedSemesterId)
       .order('urutan')
       
-    // Filter komponen for this student's class. Visibility (is_nilai_visible) is
-    // filtered at render time so that only visible TPs/Babs are shown to the student.
-    const studentClassNum = studentData.kelas ? studentData.kelas.replace(/\D/g, '') : ''
+    // Filter komponen for this student's exact class (e.g. 9A, 9B).
+    const studentKelas = (studentData.kelas || '').trim().toUpperCase()
     const validKomps = (kompData || []).filter(k => {
       if (!k.target_kelas || k.target_kelas.length === 0) return true;
-      return k.target_kelas.some(c => c.replace(/\D/g, '') === studentClassNum)
+      return k.target_kelas.some(c => String(c || '').trim().toUpperCase() === studentKelas)
     })
     
     // 3. Fetch student's grades

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
+import { showLocalNotif } from '../utils/pushNotif'
 
 // ─── Kompresi gambar via Canvas (tanpa library eksternal) ───
 async function compressImage(file, maxBytes = 1024 * 1024) {
@@ -38,6 +39,58 @@ const MAX_FILE_SIZE = 1024 * 1024
 const MAX_FILES = 5
 const ALLOWED_TYPES = ['image/jpeg','image/jpg','image/png','image/webp','image/gif','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document']
 
+// ─── Helper urutan dan grouping sub-kategori ───
+function getSortRank(item) {
+  const str = (item.display_no || item.kode || '').toString().trim()
+  const matchWithLetter = str.match(/(?:[A-ZIVXLCDM]+\.)?(\d+)(?:\.([a-z]))?/i)
+  if (matchWithLetter && matchWithLetter[1]) {
+    const num = parseInt(matchWithLetter[1], 10)
+    const letterCode = matchWithLetter[2] ? matchWithLetter[2].toLowerCase().charCodeAt(0) - 96 : 0
+    return num * 100 + letterCode
+  }
+  const matchPrefix = str.match(/[A-Z]+-(\d+)/i)
+  if (matchPrefix && matchPrefix[1]) {
+    return parseInt(matchPrefix[1], 10) * 100
+  }
+  return 99999
+}
+
+function buildArticleGroups(items) {
+  const groups = []
+  let currentGroup = null
+
+  items.forEach(item => {
+    const subKat = item.sub_kategori ? item.sub_kategori.trim() : ''
+    
+    if (subKat) {
+      if (currentGroup && currentGroup.isGroup && currentGroup.fullSubKat === subKat) {
+        currentGroup.items.push(item)
+      } else {
+        const match = subKat.match(/^(\d+|[A-Z]+)\.\s*(.*)/)
+        const articleNo = match ? match[1] : (item.display_no ? item.display_no.split('.')[0] : '')
+        const articleTitle = match ? match[2] : subKat
+        
+        currentGroup = {
+          isGroup: true,
+          articleNo: articleNo || '',
+          title: articleTitle || subKat,
+          fullSubKat: subKat,
+          items: [item]
+        }
+        groups.push(currentGroup)
+      }
+    } else {
+      currentGroup = null
+      groups.push({
+        isGroup: false,
+        item
+      })
+    }
+  })
+
+  return groups
+}
+
 export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
   const nisn = studentData?.nisn
 
@@ -48,6 +101,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
   const [katalogLoading, setKatalogLoading] = useState(true)
   const [byKategori, setByKategori]     = useState({})
   const [openKategori, setOpenKategori] = useState({})
+  const [openSubKategori, setOpenSubKategori] = useState({})
   const [search, setSearch]             = useState('')
   const [semester, setSemester]         = useState(1)
 
@@ -110,15 +164,40 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
 
   const fetchKatalog = async () => {
     setKatalogLoading(true)
-    const { data } = await supabase.from('point_catalog').select('*').gt('poin', 0).order('kategori').order('kode')
+    const { data } = await supabase.from('point_catalog').select('*').gt('poin', 0)
     const list = data || []
-    setKatalog(list)
+    
+    // Group per Kategori
     const grouped = {}
-    list.forEach(k => { if (!grouped[k.kategori]) grouped[k.kategori] = []; grouped[k.kategori].push(k) })
-    setByKategori(grouped)
+    list.forEach(k => { 
+      if (!grouped[k.kategori]) grouped[k.kategori] = []
+      grouped[k.kategori].push(k) 
+    })
+
+    // Sort items di dalam setiap Kategori secara kronologis
+    Object.keys(grouped).forEach(kat => {
+      grouped[kat].sort((a, b) => {
+        const rankA = getSortRank(a)
+        const rankB = getSortRank(b)
+        if (rankA !== rankB) return rankA - rankB
+        return (a.display_no || a.kode || '').localeCompare(b.display_no || b.kode || '', undefined, { numeric: true, sensitivity: 'base' })
+      })
+    })
+
+    // Sort Kategori keys secara Natural
+    const sortedGrouped = {}
+    Object.keys(grouped)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+      .forEach(k => {
+        sortedGrouped[k] = grouped[k]
+      })
+
+    setKatalog(list)
+    setByKategori(sortedGrouped)
+    
     // Buka semua kategori by default
     const allOpen = {}
-    Object.keys(grouped).forEach(k => allOpen[k] = true)
+    Object.keys(sortedGrouped).forEach(k => allOpen[k] = true)
     setOpenKategori(allOpen)
     setKatalogLoading(false)
   }
@@ -248,9 +327,16 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
       }
 
       if (error) throw error
-
       setResubmitItem(null)
-      setSuccessMsg('✅ Revisi pengajuan berhasil dikirim ulang! Menunggu review guru BK.')
+      setSuccessMsg('Revisi pengajuan berhasil dikirim ulang! Menunggu review guru BK.')
+      showLocalNotif(
+        'Revisi Pengajuan Poin Terkirim',
+        `Revisi pengajuan "${resubmitItem.jenis}" berhasil dikirim ulang dan menunggu review guru BK.`,
+        {
+          tag: `pengajuan-resubmit-${resubmitItem.id}-${Date.now()}`,
+          data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+        }
+      )
       setTimeout(() => setSuccessMsg(''), 7000)
       fetchRiwayat()
     } catch (err) {
@@ -320,14 +406,26 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
       }
 
       if (error) throw error
+      const modalJenis = modal.jenis
+      const modalPoin = modal.poin
       setModal(null)
-      setSuccessMsg(`✅ Pengajuan "${modal.jenis}" berhasil dikirim! Menunggu review guru BK.`)
+      setSuccessMsg(`Pengajuan "${modalJenis}" berhasil dikirim! Menunggu review guru BK.`)
+      showLocalNotif(
+        'Pengajuan Poin Berhasil Dikirim',
+        `Pengajuan "${modalJenis}" (+${modalPoin} Poin) telah dikirim dan menunggu review guru BK.`,
+        {
+          tag: `pengajuan-send-${pengajuanId}`,
+          data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+        }
+      )
       setTimeout(() => setSuccessMsg(''), 7000)
       setActiveTab('riwayat'); fetchRiwayat()
     } catch (err) {
       setErrorMsg(err.message || 'Terjadi kesalahan.')
       setUploading(false)
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false)
+    }
   }
 
   const openFile = async bukti => {
@@ -343,9 +441,9 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
 
   const statusBadge = s => {
     if (s === 'pending')    return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block"/>Menunggu Review</span>
-    if (s === 'revisi')     return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">✏️ Perlu Revisi</span>
-    if (s === 'disetujui')  return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">✅ Disetujui</span>
-    if (s === 'ditolak')    return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">❌ Ditolak</span>
+    if (s === 'revisi')     return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">Perlu Revisi</span>
+    if (s === 'disetujui')  return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Disetujui</span>
+    if (s === 'ditolak')    return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">Ditolak</span>
     return null
   }
 
@@ -363,11 +461,11 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
         <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
           <button onClick={() => setActiveTab('katalog')}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'katalog' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-            📋 Katalog Poin
+            Katalog Poin
           </button>
           <button onClick={() => setActiveTab('riwayat')}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'riwayat' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-            🕓 Riwayat Saya
+            Riwayat Saya
           </button>
         </div>
       </div>
@@ -445,8 +543,61 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
 
                   {/* Accordion body */}
                   {openKategori[kat] && (
-                    <div className="border-t border-slate-100 divide-y divide-slate-50 animate-fade-in">
-                      {byKategori[kat].map(k => <KatalogItem key={k.id} item={k} onAjukan={openModal} disabled={!!banInfo} />)}
+                    <div className="border-t border-slate-100 divide-y divide-slate-100/70 animate-fade-in">
+                      {buildArticleGroups(byKategori[kat] || []).map((group, gIdx) => {
+                        if (group.isGroup) {
+                          const subKatKey = `${kat}__${group.fullSubKat}`
+                          const isSubOpen = !!openSubKategori[subKatKey]
+                          return (
+                            <div key={group.fullSubKat || gIdx} className="bg-slate-50/30">
+                              {/* Sub-kategori Dropdown Header */}
+                              <button
+                                type="button"
+                                onClick={() => setOpenSubKategori(prev => ({ ...prev, [subKatKey]: !prev[subKatKey] }))}
+                                className="w-full bg-emerald-50/70 hover:bg-emerald-100/70 border-y border-emerald-100/80 px-4 sm:px-5 py-2.5 flex items-center justify-between transition-colors text-left select-none group"
+                              >
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-mono text-xs font-black text-emerald-700 bg-white border border-emerald-200/80 px-2 py-0.5 rounded-lg shadow-2xs">
+                                    {group.articleNo || '•'}
+                                  </span>
+                                  <span className="text-xs font-black text-slate-800 tracking-tight group-hover:text-emerald-900 transition-colors">
+                                    {group.title}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                                    {group.items.length} butir
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 text-emerald-600">
+                                  <span className="text-[11px] font-bold text-emerald-600 hidden sm:inline">
+                                    {isSubOpen ? 'Tutup' : 'Buka'}
+                                  </span>
+                                  <svg
+                                    className={`w-4 h-4 transition-transform duration-200 ${isSubOpen ? 'rotate-180' : ''}`}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth="2.5"
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                                  </svg>
+                                </div>
+                              </button>
+
+                              {/* Sub-kategori Items */}
+                              {isSubOpen && (
+                                <div className="divide-y divide-slate-100 bg-white animate-fade-in">
+                                  {group.items.map(k => (
+                                    <KatalogItem key={k.id} item={k} isNested={true} onAjukan={openModal} disabled={!!banInfo} />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        }
+                        return (
+                          <KatalogItem key={group.item.id || gIdx} item={group.item} isNested={false} onAjukan={openModal} disabled={!!banInfo} />
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -486,15 +637,44 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
                     {statusBadge(r.status)}
                   </div>
                   <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2 mb-2 line-clamp-2">{r.alasan}</p>
+
+                  {/* Keterangan Disetujui */}
+                  {r.status === 'disetujui' && (
+                    <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-3 mb-2 text-xs space-y-1 animate-fade-in">
+                      <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                        <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                        <span>Disetujui oleh: <strong>{r.reviewed_by || 'Guru / Kesiswaan'}</strong></span>
+                      </div>
+                      {r.reviewed_at && (
+                        <p className="text-[11px] text-emerald-600/90 font-medium">
+                          Waktu verifikasi: {new Date(r.reviewed_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} WIB
+                        </p>
+                      )}
+                      {r.catatan_reviewer && (
+                        <p className="text-xs text-emerald-900 bg-white/80 p-2 rounded-lg border border-emerald-200/60 mt-1.5 italic font-medium">
+                          Catatan Guru: "{r.catatan_reviewer}"
+                        </p>
+                      )}
+                    </div>
+                  )}
                   
                   {/* Catatan Reviewer jika Ditolak */}
-                  {r.catatan_reviewer && r.status === 'ditolak' && (
-                    <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-2">
-                      <svg className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                      <div>
-                        <p className="text-[10px] font-bold text-red-500 mb-0.5">Catatan Penolakan dari {r.reviewed_by || 'Reviewer'}:</p>
-                        <p className="text-xs text-red-700">{r.catatan_reviewer}</p>
+                  {r.status === 'ditolak' && (
+                    <div className="bg-rose-50 border border-rose-200/80 rounded-xl p-3 mb-2 text-xs space-y-1 animate-fade-in">
+                      <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                        <svg className="w-4 h-4 text-rose-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                        <span>Ditolak oleh: <strong>{r.reviewed_by || 'Guru / Kesiswaan'}</strong></span>
                       </div>
+                      {r.reviewed_at && (
+                        <p className="text-[11px] text-rose-500 font-medium">
+                          Waktu: {new Date(r.reviewed_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} WIB
+                        </p>
+                      )}
+                      {r.catatan_reviewer && (
+                        <p className="text-xs text-rose-900 bg-white/80 p-2 rounded-lg border border-rose-200/60 mt-1.5 font-medium">
+                          Alasan: "{r.catatan_reviewer}"
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -502,7 +682,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
                   {r.status === 'revisi' && (
                     <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-3 text-xs space-y-2.5 animate-fade-in">
                       <div className="flex items-center gap-1.5 font-bold text-amber-900">
-                        <span>✏️ Instruksi Revisi dari Guru ({r.reviewed_by || 'Reviewer'}):</span>
+                        <span>Instruksi Revisi dari Guru ({r.reviewed_by || 'Reviewer'}):</span>
                       </div>
                       <p className="text-amber-900 bg-white p-3 rounded-lg border border-amber-200/80 font-medium leading-relaxed">
                         {r.catatan_reviewer || 'Silakan perbaiki data pengajuan sesuai instruksi guru.'}
@@ -517,7 +697,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
                             onClick={() => openFile(r.reviewer_attachment)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-amber-900 font-bold text-xxs hover:bg-amber-100 transition-colors shadow-2xs"
                           >
-                            <span>📎</span> {r.reviewer_attachment.name || 'File Lampiran Guru'}
+                            {r.reviewer_attachment.name || 'File Lampiran Guru'}
                           </button>
                         </div>
                       )}
@@ -543,7 +723,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
                       {r.bukti_files.map((bf, i) => (
                         <button key={i} type="button" onClick={() => openFile(bf)}
                           className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 transition-colors font-medium">
-                          {bf.type === 'link' ? '🔗' : bf.type?.startsWith('image/') ? '🖼️' : '📄'} {bf.name || `Bukti ${i+1}`}
+                          {bf.name || `Bukti ${i+1}`}
                         </button>
                       ))}
                     </div>
@@ -564,8 +744,8 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-sm">{modal.kategori}</span>
-                    <span className="font-mono text-[10px] text-emerald-100 font-bold bg-black/20 px-1.5 py-0.5 rounded">{modal.kode}</span>
+                    <span className="bg-white/20 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full backdrop-blur-sm">{modal.kategori}</span>
+                    <span className="font-mono text-[10px] text-emerald-100 font-bold bg-black/20 px-2 py-0.5 rounded-lg">{modal.display_no || modal.kode}</span>
                   </div>
                   <p className="text-white font-bold text-sm sm:text-base leading-snug">{modal.jenis}</p>
                 </div>
@@ -893,20 +1073,28 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
 }
 
 // ─── Sub-komponen: satu baris katalog ───
-function KatalogItem({ item, onAjukan, disabled }) {
+function KatalogItem({ item, isNested = false, onAjukan, disabled }) {
+  const displayBadge = item.display_no || item.kode
   return (
-    <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 sm:py-4 hover:bg-slate-50/60 transition-colors">
+    <div className={`flex items-center gap-3 px-4 sm:px-5 py-3 sm:py-3.5 hover:bg-emerald-50/30 transition-colors ${isNested ? 'pl-6 sm:pl-8' : ''}`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap mb-0.5">
-          <span className="font-mono text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{item.kode}</span>
-          <span className="font-semibold text-slate-800 text-xs sm:text-sm leading-snug">{item.jenis}</span>
+          {isNested && <span className="text-emerald-400 font-bold text-xs">↳</span>}
+          <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md shrink-0 shadow-2xs">
+            {displayBadge}
+          </span>
+          <span className="font-bold text-slate-800 text-xs sm:text-sm leading-snug">{item.jenis}</span>
         </div>
-        {item.keterangan && <p className="text-[11px] sm:text-xs text-slate-500 truncate">{item.keterangan}</p>}
+        {item.keterangan && (
+          <p className={`text-[11px] sm:text-xs text-slate-500 line-clamp-2 mt-0.5 ${isNested ? 'pl-4' : ''}`}>
+            {item.keterangan}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">+{item.poin}</span>
+        <span className="text-xs font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl shadow-2xs">+{item.poin}</span>
         <button type="button" onClick={() => onAjukan(item)} disabled={disabled}
-          className="px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-sm">
+          className="px-3 sm:px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition-all shadow-xs shadow-emerald-200">
           Ajukan
         </button>
       </div>

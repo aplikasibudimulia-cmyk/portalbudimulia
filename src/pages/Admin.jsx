@@ -12,6 +12,8 @@ import AdminPersonalisasiSection from '../components/AdminPersonalisasiSection'
 import AdminMapelSection from '../components/AdminMapelSection'
 import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
 import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
+import AdminKartuPelajarSection from '../components/AdminKartuPelajarSection'
+import AdminKartuUjianSection from '../components/AdminKartuUjianSection'
 import AdminBeritaSection from '../components/AdminBeritaSection'
 import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
 import AdminLineConfigSection from '../components/AdminLineConfigSection'
@@ -34,11 +36,15 @@ import GuruDokumenSection from '../components/GuruDokumenSection'
 import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
 import AdminBKKonsultasiSection from '../components/AdminBKKonsultasiSection'
 import AdminPrestasiSection from '../components/AdminPrestasiSection'
+import PendampingLombaSection from '../components/PendampingLombaSection'
 import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
 import LaporanKeterlambatanSection from '../components/LaporanKeterlambatanSection'
+import TagihanSppSection from '../components/TagihanSppSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 import { useConfirm } from '../utils/useConfirm'
+import SmartPhotoUploadModal from '../components/SmartPhotoUploadModal'
+import { downloadWorkbook } from '../utils/fileDownloader'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 const DEFAULT_AVATAR = '/default-avatar.png'
@@ -442,7 +448,7 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
       { wch: 10 }
     ]
     XLSX.utils.book_append_sheet(wb, ws, 'Template PDF')
-    XLSX.writeFile(wb, `Template_Penamaan_PDF_${type.nama.replace(/\s+/g, '_')}.xlsx`)
+    await downloadWorkbook(wb, `Template_Penamaan_PDF_${type.nama.replace(/\s+/g, '_')}.xlsx`)
   }
 
   
@@ -1502,7 +1508,7 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     const ws = XLSX.utils.json_to_sheet(dataToExport)
     XLSX.utils.book_append_sheet(wb, ws, 'Data Siswa')
     const classStr = selectedClasses.length === 0 ? 'Semua_Kelas' : selectedClasses.join('_')
-    XLSX.writeFile(wb, `Data_Siswa_${selectedTaFilter}_${classStr}.xlsx`)
+    await downloadWorkbook(wb, `Data_Siswa_${selectedTaFilter}_${classStr}.xlsx`)
   }
 
   return (
@@ -1778,6 +1784,7 @@ function Admin() {
   const [fotos, setFotos] = useState([])
   const [studentsLoading, setStudentsLoading] = useState(false)
   const [allEnrollments, setAllEnrollments] = useState([])
+  const [showSmartPhotoModal, setShowSmartPhotoModal] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const [announcementSaving, setAnnouncementSaving] = useState(false)
   const [announcementMsg, setAnnouncementMsg] = useState(null)
@@ -1993,9 +2000,21 @@ function Admin() {
       supabase.from('siswa_lengkap').select('*').order('nama_lengkap')
     )) || []
 
-    // Fetch all siswa_permanent to ensure newly created or un-enrolled students are included
+    // Fetch all siswa_permanent to ensure fresh biodata (nama_ortu, no_hp_ortu, email_ortu, line_user_id) & un-enrolled students are included
     const { data: permStudents } = await supabase.from('siswa_permanent').select('*').order('nama_lengkap')
     if (permStudents) {
+      const permMap = new Map(permStudents.map(p => [String(p.nisn || '').trim(), p]))
+      
+      // Merge permanent biodata into existing studentsData
+      studentsData.forEach(s => {
+        const nisnStr = String(s.nisn || s.id || '').trim()
+        const perm = permMap.get(nisnStr)
+        if (perm) {
+          Object.assign(s, perm)
+        }
+      })
+
+      // Add un-enrolled students
       const existingNisns = new Set(studentsData.map(s => String(s.nisn || s.id).trim()))
       permStudents.forEach(p => {
         const nisnStr = String(p.nisn || '').trim()
@@ -2113,7 +2132,7 @@ function Admin() {
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.json_to_sheet(dataToExport)
     XLSX.utils.book_append_sheet(wb, ws, 'Data Siswa')
-    XLSX.writeFile(wb, `Export_Data_Siswa_${activeTa.nama.replace('/', '_')}.xlsx`)
+    await downloadWorkbook(wb, `Export_Data_Siswa_${activeTa.nama.replace('/', '_')}.xlsx`)
   }
 
   const handleCsvSync = async (e) => {
@@ -2323,7 +2342,7 @@ function Admin() {
     const ws = XLSX.utils.aoa_to_sheet(headers)
     ws['!cols'] = headers[0].map(() => ({ wch: 18 }))
     XLSX.utils.book_append_sheet(wb, ws, 'Format Data Siswa')
-    XLSX.writeFile(wb, 'format_data_siswa.xlsx')
+    await downloadWorkbook(wb, 'format_data_siswa.xlsx')
   }
 
   const handleBulkPhotoUpload = async (e) => {
@@ -2613,6 +2632,28 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_akun' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Akun</span>}
               </button>
+              <button title="Kartu Pelajar" onClick={() => handleMenuNavigation('kartu_pelajar')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kartu_pelajar' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="16" rx="3" />
+                  <circle cx="9" cy="10" r="2" />
+                  <line x1="15" y1="8" x2="19" y2="8" />
+                  <line x1="15" y1="12" x2="19" y2="12" />
+                  <line x1="7" y1="16" x2="17" y2="16" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Kartu Pelajar</span>}
+              </button>
+              <button title="Kartu Ujian" onClick={() => handleMenuNavigation('kartu_ujian')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kartu_ujian' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <polyline points="10 9 9 9 8 9" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Kartu Ujian</span>}
+              </button>
               <button title="Log Aktivitas" onClick={() => handleMenuNavigation('log_aktivitas')}
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <IconActivity /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
@@ -2626,6 +2667,11 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tabungan_siswa' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
+              </button>
+              <button title="Tagihan & SPP Siswa" onClick={() => handleMenuNavigation('tagihan_spp')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tagihan_spp' ? 'bg-emerald-50 text-emerald-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Tagihan & SPP Siswa</span>}
               </button>
             </div>
           )}
@@ -2754,6 +2800,11 @@ function Admin() {
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'prestasi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Prestasi & Lomba</span>}
+              </button>
+              <button title="Pendamping Lomba" onClick={() => handleMenuNavigation('pendamping_lomba')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pendamping_lomba' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Pendamping Lomba</span>}
               </button>
               {/* Pengajuan Poin Positif */}
               <button title="Pengajuan Poin Positif" onClick={() => handleMenuNavigation('pengajuan_poin')}
@@ -2940,12 +2991,36 @@ function Admin() {
             />
           )}
 
+          {activeMenu === 'kartu_pelajar' && (
+            <AdminKartuPelajarSection 
+              students={students} 
+              allFotos={fotos} 
+              activeTa={activeTa}
+              tahunAjarans={tahunAjarans}
+              onRefresh={fetchStudents}
+            />
+          )}
+
+          {activeMenu === 'kartu_ujian' && (
+            <AdminKartuUjianSection 
+              students={students} 
+              allFotos={fotos} 
+              activeTa={activeTa}
+              tahunAjarans={tahunAjarans}
+              onRefresh={fetchStudents}
+            />
+          )}
+
           {activeMenu === 'jadwal_pelajaran' && (
             <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
           )}
 
           {activeMenu === 'tabungan_siswa' && (
             <TabunganSiswaSection session={session} activeTa={activeTa} mode="admin" />
+          )}
+
+          {activeMenu === 'tagihan_spp' && (
+            <TagihanSppSection session={session} activeTa={activeTa} readOnly={false} />
           )}
 
           {activeMenu === 'manajemen_role' && (
@@ -2961,7 +3036,7 @@ function Admin() {
           )}
 
           {activeMenu === 'rekap_poin' && (
-            <RekapPoinSiswaSection session={session} activeTa={activeTa} />
+            <RekapPoinSiswaSection session={{ ...session, nama_guru: 'Admin', role: 'admin', is_admin: true }} activeTa={activeTa} />
           )}
 
           {activeMenu === 'konsultasi_bk' && (
@@ -2998,7 +3073,7 @@ function Admin() {
           )}
 
           {activeMenu === 'katalog_poin' && (
-            <AdminKatalogPoinSection />
+            <AdminKatalogPoinSection isAdmin={true} />
           )}
 
           {activeMenu === 'tahap_pembinaan' && (
@@ -3006,7 +3081,7 @@ function Admin() {
           )}
 
           {activeMenu === 'catat_poin' && (
-            <AdminCatatPoinSection session={{ nama_guru: 'Admin' }} activeTa={activeTa} />
+            <AdminCatatPoinSection session={{ ...session, nama_guru: 'Admin', role: 'admin', is_admin: true }} activeTa={activeTa} />
           )}
 
           {activeMenu === 'pengaturan_poin' && (
@@ -3015,6 +3090,10 @@ function Admin() {
 
           {activeMenu === 'prestasi_siswa' && (
             <AdminPrestasiSection session={session} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'pendamping_lomba' && (
+            <PendampingLombaSection session={session} activeTa={activeTa} isAdminView={true} />
           )}
 
           {activeMenu === 'pengajuan_poin' && (
@@ -3150,15 +3229,22 @@ function Admin() {
                   </div>
                 )}
 
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setShowSmartPhotoModal(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-black shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span>✨</span> Upload Cerdas (Per Kelas / Urut Absen)
+                  </button>
                   <input ref={photoInputRef} type="file" multiple accept="image/jpeg,image/png,image/jpg" className="hidden" 
                     onChange={handleBulkPhotoUpload} />
                   <button onClick={() => photoInputRef.current?.click()} disabled={photoUploading}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-sm font-medium transition-all active:scale-95 disabled:opacity-50">
+                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-sm font-semibold transition-all active:scale-95 disabled:opacity-50">
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                     </svg>
-                    {photoUploading ? 'Mengunggah Foto...' : 'Upload Foto (.jpg/.png)'}
+                    {photoUploading ? 'Mengunggah Foto...' : 'Upload Massal Format NISN'}
                   </button>
                 </div>
               </CollapsibleSection>
@@ -3708,6 +3794,19 @@ function Admin() {
           </div>
         </div>,
         document.body
+      )}
+
+      {showSmartPhotoModal && (
+        <SmartPhotoUploadModal
+          isOpen={showSmartPhotoModal}
+          onClose={() => setShowSmartPhotoModal(false)}
+          students={students}
+          activeTa={activeTa}
+          tahunAjarans={tahunAjarans}
+          onSuccess={() => {
+            fetchStudents()
+          }}
+        />
       )}
 
     </div>

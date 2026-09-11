@@ -34,13 +34,14 @@ self.addEventListener('push', (event) => {
     payload = { title: 'eBudiMulia', body: event.data.text() }
   }
 
-  const { title = 'eBudiMulia', body = '', icon = '/logo.png', badge = '/logo.png', tag, data } = payload
+  const { title = 'eBudiMulia', body = '', icon = '/logo.png', badge = '/logo.png', image, tag, data } = payload
 
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
       icon,
       badge,
+      image: image || undefined,
       tag: tag || 'ebudimulia-notif',
       data: data || {},
       requireInteraction: false,
@@ -68,11 +69,12 @@ self.addEventListener('notificationclick', (event) => {
 // ===== Message from App =====
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SHOW_LOCAL_NOTIF') {
-    const { title, body, icon, tag, data } = event.data
+    const { title, body, icon, image, tag, data } = event.data
     self.registration.showNotification(title || 'eBudiMulia', {
       body: body || '',
       icon: icon || '/logo.png',
       badge: '/logo.png',
+      image: image || undefined,
       tag: tag || 'local-notif',
       data: data || {},
       vibrate: [150, 75, 150],

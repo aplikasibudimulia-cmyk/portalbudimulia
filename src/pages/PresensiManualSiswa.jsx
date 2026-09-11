@@ -2,13 +2,15 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
+import { getTodayWIB } from '../utils/dateUtils'
 
 // Tipe presensi
 const TIPE = { MASUK: 'masuk', PULANG: 'pulang' }
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 
-export default function PresensiManualSiswa() {
-  const today = new Date().toLocaleDateString('en-CA')
+export default function PresensiManualSiswa({ isSusulanMode = false }) {
+  const isSusulanActive = isSusulanMode || (typeof window !== 'undefined' && (window.location.pathname.includes('susulan') || new URLSearchParams(window.location.search).get('mode') === 'susulan'))
+  const today = getTodayWIB()
 
   // Screen: 'piket_login' | 'select_student' | 'selfie' | 'success'
   const [screen, setScreen] = useState('piket_login')
@@ -34,8 +36,10 @@ export default function PresensiManualSiswa() {
   // Selected student state
   const [studentSession, setStudentSession] = useState(null)
   const [tipeAktif, setTipeAktif] = useState(TIPE.MASUK)
+  const [statusManual, setStatusManual] = useState('H') // 'H' | 'T'
   const [hasMasuk, setHasMasuk] = useState(false)
   const [hasPulang, setHasPulang] = useState(false)
+  const [isSusulan, setIsSusulan] = useState(isSusulanActive)
   const [jamBatasHadir, setJamBatasHadir] = useState('07:00')
 
   // Selfie/camera state
@@ -213,6 +217,21 @@ export default function PresensiManualSiswa() {
     setHasMasuk(masuk)
     setHasPulang(pulang)
     setTipeAktif(masuk && !pulang ? TIPE.PULANG : TIPE.MASUK)
+    
+    const now = new Date()
+    const jamSekarang = now.toTimeString().slice(0, 5)
+    const [bH, bM] = (jamBatasHadir || '07:00').split(':').map(Number)
+    const [sH, sM] = jamSekarang.split(':').map(Number)
+    const lewatBatas = sH > bH || (sH === bH && sM > bM)
+
+    if (isSusulanActive) {
+      setIsSusulan(true)
+      setStatusManual('H')
+    } else {
+      setIsSusulan(false)
+      setStatusManual(lewatBatas ? 'T' : 'H')
+    }
+    
     setStudentSession(siswa)
     setSelfieSrc(null)
     setSelfieBlob(null)
@@ -291,7 +310,16 @@ export default function PresensiManualSiswa() {
     try {
       const tglFormatted = new Date(today).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
       const payload = { nisn, namaLengkap, kelas, status, statusLabel: STATUS_LABELS[status] || status, waktu, tipe, tipeLabel: tipe === TIPE.PULANG ? 'Pulang' : 'Masuk', tanggal: tglFormatted, selfieUrl, lokasi: 'Presensi Manual di Meja Piket' }
-      await supabase.channel(`notif-ortu-${nisn}`).send({ type: 'broadcast', event: 'presensi_update', payload })
+      const channelsToSend = [`notif-ortu-${nisn}`, `notif-ortu-dash-${nisn}`, `app-notif-${nisn}`]
+      channelsToSend.forEach(chName => {
+        const broadcastCh = supabase.channel(chName, { config: { broadcast: { self: true } } })
+        broadcastCh.subscribe(async (s) => {
+          if (s === 'SUBSCRIBED') {
+            await broadcastCh.send({ type: 'broadcast', event: 'presensi_update', payload })
+            setTimeout(() => supabase.removeChannel(broadcastCh), 4000)
+          }
+        })
+      })
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
       fetch(`${supabaseUrl}/functions/v1/notify-ortu`, {
@@ -319,32 +347,38 @@ export default function PresensiManualSiswa() {
 
       const now = new Date()
       const jamSekarang = now.toTimeString().slice(0, 5)
-      const [bH, bM] = jamBatasHadir.split(':').map(Number)
+      const [bH, bM] = (jamBatasHadir || '07:00').split(':').map(Number)
       const [sH, sM] = jamSekarang.split(':').map(Number)
       const lewatBatas = sH > bH || (sH === bH && sM > bM)
-      const statusOtomatis = tipeAktif === TIPE.MASUK ? (lewatBatas ? 'T' : 'H') : 'H'
+      
+      const isSusulanFinal = isSusulanActive || isSusulan || (statusManual === 'H' && lewatBatas)
+      const finalStatus = tipeAktif === TIPE.MASUK ? statusManual : 'H'
 
       const selfieUrl = await uploadSelfie(selfieBlob, studentSession.nisn, tipeAktif)
+      const keteranganStr = isSusulanFinal 
+        ? `Presensi Susulan Manual oleh Piket: ${piketSession?.nama_guru || 'Petugas'}`
+        : `Presensi Manual oleh Piket: ${piketSession?.nama_guru || 'Petugas'}`
 
-      const { error: insertErr } = await supabase.from('presensi_harian').insert({
+      const { error: insertErr } = await supabase.from('presensi_harian').upsert({
         tanggal: today,
         kelas: studentSession.kelas,
         siswa_nisn: studentSession.nisn,
-        status: statusOtomatis,
+        status: finalStatus,
         waktu: jamSekarang,
-        metode: 'manual_piket',
+        metode: isSusulanFinal ? 'susulan_piket' : 'manual_piket',
         tipe: tipeAktif,
         selfie_url: selfieUrl,
-        keterangan: `Presensi Manual oleh Piket: ${piketSession?.nama_guru || 'Petugas'}`,
+        keterangan: keteranganStr,
         updated_at: now.toISOString()
-      })
+      }, { onConflict: 'tanggal,siswa_nisn,tipe' })
       if (insertErr) throw insertErr
 
-      await notifyOrangTua(studentSession.nisn, studentSession.nama_lengkap, studentSession.kelas, statusOtomatis, jamSekarang, tipeAktif, selfieUrl)
-      logActivity({ userRole: 'Guru/Piket', action: 'Presensi Manual Piket', details: `${piketSession?.nama_guru} mencatat presensi manual ${tipeAktif} untuk ${studentSession.nama_lengkap}.` })
+      // Kirim notifikasi ke orang tua di background agar proses di meja piket instan
+      notifyOrangTua(studentSession.nisn, studentSession.nama_lengkap, studentSession.kelas, finalStatus, jamSekarang, tipeAktif, selfieUrl).catch(() => {})
+      logActivity({ userRole: 'Guru/Piket', action: 'Presensi Manual Piket', details: `${piketSession?.nama_guru} mencatat presensi manual ${tipeAktif} (${finalStatus}) untuk ${studentSession.nama_lengkap}.` })
 
       const tipeLabel = tipeAktif === TIPE.MASUK ? 'Masuk' : 'Pulang'
-      const statusLabel = statusOtomatis === 'T' ? 'Terlambat' : 'Hadir'
+      const statusLabel = finalStatus === 'T' ? 'Terlambat' : 'Hadir'
       setSuccessMsg(`✅ Presensi ${tipeLabel} — ${statusLabel}!`)
       setScreen('success')
 
@@ -393,13 +427,15 @@ export default function PresensiManualSiswa() {
         {screen === 'piket_login' && (
           <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-xl">
             <div className="text-center mb-6">
-              <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
+              <div className={`w-12 h-12 ${isSusulanActive ? 'bg-amber-600' : 'bg-indigo-600'} rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md`}>
+                <span className="text-white text-xl">{isSusulanActive ? '📝' : '🛡️'}</span>
               </div>
-              <h2 className="text-xl font-bold text-slate-800">Portal Presensi Piket</h2>
-              <p className="text-xs text-slate-400 mt-1">Login dengan akun Petugas Piket Anda</p>
+              <h2 className="text-xl font-bold text-slate-800">
+                {isSusulanActive ? 'Portal Presensi Susulan Siswa' : 'Portal Presensi Piket'}
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                {isSusulanActive ? 'Login untuk mencatat presensi susulan siswa yang lupa absen' : 'Login dengan akun Petugas Piket Anda'}
+              </p>
             </div>
 
             {errorMsg && (
@@ -418,7 +454,7 @@ export default function PresensiManualSiswa() {
                   placeholder="Username petugas piket"
                   value={piketUsername}
                   onChange={e => setPiketUsername(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                  className={`w-full px-4 py-3 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 ${isSusulanActive ? 'focus:ring-amber-500' : 'focus:ring-indigo-500'} transition`}
                 />
               </div>
 
@@ -431,7 +467,7 @@ export default function PresensiManualSiswa() {
                     placeholder="Password"
                     value={piketPassword}
                     onChange={e => setPiketPassword(e.target.value)}
-                    className="w-full px-4 py-3 pr-12 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                    className={`w-full px-4 py-3 pr-12 rounded-xl border border-slate-300 text-slate-900 text-sm focus:outline-none focus:ring-2 ${isSusulanActive ? 'focus:ring-amber-500' : 'focus:ring-indigo-500'} transition`}
                   />
                   <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                     {showPassword
@@ -445,7 +481,7 @@ export default function PresensiManualSiswa() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold py-3 rounded-xl text-sm transition-all active:scale-95 shadow-sm"
+                className={`w-full ${isSusulanActive ? 'bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400' : 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400'} text-white font-bold py-3 rounded-xl text-sm transition-all active:scale-95 shadow-sm`}
               >
                 {loading ? 'Memverifikasi...' : 'Masuk sebagai Petugas Piket →'}
               </button>
@@ -457,15 +493,24 @@ export default function PresensiManualSiswa() {
         {screen === 'select_student' && (
           <div className="bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
             {/* Header */}
-            <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white flex items-center justify-between">
+            <div className={`px-5 py-4 border-b border-slate-100 ${isSusulanActive ? 'bg-gradient-to-r from-amber-50 via-orange-50/40 to-white' : 'bg-gradient-to-r from-indigo-50 to-white'} flex items-center justify-between`}>
               <div>
-                <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Petugas Piket</p>
-                <h2 className="text-base font-black text-slate-800">{piketSession?.nama_guru}</h2>
+                <div className="flex items-center gap-2">
+                  <p className={`text-[10px] ${isSusulanActive ? 'text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-md' : 'text-indigo-600'} font-bold uppercase tracking-widest`}>
+                    {isSusulanActive ? '📝 Presensi Susulan Siswa' : 'Petugas Piket'}
+                  </p>
+                </div>
+                <h2 className="text-base font-black text-slate-800 mt-0.5">{piketSession?.nama_guru}</h2>
+                {isSusulanActive && (
+                  <p className="text-[11px] text-amber-900 font-medium mt-0.5">
+                    ⚡ Mode Susulan: Siswa otomatis dicatat <strong>Hadir</strong> (tidak terlambat).
+                  </p>
+                )}
               </div>
               {localStorage.getItem('guru_session') ? (
                 <button
                   onClick={() => window.history.back()}
-                  className="text-xs text-slate-500 hover:text-indigo-600 font-semibold transition-colors px-3 py-1.5 rounded-lg hover:bg-indigo-50 border border-transparent hover:border-indigo-200 flex items-center gap-1"
+                  className="text-xs text-slate-500 hover:text-indigo-600 font-semibold transition-colors px-3 py-1.5 rounded-lg hover:bg-slate-100 border border-slate-200 flex items-center gap-1"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
                   Kembali
@@ -620,6 +665,57 @@ export default function PresensiManualSiswa() {
                   )
                 })}
               </div>
+
+              {/* Status selector (Khusus Masuk) */}
+              {tipeAktif === TIPE.MASUK && (
+                <div className="mt-3">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    Status Kehadiran Masuk
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatusManual('H')
+                        setIsSusulan(true)
+                      }}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                        statusManual === 'H'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm ring-2 ring-emerald-200'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>🟢</span>
+                      <span>Hadir {isSusulanActive ? '(Susulan)' : ''}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatusManual('T')
+                        setIsSusulan(false)
+                      }}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                        statusManual === 'T'
+                          ? 'bg-amber-50 border-amber-500 text-amber-800 shadow-sm ring-2 ring-amber-200'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>🟡</span>
+                      <span>Terlambat</span>
+                    </button>
+                  </div>
+                  {statusManual === 'H' && (
+                    <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-2">
+                      ✨ Siswa akan dicatat <strong>Hadir</strong> (tidak terlambat).
+                    </p>
+                  )}
+                  {statusManual === 'T' && (
+                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2">
+                      ⚠️ Siswa akan dicatat <strong>Terlambat</strong>.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Camera */}

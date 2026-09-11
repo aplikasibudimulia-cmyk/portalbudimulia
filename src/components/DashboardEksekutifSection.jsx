@@ -51,13 +51,14 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
       const { count: guruCount } = await supabase.from('guru')
         .select('*', { count: 'exact', head: true })
 
-      // 3. Fetch Rata-rata Kehadiran Hari Ini
+      // 3. Fetch Rata-rata Kehadiran Hari Ini (Hanya sesi masuk / bukan pulang)
       const { data: presensiHariIni } = await supabase.from('presensi_harian')
-        .select('status')
+        .select('status, tipe')
         .eq('tanggal', todayStr)
       
-      const hadirHariIni = presensiHariIni?.filter(p => p.status === 'H' || p.status === 'T').length || 0
-      const rateKehadiran = studentCount > 0 ? Math.round((hadirHariIni / studentCount) * 100) : 0
+      const filteredHariIni = presensiHariIni?.filter(p => !p.tipe || p.tipe !== 'pulang') || []
+      const hadirHariIni = filteredHariIni.filter(p => p.status === 'H' || p.status === 'T').length
+      const rateKehadiran = studentCount > 0 ? Math.min(100, Math.round((hadirHariIni / studentCount) * 100)) : 0
 
       // 4. Fetch Jumlah Pelanggaran Bulan Ini
       const { data: pointRecords } = await supabase.from('point_records')
@@ -153,12 +154,13 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
         .eq('is_aktif', true)
 
       const { data: presence } = await supabase.from('presensi_harian')
-        .select('tanggal, status')
+        .select('tanggal, status, tipe')
         .gte('tanggal', startRangeStr)
         .lte('tanggal', todayStr)
       
       const trenMap = {}
       presence?.forEach(p => {
+        if (p.tipe && p.tipe === 'pulang') return // Jangan gabungkan presensi pulang
         if (!trenMap[p.tanggal]) {
           trenMap[p.tanggal] = { name: p.tanggal, present: 0 }
         }
@@ -170,7 +172,7 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
       const totalSiswa = studentCount || 1
       const trenList = Object.values(trenMap).map(item => ({
         name: new Date(item.name).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }),
-        Kehadiran: Math.round((item.present / totalSiswa) * 100),
+        Kehadiran: Math.min(100, Math.round((item.present / totalSiswa) * 100)),
         rawDate: item.name
       })).sort((a, b) => a.rawDate.localeCompare(b.rawDate))
 

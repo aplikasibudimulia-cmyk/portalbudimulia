@@ -211,6 +211,7 @@ function lineWebhookPlugin() {
 export default defineConfig({
   plugins: [react(), basicSsl(), lineWebhookPlugin()],
   server: {
+    port: 5177,
     https: true,
     host: true, // expose ke jaringan lokal (HP bisa akses)
   },

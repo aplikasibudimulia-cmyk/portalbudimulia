@@ -1,6 +1,21 @@
 // src/pages/ShowcaseRekapPoin.jsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
+
+// Helper untuk mengambil seluruh baris data dari Supabase dengan paginasi (bypass limit 1000 bawaan)
+const fetchAllRows = async (queryBuilder, pageSize = 1000) => {
+  let allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await queryBuilder(from, from + pageSize - 1)
+    if (error || !data || data.length === 0) break
+    allRows = allRows.concat(data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
 
 // Helper tie-ranking yang adil: Nilai sama = Peringkat sama
 const assignTieRanks = (items, scoreFn) => {
@@ -180,9 +195,17 @@ function CircularStudentPhotoAvatar({ nisn, nama, activeTaId, size = 'giant', cl
 }
 
 export default function ShowcaseRekapPoin() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialTop = searchParams.get('top') || 'all'
+
   const [activeTa, setActiveTa] = useState(null)
   const [loading, setLoading] = useState(true)
   const [totalPointsList, setTotalPointsList] = useState([])
+
+  // Filter Peringkat: 'all' | '3' | '5' | '10' | '20' | '50' | custom number string
+  const [topFilter, setTopFilter] = useState(initialTop)
+  const [customTopInput, setCustomTopInput] = useState('')
+  const [showCustomModal, setShowCustomModal] = useState(false)
 
   // Mode Animasi: 'slideshow' | 'auto_scroll' | 'static'
   const [animMode, setAnimMode] = useState('slideshow')
@@ -223,7 +246,7 @@ export default function ShowcaseRekapPoin() {
     initMetadata()
   }, [])
 
-  // 2. Fetch Total Perolehan Poin Siswa (Full Tahun Ajaran)
+  // 2. Fetch Total Perolehan Poin Siswa (Full Tahun Ajaran dengan Paginasi Penuh)
   const loadData = useCallback(async () => {
     if (!activeTa?.id) return
     setLoading(true)
@@ -232,102 +255,68 @@ export default function ShowcaseRekapPoin() {
       const start = activeTa?.tanggal_mulai || '2000-01-01'
       const end = activeTa?.tanggal_selesai || '2099-12-31'
 
-      // Fetch point_records
-      let q = supabase
-        .from('point_records')
-        .select('*')
-        .gte('tanggal', start)
-        .lte('tanggal', end)
+      // 1. Ambil seluruh point records dengan auto-pagination
+      const records = await fetchAllRows((from, to) => {
+        let q = supabase
+          .from('point_records')
+          .select('nisn, poin_diberikan')
+          .gte('tanggal', start)
+          .lte('tanggal', end)
+          .range(from, to)
 
-      if (activeTa?.id) {
-        q = q.or(`tahun_ajaran_id.eq.${activeTa.id},tahun_ajaran_id.is.null`)
-      }
+        if (activeTa?.id) {
+          q = q.or(`tahun_ajaran_id.eq.${activeTa.id},tahun_ajaran_id.is.null`)
+        }
+        return q
+      })
 
-      const { data: recs } = await q
-      const records = recs || []
-      const allNisns = Array.from(new Set(records.map(r => r.nisn)))
-
-      let studentMap = {}
-      if (allNisns.length > 0) {
-        const { data: sData } = await supabase
-          .from('siswa_permanent')
+      // 2. Ambil seluruh siswa aktif
+      const allSiswa = await fetchAllRows((from, to) =>
+        supabase.from('siswa_lengkap')
           .select('nisn, nama_lengkap, kelas')
-          .in('nisn', allNisns)
+          .eq('is_aktif', true)
+          .range(from, to)
+      )
 
-        if (sData) {
-          sData.forEach(s => {
-            studentMap[s.nisn] = {
-              nama: s.nama_lengkap || s.nama || 'Siswa',
-              kelas: s.kelas || '-'
-            }
-          })
-        }
-      }
+      // 3. Ambil student_points untuk modal dasar poin
+      const allSp = await fetchAllRows((from, to) =>
+        supabase.from('student_points')
+          .select('nisn, poin_default')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .range(from, to)
+      )
 
-      // Hitung per siswa
-      const statsMap = {}
-      records.forEach(r => {
-        if (!statsMap[r.nisn]) {
-          const info = studentMap[r.nisn] || {}
-          statsMap[r.nisn] = {
-            nisn: r.nisn,
-            nama: info.nama || r.nama_siswa || 'Siswa',
-            kelas: r.kelas || info.kelas || '-',
-            prestasiPoin: 0,
-            pelanggaranPoin: 0
-          }
-        }
-
+      const spMap = new Map((allSp || []).map(sp => [sp.nisn, sp]))
+      const prMap = {}
+      ;(records || []).forEach(r => {
+        if (!prMap[r.nisn]) prMap[r.nisn] = { pelCount: 0, pelPoin: 0, presCount: 0, presPoin: 0 }
         if (r.poin_diberikan < 0) {
-          statsMap[r.nisn].pelanggaranPoin += Math.abs(r.poin_diberikan)
+          prMap[r.nisn].pelCount++
+          prMap[r.nisn].pelPoin += Math.abs(r.poin_diberikan)
         } else {
-          statsMap[r.nisn].prestasiPoin += r.poin_diberikan
+          prMap[r.nisn].presCount++
+          prMap[r.nisn].presPoin += (r.poin_diberikan || 0)
         }
       })
 
-      const studentList = Object.values(statsMap)
+      const studentList = (allSiswa || []).map(s => {
+        const sp = spMap.get(s.nisn)
+        const pr = prMap[s.nisn] || { pelCount: 0, pelPoin: 0, presCount: 0, presPoin: 0 }
+        const defaultPoin = sp?.poin_default ?? 100
+        const totalPoin = defaultPoin + pr.presPoin - pr.pelPoin
+        return {
+          nisn: s.nisn,
+          nama: s.nama_lengkap,
+          kelas: s.kelas || '-',
+          poinAwal: defaultPoin,
+          prestasiPoin: pr.presPoin,
+          pelanggaranPoin: pr.pelPoin,
+          totalPoinAkhir: totalPoin
+        }
+      })
 
-      // Fetch student_points akumulasi
-      const { data: spPoints } = await supabase
-        .from('student_points')
-        .select('nisn, total_poin, poin_default')
-        .eq('tahun_ajaran_id', activeTa.id)
-        .order('total_poin', { ascending: false })
-
-      if (spPoints && spPoints.length > 0) {
-        const spNisns = spPoints.map(s => s.nisn)
-        const { data: spSiswaNames } = await supabase
-          .from('siswa_lengkap')
-          .select('nisn, nama_lengkap, kelas')
-          .in('nisn', spNisns)
-
-        const nameMap = {}
-        const classMap = {}
-        ;(spSiswaNames || []).forEach(s => {
-          nameMap[s.nisn] = s.nama_lengkap
-          classMap[s.nisn] = s.kelas
-        })
-
-        const kumulatifList = spPoints.map(sp => {
-          return {
-            nisn: sp.nisn,
-            nama: nameMap[sp.nisn] || 'Siswa',
-            kelas: classMap[sp.nisn] || '-',
-            totalPoinAkhir: sp.total_poin
-          }
-        })
-
-        setTotalPointsList(assignTieRanks(kumulatifList, s => s.totalPoinAkhir))
-      } else {
-        const fallbackList = [...studentList]
-          .map(s => ({
-            ...s,
-            totalPoinAkhir: 100 + s.prestasiPoin - s.pelanggaranPoin
-          }))
-          .sort((a, b) => b.totalPoinAkhir - a.totalPoinAkhir)
-
-        setTotalPointsList(assignTieRanks(fallbackList, s => s.totalPoinAkhir))
-      }
+      studentList.sort((a, b) => b.totalPoinAkhir - a.totalPoinAkhir)
+      setTotalPointsList(assignTieRanks(studentList, s => s.totalPoinAkhir))
 
     } catch (err) {
       console.error('Error loading showcase data:', err)
@@ -342,18 +331,34 @@ export default function ShowcaseRekapPoin() {
     }
   }, [activeTa, loadData])
 
+  // Filter Dense/Tie Ranking: Tampilkan semua siswa yang memiliki displayRank <= topFilter
+  const displayedStudents = useMemo(() => {
+    if (!topFilter || topFilter === 'all') return totalPointsList
+    const maxRank = parseInt(topFilter, 10)
+    if (isNaN(maxRank) || maxRank <= 0) return totalPointsList
+    // Setiap siswa dengan peringkat <= maxRank akan disertakan secara adil (termasuk yang nilainya seri)
+    return totalPointsList.filter(s => s.displayRank <= maxRank)
+  }, [totalPointsList, topFilter])
+
+  // Reset index slideshow ketika filter berubah
+  const handleSelectTopFilter = (val) => {
+    setTopFilter(val)
+    setSlideshowIndex(0)
+    setSearchParams(val === 'all' ? {} : { top: val })
+  }
+
   // Navigasi Slide
   const handleNextSlide = useCallback(() => {
-    if (totalPointsList.length === 0) return
+    if (displayedStudents.length === 0) return
     setSlideDirection('right')
-    setSlideshowIndex(idx => (idx + 1) % totalPointsList.length)
-  }, [totalPointsList.length])
+    setSlideshowIndex(idx => (idx + 1) % displayedStudents.length)
+  }, [displayedStudents.length])
 
   const handlePrevSlide = useCallback(() => {
-    if (totalPointsList.length === 0) return
+    if (displayedStudents.length === 0) return
     setSlideDirection('left')
-    setSlideshowIndex(idx => (idx - 1 + totalPointsList.length) % totalPointsList.length)
-  }, [totalPointsList.length])
+    setSlideshowIndex(idx => (idx - 1 + displayedStudents.length) % displayedStudents.length)
+  }, [displayedStudents.length])
 
   // ANIMASI 1: AUTO SCROLL PERLAHAN
   useEffect(() => {
@@ -372,20 +377,20 @@ export default function ShowcaseRekapPoin() {
 
   // ANIMASI 2: SLIDESHOW PER-SISWA (10 DETIK EXPLICIT TIMER)
   useEffect(() => {
-    if (animMode !== 'slideshow' || totalPointsList.length === 0) return
+    if (animMode !== 'slideshow' || displayedStudents.length === 0) return
 
     const timer = setInterval(() => {
       handleNextSlide()
     }, 10000)
 
     return () => clearInterval(timer)
-  }, [animMode, handleNextSlide, totalPointsList.length])
+  }, [animMode, handleNextSlide, displayedStudents.length])
 
   // Current Slide Student for Slideshow
   const currentSlideStudent = useMemo(() => {
-    if (totalPointsList.length === 0) return null
-    return totalPointsList[slideshowIndex % totalPointsList.length]
-  }, [totalPointsList, slideshowIndex])
+    if (displayedStudents.length === 0) return null
+    return displayedStudents[slideshowIndex % displayedStudents.length]
+  }, [displayedStudents, slideshowIndex])
 
   return (
     <div className={`text-slate-900 flex flex-col font-sans selection:bg-amber-500 selection:text-white relative bg-[#f8fafc] ${
@@ -437,7 +442,7 @@ export default function ShowcaseRekapPoin() {
       <header
         onMouseEnter={() => setHeaderHovered(true)}
         onMouseLeave={() => setHeaderHovered(false)}
-        className={`sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-2.5 shrink-0 flex flex-col md:flex-row items-center justify-between gap-3 shadow-xs transition-all duration-300 ease-in-out ${
+        className={`sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 md:px-6 py-2.5 shrink-0 flex flex-col xl:flex-row items-center justify-between gap-3 shadow-xs transition-all duration-300 ease-in-out ${
           isFullscreenActive && !headerHovered
             ? 'opacity-0 -translate-y-full pointer-events-none'
             : 'opacity-100 translate-y-0 pointer-events-auto'
@@ -445,29 +450,115 @@ export default function ShowcaseRekapPoin() {
       >
         
         {/* Logo Resmi & Title */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-start xl:self-auto">
           <img
             src="/logo.png?v=1784818000"
             alt="Logo SMP Budi Mulia"
             className="w-9 h-9 md:w-11 md:h-11 object-contain shrink-0 drop-shadow-sm"
           />
           <div>
-            <h1 className="text-base md:text-lg font-black text-slate-900 tracking-tight">
-              TOTAL PEROLEHAN POIN SEMENTARA SISWA
+            <h1 className="text-sm md:text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <span>TOTAL PEROLEHAN POIN SISWA</span>
+              {topFilter !== 'all' && (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-extrabold uppercase">
+                  🏆 Top {topFilter} Besar
+                </span>
+              )}
             </h1>
             <p className="text-[10px] md:text-[11px] text-slate-500 font-bold">
-              SMP BUDI MULIA JAKARTA • Total Siswa: <strong className="text-indigo-600 font-extrabold">{totalPointsList.length}</strong> Siswa
+              SMP BUDI MULIA JAKARTA • Menampilkan: <strong className="text-indigo-600 font-extrabold">{displayedStudents.length}</strong> Siswa (dari total {totalPointsList.length} siswa)
             </p>
           </div>
         </div>
 
-        {/* CONTROLS ANIMASI & PRESENTASI */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* CONTROLS PERINGKAT & ANIMASI */}
+        <div className="flex flex-wrap items-center gap-2 self-start xl:self-auto">
           
+          {/* FILTER PERINGKAT BESAR (DENSE / TIE RANKING) */}
+          <div className="bg-slate-100 p-1 rounded-2xl border border-slate-200 flex items-center gap-1 text-xs font-bold flex-wrap">
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase px-2 hidden sm:inline">Peringkat:</span>
+            
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('all')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === 'all'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Semua
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('3')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === '3'
+                  ? 'bg-amber-500 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              🥇 3 Besar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('5')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === '5'
+                  ? 'bg-amber-500 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              5 Besar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('10')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === '10'
+                  ? 'bg-indigo-600 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              10 Besar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('20')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === '20'
+                  ? 'bg-indigo-600 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              20 Besar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTopFilter('50')}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                topFilter === '50'
+                  ? 'bg-indigo-600 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              50 Besar
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCustomModal(true)}
+              className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                !['all', '3', '5', '10', '20', '50'].includes(topFilter)
+                  ? 'bg-purple-600 text-white shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {!['all', '3', '5', '10', '20', '50'].includes(topFilter) ? `Top ${topFilter}` : 'Kustom...'}
+            </button>
+          </div>
+
           {/* Selector Mode Animasi */}
           <div className="bg-slate-100 p-1 rounded-2xl border border-slate-200 flex items-center gap-1 text-xs font-bold">
-            
-            {/* Mode Slideshow (10s) */}
             <button
               type="button"
               onClick={() => {
@@ -480,10 +571,9 @@ export default function ShowcaseRekapPoin() {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>🎬</span> Slideshow (10s/Siswa)
+              <span>🎬</span> Slideshow (10s)
             </button>
 
-            {/* Mode Auto Scroll */}
             <button
               type="button"
               onClick={() => setAnimMode('auto_scroll')}
@@ -496,7 +586,6 @@ export default function ShowcaseRekapPoin() {
               <span>📜</span> Auto Scroll
             </button>
 
-            {/* Mode Statis */}
             <button
               type="button"
               onClick={() => setAnimMode('static')}
@@ -508,7 +597,6 @@ export default function ShowcaseRekapPoin() {
             >
               <span>⏸️</span> Statis
             </button>
-
           </div>
 
           {/* Fullscreen & Close Tab */}
@@ -523,7 +611,7 @@ export default function ShowcaseRekapPoin() {
             title="Layar Penuh untuk TV / Presentasi"
           >
             <span>📺</span>
-            <span className="hidden sm:inline">{isFullscreenActive ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>
+            <span className="hidden sm:inline">{isFullscreenActive ? 'Keluar' : 'Layar Penuh'}</span>
           </button>
 
           <button
@@ -537,8 +625,64 @@ export default function ShowcaseRekapPoin() {
 
       </header>
 
+      {/* MODAL INPUT KUSTOM PERINGKAT BESAR */}
+      {showCustomModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-slate-900 text-base">Tampilkan Berapa Besar?</h3>
+              <button
+                type="button"
+                onClick={() => setShowCustomModal(false)}
+                className="text-slate-400 hover:text-slate-700 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Masukkan angka batas peringkat (contoh: <strong>10</strong> untuk 10 Besar, <strong>15</strong> untuk 15 Besar). Seluruh siswa dengan peringkat tersebut akan otomatis disertakan.
+            </p>
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Batas Peringkat (N Besar)</label>
+              <input
+                type="number"
+                min="1"
+                max={totalPointsList.length || 500}
+                placeholder="Contoh: 10"
+                value={customTopInput}
+                onChange={(e) => setCustomTopInput(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-base"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCustomModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseInt(customTopInput, 10)
+                  if (val > 0) {
+                    handleSelectTopFilter(String(val))
+                    setShowCustomModal(false)
+                  }
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+              >
+                Terapkan Filter
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FLOATING SIDE NAVIGATIONS */}
-      {animMode === 'slideshow' && totalPointsList.length > 0 && (
+      {animMode === 'slideshow' && displayedStudents.length > 0 && (
         <>
           {/* Panah Kiri Tengah Layar */}
           <button
@@ -570,11 +714,11 @@ export default function ShowcaseRekapPoin() {
             <div className="w-14 h-14 border-4 border-amber-400/20 border-t-amber-400 rounded-full animate-spin"></div>
             <p className="text-base font-extrabold text-indigo-900 animate-pulse">Memuat Data Poin Siswa SMP Budi Mulia...</p>
           </div>
-        ) : totalPointsList.length === 0 ? (
+        ) : displayedStudents.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-[32px] border border-slate-200 p-8 space-y-3 shadow-sm">
             <span className="text-6xl">⭐</span>
             <h3 className="text-2xl font-bold text-slate-800">Belum Ada Data Poin</h3>
-            <p className="text-sm text-slate-500">Tidak ada data perolehan poin siswa yang tercatat saat ini.</p>
+            <p className="text-sm text-slate-500">Tidak ada data perolehan poin siswa yang tercatat pada filter ini.</p>
           </div>
         ) : animMode === 'slideshow' ? (
           
@@ -670,7 +814,7 @@ export default function ShowcaseRekapPoin() {
 
                 {/* 5. INDIKATOR BOTTOM PILL: SISWA X DARI Y */}
                 <div className="inline-flex items-center gap-2 px-6 py-2 rounded-full bg-slate-100 border border-slate-200 text-xs md:text-sm font-black text-slate-600 shadow-2xs shrink-0">
-                  <span>👥</span> Siswa {slideshowIndex + 1} dari {totalPointsList.length}
+                  <span>👥</span> Siswa {slideshowIndex + 1} dari {displayedStudents.length} {topFilter !== 'all' ? `(Top ${topFilter} Besar)` : ''}
                 </div>
 
               </div>
@@ -681,7 +825,7 @@ export default function ShowcaseRekapPoin() {
 
           /* 🎴 DISPLAY MODE 1: GRID KARTU BESAR (STATIS & AUTO SCROLL) */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto max-h-full p-2">
-            {totalPointsList.map((s) => {
+            {displayedStudents.map((s) => {
               const isTopTier = s.displayRank === 1
               return (
                 <div

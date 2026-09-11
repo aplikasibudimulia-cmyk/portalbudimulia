@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
+import { initNativePushNotifications } from '../utils/pushNotif'
 import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
 import TabunganSiswaSection from '../components/TabunganSiswaSection'
@@ -38,6 +39,10 @@ import GuruDashboardPoinWidget from '../components/GuruDashboardPoinWidget'
 import GuruSiswaDetailModal from '../components/GuruSiswaDetailModal'
 import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
 import AdminPrestasiSection from '../components/AdminPrestasiSection'
+import PendampingLombaSection from '../components/PendampingLombaSection'
+import TagihanSppSection from '../components/TagihanSppSection'
+import ExportKontakModal from '../components/ExportKontakModal'
+import { getTodayWIB, getCurrentTimeWIB, getCurrentTimeSecondsWIB, getDayNameWIB } from '../utils/dateUtils'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -874,6 +879,7 @@ export default function DashboardGuru() {
   const [recapSearchText, setRecapSearchText] = useState('')
   const [recapTab, setRecapTab] = useState('ringkasan') // 'ringkasan' | 'tabel'
   const [showModalPresensiWali, setShowModalPresensiWali] = useState(false)
+  const [showExportKontakModal, setShowExportKontakModal] = useState(false)
   const [modalWaliSearch, setModalWaliSearch] = useState('')
   const [modalWaliClassFilter, setModalWaliClassFilter] = useState('all')
   const [modalWaliStatusFilter, setModalWaliStatusFilter] = useState('all')
@@ -976,6 +982,20 @@ export default function DashboardGuru() {
           }
         }
       }
+
+      // Fetch all siswa_permanent to ensure fresh biodata (nama_ortu, no_hp_ortu, email_ortu, line_user_id)
+      const { data: permStudents } = await supabase.from('siswa_permanent').select('*').order('nama_lengkap')
+      if (permStudents) {
+        const permMap = new Map(permStudents.map(p => [String(p.nisn || '').trim(), p]))
+        allData.forEach(s => {
+          const nisnStr = String(s.nisn || s.id || '').trim()
+          const perm = permMap.get(nisnStr)
+          if (perm) {
+            Object.assign(s, perm)
+          }
+        })
+      }
+
       setAllStudents(allData)
 
       const { data: fotoData } = await supabase.from('foto').select('*, tahun_ajaran:tahun_ajaran_id(nama)')
@@ -1028,7 +1048,7 @@ export default function DashboardGuru() {
       'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
       'pengaturan_poin', 'pengajuan_poin', 'dashboard_eksekutif', 'program_sekolah', 
       'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
-      'dokumen_guru', 'konsultasi_bk', 'pengacak_duduk', 'jadwal_pelajaran', 'laporan_keterlambatan', 'prestasi_siswa',
+      'dokumen_guru', 'konsultasi_bk', 'pengacak_duduk', 'jadwal_pelajaran', 'laporan_keterlambatan', 'prestasi_siswa', 'pendamping_lomba',
       // Delegated Admin Menus
       'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 
       'presensi_qr', 'konfigurasi'
@@ -1130,6 +1150,21 @@ export default function DashboardGuru() {
     })
   }, [session])
 
+  // Check TU Keuangan Role
+  const isKeuanganUser = useMemo(() => {
+    if (!session) return false
+    return session?.roles?.some(r => {
+      const n = String(r.nama || r || '').toLowerCase()
+      return n.includes('keuangan') || n.includes('tu') || n.includes('bendahara') || n.includes('pembayaran') || n.includes('uang sekolah') || n.includes('spp') || n.includes('kasir')
+    }) || fitur.has('kelola_tagihan_spp') || fitur.has('lihat_laporan_keuangan_spp')
+  }, [session, fitur])
+
+  // Check if user has teaching assignments
+  const hasTeachingDuties = useMemo(() => {
+    if (!session) return false
+    return (session.guru_mapel_raw?.length > 0 || session.kelas?.length > 0 || session.mapels?.length > 0)
+  }, [session])
+
   useEffect(() => {
     if (!isAdminUser && showTabunganWaliKelas === false && activeMenu === 'tabungan_siswa') {
       setActiveMenu('dashboard')
@@ -1193,6 +1228,9 @@ export default function DashboardGuru() {
       }
       setSession(activeSession)
       localStorage.setItem('guru_session', JSON.stringify(activeSession))
+      if (activeSession?.id) {
+        initNativePushNotifications({ nisn: String(activeSession.id), role: 'Guru' })
+      }
       
       // Default selectedKelas to teacher's own Wali Kelas assignment if available
       if (activeSession.kelas && activeSession.kelas[0]?.kelas) {
@@ -1281,6 +1319,21 @@ export default function DashboardGuru() {
         }
       }
 
+      // Merge with siswa_permanent for accurate phone & parent info
+      const { data: permStudents } = await supabase.from('siswa_permanent').select('nisn, nama_ortu, no_hp_ortu, no_whatsapp')
+      if (permStudents) {
+        const permMap = new Map(permStudents.map(p => [String(p.nisn || '').trim(), p]))
+        allData.forEach(s => {
+          const nisnStr = String(s.nisn || s.id || '').trim()
+          const perm = permMap.get(nisnStr)
+          if (perm) {
+            if (perm.no_hp_ortu) s.no_hp_ortu = perm.no_hp_ortu
+            if (perm.nama_ortu) s.nama_ortu = perm.nama_ortu
+            if (perm.no_whatsapp) s.no_whatsapp = perm.no_whatsapp
+          }
+        })
+      }
+
       setStudents(allData)
 
       // For default tabs, only show active TA students
@@ -1294,7 +1347,7 @@ export default function DashboardGuru() {
       if (fotoData) setFotos(fotoData)
 
       // A. Fetch Jadwal Mengajar Hari Ini (Filter Semester Aktif)
-      const hariIni = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][new Date().getDay()]
+      const hariIni = getDayNameWIB()
       const activeSemNum = parseInt(jadwalSemester) || 2
       try {
         let jDataQuery = supabase
@@ -1330,7 +1383,7 @@ export default function DashboardGuru() {
       // B. Fetch Kehadiran Kelas Perwalian & Rekapan (Jika Wali Kelas)
       const activeWali = activeSession.kelas?.find(k => activeTaData && k.tahun_ajaran_id === activeTaData.id)
       if (activeWali) {
-        const todayStr = new Date().toLocaleDateString('en-CA')
+        const todayStr = getTodayWIB()
         const { data: presensiData } = await supabase
           .from('presensi_harian')
           .select('siswa_nisn, status, tipe, waktu, selfie_url, keterangan')
@@ -1455,14 +1508,8 @@ export default function DashboardGuru() {
   }
 
   const handleWaliQuickPresensi = async (student, statusOpt) => {
-    if (statusOpt === 'H' || statusOpt === 'T' || statusOpt === 'HADIR' || statusOpt === 'TERLAMBAT') {
-      alert('Presensi Hadir (H) dan Terlambat (T) diisi secara mandiri oleh siswa via QR/GPS scan.')
-      return
-    }
-
-    const todayStr = new Date().toLocaleDateString('en-CA')
-    const now = new Date()
-    const jamStr = now.toTimeString().split(' ')[0]
+    const todayStr = getTodayWIB()
+    const jamStr = getCurrentTimeSecondsWIB()
 
     setUpdatingWaliNisn(student.nisn)
     try {
@@ -1487,7 +1534,7 @@ export default function DashboardGuru() {
           metode: 'manual_walikelas',
           tipe: 'masuk',
           diinput_oleh: session.id,
-          updated_at: now.toISOString()
+          updated_at: new Date().toISOString()
         }
 
         const { error } = await supabase
@@ -1536,9 +1583,8 @@ export default function DashboardGuru() {
       return
     }
 
-    const todayStr = new Date().toLocaleDateString('en-CA')
-    const now = new Date()
-    const jamStr = now.toTimeString().split(' ')[0]
+    const todayStr = getTodayWIB()
+    const jamStr = getCurrentTimeSecondsWIB()
     setIsBatchUpdating(true)
 
     try {
@@ -1563,7 +1609,7 @@ export default function DashboardGuru() {
           metode: 'manual_walikelas',
           tipe: 'masuk',
           diinput_oleh: session.id,
-          updated_at: now.toISOString()
+          updated_at: new Date().toISOString()
         }))
 
         const { error } = await supabase
@@ -1693,6 +1739,9 @@ export default function DashboardGuru() {
   }
 
   const waliClassesStr = session.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa.id).map(k => k.kelas).join(', ') || '-'
+  const currentWaliClasses = (session?.kelas && activeTa?.id
+    ? session.kelas.filter(k => k.tahun_ajaran_id == activeTa.id).map(k => k.kelas).filter(Boolean)
+    : session?.kelas?.map(k => k.kelas).filter(Boolean)) || []
   const mapelClassesStr = session.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa.id).map(m => m.kelas).join(', ') || '-'
   const allAssignedClassesStr = Array.from(new Set([
     ...(session.kelas?.filter(k => activeTa && k.tahun_ajaran_id == activeTa.id).map(k => k.kelas) || []),
@@ -1889,7 +1938,7 @@ export default function DashboardGuru() {
           )}
 
           {/* Group: KEHADIRAN & PRESENSI */}
-          {(fitur.has('kelola_presensi_sekolah') || fitur.has('akses_presensi_qr') || session.kelas?.length > 0) && (
+          {(fitur.has('kelola_presensi_sekolah') || fitur.has('akses_presensi_qr')) && (
             <>
               <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, kehadiranPresensi: !prev.kehadiranPresensi }))}
                 className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
@@ -1900,7 +1949,7 @@ export default function DashboardGuru() {
               </div>
               {(!collapsedGroups.kehadiranPresensi || sidebarCollapsed) && (
                 <div className="space-y-1 animate-fade-in">
-                  {(fitur.has('kelola_presensi_sekolah') || session.kelas?.length > 0) && (
+                  {fitur.has('kelola_presensi_sekolah') && (
                     <button title="Data Presensi Siswa" onClick={() => { setActiveMenu('data_presensi_siswa'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'data_presensi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                       <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
@@ -2046,6 +2095,35 @@ export default function DashboardGuru() {
                       {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Prestasi & Lomba</span>}
                     </button>
                   )}
+                  {(fitur.has('pendamping_lomba') || isAdminUser || session.roles?.some(r => r.nama?.toLowerCase() === 'admin' || r.nama?.toLowerCase().includes('admin'))) && (
+                    <button title="Pendamping Lomba" onClick={() => { setActiveMenu('pendamping_lomba'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pendamping_lomba' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Pendamping Lomba</span>}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Group: KEUANGAN & SPP */}
+          {(fitur.has('kelola_tagihan_spp') || fitur.has('lihat_laporan_keuangan_spp') || isKeuanganUser || isAdminUser || session.roles?.some(r => r.nama?.toLowerCase().includes('keuangan') || r.nama?.toLowerCase().includes('kepala sekolah'))) && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, keuanganSpp: !prev.keuanganSpp }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">KEUANGAN & SPP</p>
+                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.keuanganSpp ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-slate-100 my-2" />}
+              </div>
+              {(!collapsedGroups.keuanganSpp || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  <button title="Tagihan & SPP Siswa" onClick={() => { setActiveMenu('tagihan_spp'); setSidebarOpen(false); }}
+                    className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tagihan_spp' ? 'bg-emerald-50 text-emerald-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                    <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Tagihan & SPP Siswa</span>}
+                  </button>
                 </div>
               )}
             </>
@@ -2274,10 +2352,21 @@ export default function DashboardGuru() {
                                   <p className="text-xs text-slate-500 mt-0.5">Status kehadiran harian dan rekapan perwalian siswa</p>
                                 </div>
                               </div>
-                              <button onClick={() => setShowModalPresensiWali(true)} className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5">
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                                Kelola Presensi &rarr;
-                              </button>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowExportKontakModal(true)}
+                                  className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                                  title="Unduh Kontak Siswa & Orang Tua (.vcf / .csv)"
+                                >
+                                  <span>📥</span>
+                                  <span>Unduh Kontak</span>
+                                </button>
+                                <button onClick={() => setShowModalPresensiWali(true)} className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                  Kelola Presensi &rarr;
+                                </button>
+                              </div>
                             </div>
 
                             {/* Stat Boxes Grid (6 Statuses) */}
@@ -2531,8 +2620,35 @@ export default function DashboardGuru() {
                           </div>
                         )}
 
-                        {/* 2. Jadwal Mengajar Hari Ini (Di Bawah Presensi Kelas Perwalian) */}
-                        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300 hover:shadow-md">
+                        {/* Welcome Card Khusus TU Keuangan */}
+                        {isKeuanganUser && !hasTeachingDuties && (
+                          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 rounded-2xl p-6 text-white shadow-lg space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="px-3 py-1 bg-white/20 rounded-full text-[11px] font-black uppercase tracking-wider">
+                                  🛡️ Staf TU Keuangan
+                                </span>
+                                <h3 className="text-xl font-black mt-2">Pusat Tagihan & SPP Siswa</h3>
+                                <p className="text-emerald-100 text-xs mt-1 max-w-lg">
+                                  Akses Buku Kasir Matriks 12 Bulan, Upload Mutasi Excel BCA (Auto-Reconcile), dan Pengingat Tagihan WhatsApp Orang Tua.
+                                </p>
+                              </div>
+                              <span className="text-4xl hidden sm:inline select-none">💳</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 pt-2">
+                              <button
+                                onClick={() => setActiveMenu('tagihan_spp')}
+                                className="px-4 py-2.5 bg-white text-emerald-900 font-black rounded-xl text-xs shadow-md hover:bg-emerald-50 active:scale-95 transition-all"
+                              >
+                                Buka Tagihan & SPP Siswa →
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 2. Jadwal Mengajar Hari Ini (Hanya Tampil Jika Memiliki Jam Mengajar) */}
+                        {hasTeachingDuties && (
+                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300 hover:shadow-md">
                           <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
                             <div className="flex items-center gap-2.5">
                               <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
@@ -2621,6 +2737,7 @@ export default function DashboardGuru() {
                             </div>
                           )}
                         </div>
+                        )}
 
                         {/* 3. Berita Sekolah */}
                         <GuruDashboardBerita session={session} />
@@ -2750,8 +2867,20 @@ export default function DashboardGuru() {
 
             {activeMenu === 'siswa_wali' && fitur.has('lihat_data_siswa') && (
               <div className="animate-slide-up flex flex-col h-[calc(100vh-2rem-57px)] md:h-[calc(100vh-3rem)]">
-                <div className="mb-6 shrink-0">
-                  <p className="text-slate-500 text-sm font-semibold">Kelas Perwalian: <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold text-xs border border-indigo-100">{waliClassesStr}</span></p>
+                <div className="mb-6 shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800">Daftar Siswa Wali Kelas</h2>
+                    <p className="text-slate-500 text-sm font-semibold mt-0.5">Kelas Perwalian: <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold text-xs border border-indigo-100">{waliClassesStr}</span></p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowExportKontakModal(true)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all self-start sm:self-auto active:scale-95 cursor-pointer"
+                    title="Unduh Kontak Siswa & Orang Tua (.vcf / .csv)"
+                  >
+                    <span>📥</span>
+                    <span>Unduh Kontak Siswa & Ortu</span>
+                  </button>
                 </div>
 
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 shrink-0">
@@ -2798,7 +2927,122 @@ export default function DashboardGuru() {
                 </div>
 
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-0">
-                  <div className="overflow-auto flex-1">
+                  {/* MOBILE LIST VIEW (Tampilan Simpel Khusus HP/Tablet - Tidak Perlu Scroll Horizontal) */}
+                  <div className="md:hidden overflow-y-auto divide-y divide-slate-100 flex-1">
+                    {filteredWaliStudents.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 text-sm">
+                        Tidak ada siswa yang cocok dengan filter.
+                      </div>
+                    ) : (
+                      filteredWaliStudents.map((s, idx) => {
+                        const todayRec = waliTodayPresensiMap[s.nisn]
+                        const currSt = todayRec?.status ? todayRec.status.toUpperCase() : null
+                        const isHadir = currSt === 'H' || currSt === 'HADIR'
+                        const isTerlambat = currSt === 'T' || currSt === 'TERLAMBAT'
+                        const isSakit = currSt === 'S' || currSt === 'SAKIT'
+                        const isIzin = currSt === 'I' || currSt === 'IZIN'
+                        const isAlpa = currSt === 'A' || currSt === 'ALPA'
+
+                        return (
+                          <div
+                            key={s.nisn || s.id || idx}
+                            onClick={() => setSelectedStudent(s)}
+                            className="p-3.5 hover:bg-indigo-50/50 active:bg-indigo-100/60 cursor-pointer transition-all flex items-center justify-between gap-3 group"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="relative shrink-0">
+                                <div className="w-11 h-11 rounded-full overflow-hidden border border-slate-200 shadow-2xs">
+                                  <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
+                                </div>
+                                <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-800 text-white rounded-full text-[9px] font-black flex items-center justify-center">
+                                  {idx + 1}
+                                </span>
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className="font-bold text-slate-900 text-sm truncate group-hover:text-indigo-600 transition-colors">
+                                    {s.nama_lengkap}
+                                  </p>
+                                  <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-bold text-[10px] border border-indigo-100 shrink-0">
+                                    {s.kelas}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                  <span className="font-mono text-[11px] text-slate-500">NISN: {s.nisn}</span>
+                                  {isHadir ? (
+                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full font-bold text-[10px] border border-emerald-200">
+                                      ✅ Hadir {todayRec?.waktu && `(${todayRec.waktu.slice(0, 5)})`}
+                                    </span>
+                                  ) : isTerlambat ? (
+                                    <span className="px-2 py-0.5 bg-orange-100 text-orange-800 rounded-full font-bold text-[10px] border border-orange-200">
+                                      ⏰ Terlambat {todayRec?.waktu && `(${todayRec.waktu.slice(0, 5)})`}
+                                    </span>
+                                  ) : isSakit ? (
+                                    <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold text-[10px] border border-blue-200">
+                                      🏥 Sakit
+                                    </span>
+                                  ) : isIzin ? (
+                                    <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded-full font-bold text-[10px] border border-purple-200">
+                                      📋 Izin
+                                    </span>
+                                  ) : isAlpa ? (
+                                    <span className="px-2 py-0.5 bg-rose-100 text-rose-800 rounded-full font-bold text-[10px] border border-rose-200">
+                                      ❌ Alpa
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-semibold text-[10px] border border-slate-200">
+                                      Belum Presensi
+                                    </span>
+                                  )}
+                                  {/* Indikator No HP Siswa & Ortu (Mobile) */}
+                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                    {(() => {
+                                      const digits = String(s.no_whatsapp || '').replace(/[^0-9]/g, '')
+                                      const hasHp = digits.length >= 7
+                                      return hasHp ? (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-0.5" title={`No. HP Siswa: ${s.no_whatsapp}`}>
+                                          <span>📱 Siswa</span>
+                                          <span className="text-emerald-600 font-black">✓</span>
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-400 border border-slate-200 inline-flex items-center gap-0.5" title="Nomor HP siswa belum diisi">
+                                          <span>📱 Siswa</span>
+                                          <span className="text-slate-400 font-black">✕</span>
+                                        </span>
+                                      )
+                                    })()}
+                                    {(() => {
+                                      const digits = String(s.no_hp_ortu || '').replace(/[^0-9]/g, '')
+                                      const hasHp = digits.length >= 7
+                                      return hasHp ? (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200 inline-flex items-center gap-0.5" title={`No. HP Ortu (${s.nama_ortu || 'Orang Tua'}): ${s.no_hp_ortu}`}>
+                                          <span>👨‍👩‍👧 Ortu</span>
+                                          <span className="text-teal-600 font-black">✓</span>
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-400 border border-slate-200 inline-flex items-center gap-0.5" title="Nomor HP orang tua belum diisi">
+                                          <span>👨‍👩‍👧 Ortu</span>
+                                          <span className="text-slate-400 font-black">✕</span>
+                                        </span>
+                                      )
+                                    })()}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="shrink-0 flex items-center gap-1 text-slate-400 group-hover:text-indigo-600 transition-colors">
+                              <svg className="w-5 h-5 text-slate-300 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                              </svg>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+
+                  {/* DESKTOP TABLE VIEW (>= md) */}
+                  <div className="hidden md:block overflow-auto flex-1">
                     <table className="w-full text-left text-sm whitespace-nowrap">
                       <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
@@ -2823,7 +3067,11 @@ export default function DashboardGuru() {
                           const isAlpa = currSt === 'A' || currSt === 'ALPA'
 
                           return (
-                            <tr key={s.nisn || s.id || idx} className="hover:bg-slate-50/70 transition-colors">
+                            <tr 
+                              key={s.nisn || s.id || idx} 
+                              onClick={() => setSelectedStudent(s)}
+                              className="hover:bg-indigo-50/50 cursor-pointer transition-colors group"
+                            >
                               <td className="px-6 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
                               <td className="px-6 py-4 font-mono text-xs font-semibold text-slate-600">{s.nisn}</td>
                               <td className="px-6 py-4">
@@ -2831,7 +3079,44 @@ export default function DashboardGuru() {
                                   <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-slate-200 shadow-2xs">
                                     <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
                                   </div>
-                                  <div className="font-bold text-slate-800">{s.nama_lengkap}</div>
+                                  <div>
+                                    <div className="font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">{s.nama_lengkap}</div>
+                                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                      {/* No HP Siswa */}
+                                      {(() => {
+                                        const digits = String(s.no_whatsapp || '').replace(/[^0-9]/g, '')
+                                        const hasHp = digits.length >= 7
+                                        return hasHp ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-0.5" title={`No. HP Siswa: ${s.no_whatsapp}`}>
+                                            <span>📱 Siswa</span>
+                                            <span className="text-emerald-600 font-black">✓</span>
+                                          </span>
+                                        ) : (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-400 border border-slate-200 inline-flex items-center gap-0.5" title="Nomor HP siswa belum diisi">
+                                            <span>📱 Siswa</span>
+                                            <span className="text-slate-400 font-black">✕</span>
+                                          </span>
+                                        )
+                                      })()}
+
+                                      {/* No HP Ortu */}
+                                      {(() => {
+                                        const digits = String(s.no_hp_ortu || '').replace(/[^0-9]/g, '')
+                                        const hasHp = digits.length >= 7
+                                        return hasHp ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200 inline-flex items-center gap-0.5" title={`No. HP Ortu (${s.nama_ortu || 'Orang Tua'}): ${s.no_hp_ortu}`}>
+                                            <span>👨‍👩‍👧 Ortu</span>
+                                            <span className="text-teal-600 font-black">✓</span>
+                                          </span>
+                                        ) : (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-400 border border-slate-200 inline-flex items-center gap-0.5" title="Nomor HP orang tua belum diisi">
+                                            <span>👨‍👩‍👧 Ortu</span>
+                                            <span className="text-slate-400 font-black">✕</span>
+                                          </span>
+                                        )
+                                      })()}
+                                    </div>
+                                  </div>
                                 </div>
                               </td>
                               <td className="px-6 py-4"><span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold text-xs border border-indigo-100">{s.kelas}</span></td>
@@ -2866,9 +3151,9 @@ export default function DashboardGuru() {
                               </td>
 
                               <td className="px-6 py-4 text-center">
-                                <button onClick={() => setSelectedStudent(s)} className="text-indigo-600 hover:text-indigo-800 text-xs font-extrabold hover:underline">
-                                  Lihat Detail
-                                </button>
+                                <span className="px-3 py-1.5 bg-indigo-50 group-hover:bg-indigo-600 text-indigo-700 group-hover:text-white rounded-lg text-xs font-bold transition-all shadow-2xs">
+                                  Lihat Detail 👁️
+                                </span>
                               </td>
                             </tr>
                           )
@@ -2880,7 +3165,7 @@ export default function DashboardGuru() {
               </div>
             )}
 
-            {activeMenu === 'data_presensi_siswa' && (fitur.has('kelola_presensi_sekolah') || session.kelas?.length > 0) && (
+            {activeMenu === 'data_presensi_siswa' && fitur.has('kelola_presensi_sekolah') && (
               <DataPresensiSiswaSection 
                 session={session} 
                 activeTa={activeTa} 
@@ -2894,6 +3179,7 @@ export default function DashboardGuru() {
                 session={session} 
                 activeTa={activeTa} 
                 mode="guru"
+                fotos={fotos}
               />
             )}
 
@@ -2947,7 +3233,59 @@ export default function DashboardGuru() {
                 </div>
 
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-0">
-                  <div className="overflow-auto flex-1">
+                  {/* MOBILE LIST VIEW (Tampilan Simpel Khusus HP/Tablet) */}
+                  <div className="md:hidden overflow-y-auto divide-y divide-slate-100 flex-1">
+                    {filteredMapelStudents.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 text-sm">
+                        Tidak ada siswa yang cocok dengan filter.
+                      </div>
+                    ) : (
+                      filteredMapelStudents.map((s, idx) => (
+                        <div
+                          key={s.nisn || idx}
+                          onClick={() => setSelectedStudent(s)}
+                          className="p-3.5 hover:bg-indigo-50/50 active:bg-indigo-100/60 cursor-pointer transition-all flex items-center justify-between gap-3 group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="relative shrink-0">
+                              <div className="w-11 h-11 rounded-full overflow-hidden border border-slate-200 shadow-2xs">
+                                <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
+                              </div>
+                              <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-800 text-white rounded-full text-[9px] font-black flex items-center justify-center">
+                                {idx + 1}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="font-bold text-slate-900 text-sm truncate group-hover:text-indigo-600 transition-colors">
+                                  {s.nama_lengkap}
+                                </p>
+                                <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-bold text-[10px] border border-indigo-100 shrink-0">
+                                  {s.kelas}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="font-mono text-[11px] text-slate-500">NISN: {s.nisn}</span>
+                                {session.mapels?.map(m => (
+                                  <span key={m} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-medium text-[10px] border border-slate-200">
+                                    {m}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="shrink-0 flex items-center gap-1 text-slate-400 group-hover:text-indigo-600 transition-colors">
+                            <svg className="w-5 h-5 text-slate-300 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                            </svg>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* DESKTOP TABLE VIEW (>= md) */}
+                  <div className="hidden md:block overflow-auto flex-1">
                     <table className="w-full text-left text-sm whitespace-nowrap">
                       <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
@@ -2962,14 +3300,18 @@ export default function DashboardGuru() {
                         {filteredMapelStudents.length === 0 ? (
                           <tr><td colSpan="5" className="px-5 py-8 text-center text-slate-500">Tidak ada siswa yang cocok dengan filter.</td></tr>
                         ) : filteredMapelStudents.map((s, idx) => (
-                          <tr key={s.nisn || idx} className="hover:bg-slate-50 bg-white">
+                          <tr 
+                            key={s.nisn || idx} 
+                            onClick={() => setSelectedStudent(s)}
+                            className="hover:bg-indigo-50/50 cursor-pointer transition-colors group"
+                          >
                             <td className="px-5 py-4 text-center text-slate-500 font-medium">{idx + 1}</td>
                             <td className="px-5 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-slate-200">
                                   <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
                                 </div>
-                                <div className="font-semibold text-slate-800">{s.nama_lengkap}</div>
+                                <div className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">{s.nama_lengkap}</div>
                               </div>
                             </td>
                             <td className="px-5 py-4 text-slate-500 font-mono text-xs">{s.nisn}</td>
@@ -3015,6 +3357,10 @@ export default function DashboardGuru() {
 
             {activeMenu === 'prestasi_siswa' && (fitur.has('kelola_prestasi_lomba') || session.roles?.some(r => r.nama?.toLowerCase() === 'admin' || r.nama?.toLowerCase().includes('admin'))) && (
               <AdminPrestasiSection session={session} activeTa={activeTa} readOnly={fiturAkses['kelola_prestasi_lomba'] === 'read'} />
+            )}
+
+            {activeMenu === 'pendamping_lomba' && (fitur.has('pendamping_lomba') || isAdminUser || session.roles?.some(r => r.nama?.toLowerCase() === 'admin' || r.nama?.toLowerCase().includes('admin'))) && (
+              <PendampingLombaSection session={session} activeTa={activeTa} isAdminView={false} />
             )}
 
             {activeMenu === 'pengajuan_poin' && (fitur.has('kelola_pengajuan_poin') || fitur.has('lihat_pengajuan_poin')) && (
@@ -3120,6 +3466,14 @@ export default function DashboardGuru() {
 
             {activeMenu === 'dashboard_eksekutif' && fitur.has('akses_dashboard_eksekutif') && (
               <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
+            )}
+
+            {activeMenu === 'tagihan_spp' && (
+              <TagihanSppSection 
+                session={session} 
+                activeTa={activeTa} 
+                readOnly={!fitur.has('kelola_tagihan_spp') && !isKeuanganUser && !isAdminUser} 
+              />
             )}
 
             {activeMenu === 'dokumen_guru' && (fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
@@ -3630,9 +3984,21 @@ export default function DashboardGuru() {
                 )}
               </div>
 
-              <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Real-time Barcode / GPS
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleWaliBatchPresensi('H')}
+                  disabled={isBatchUpdating}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Tandai semua siswa yang tampil di daftar sebagai Hadir"
+                >
+                  <span>⚡</span>
+                  <span>{isBatchUpdating ? 'Menyimpan...' : 'Tandai Hadir Semua'}</span>
+                </button>
+                <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-700 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 shrink-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Real-time
+                </div>
               </div>
             </div>
 
@@ -3777,18 +4143,16 @@ export default function DashboardGuru() {
                       {/* Left Side: No, Avatar, Name (Clickable to open dropdown) */}
                       <div
                         onClick={() => {
-                          if (!isHadir && !isTerlambat) {
-                            setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)
-                          }
+                          setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)
                         }}
-                        className={`flex items-center gap-2.5 min-w-0 flex-1 ${!isHadir && !isTerlambat ? 'cursor-pointer group' : ''}`}
+                        className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer group"
                       >
                         <span className="w-5 text-center text-xs font-bold text-slate-400 shrink-0">{idx + 1}</span>
                         <div className="w-9 h-9 rounded-full overflow-hidden shrink-0 border border-slate-200 shadow-2xs">
                           <StudentAvatar student={s} fotos={fotos} className="w-full h-full object-cover" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className={`font-bold text-slate-800 text-sm truncate ${!isHadir && !isTerlambat ? 'group-hover:text-indigo-600' : ''} transition-colors`}>
+                          <div className="font-bold text-slate-800 text-sm truncate group-hover:text-indigo-600 transition-colors">
                             {s.nama_lengkap}
                           </div>
                           {uniqueWaliClasses.length > 1 && (
@@ -3806,27 +4170,41 @@ export default function DashboardGuru() {
                             type="button"
                             onClick={() => setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)}
                             disabled={isUpdating}
-                            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 text-xs font-bold transition-all border border-slate-200 shadow-2xs flex items-center gap-1.5"
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 text-xs font-bold transition-all border border-slate-200 shadow-2xs flex items-center gap-1.5 cursor-pointer"
                           >
                             <span>Belum Presensi</span>
                             <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                           </button>
                         ) : isHadir ? (
-                          <div className="px-3 py-1.5 rounded-xl bg-emerald-500 text-white text-xs font-extrabold shadow-2xs inline-flex items-center gap-1.5" title="Presensi Hadir via QR/GPS Siswa">
+                          <button
+                            type="button"
+                            onClick={() => setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)}
+                            disabled={isUpdating}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold shadow-2xs inline-flex items-center gap-1.5 cursor-pointer transition-all border border-emerald-600"
+                            title="Presensi Hadir (Klik untuk mengubah)"
+                          >
                             <span>✅ Hadir</span>
                             {todayRec?.waktu && <span className="text-[10px] opacity-85">({todayRec.waktu.slice(0, 5)})</span>}
-                          </div>
+                            <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                          </button>
                         ) : isTerlambat ? (
-                          <div className="px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-extrabold shadow-2xs inline-flex items-center gap-1.5" title="Presensi Terlambat via QR/GPS Siswa">
+                          <button
+                            type="button"
+                            onClick={() => setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)}
+                            disabled={isUpdating}
+                            className="px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold shadow-2xs inline-flex items-center gap-1.5 cursor-pointer transition-all border border-orange-600"
+                            title="Presensi Terlambat (Klik untuk mengubah)"
+                          >
                             <span>⏰ Terlambat</span>
                             {todayRec?.waktu && <span className="text-[10px] opacity-85">({todayRec.waktu.slice(0, 5)})</span>}
-                          </div>
+                            <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                          </button>
                         ) : (
                           <button
                             type="button"
                             onClick={() => setOpenDropdownNisn(openDropdownNisn === s.nisn ? null : s.nisn)}
                             disabled={isUpdating}
-                            className={`px-3 py-1.5 rounded-xl text-white text-xs font-extrabold shadow-xs transition-all flex items-center gap-1.5 border ${
+                            className={`px-3 py-1.5 rounded-xl text-white text-xs font-extrabold shadow-xs transition-all flex items-center gap-1.5 border cursor-pointer ${
                               isSakit ? 'bg-blue-600 border-blue-600 hover:bg-blue-700' : isIzin ? 'bg-purple-600 border-purple-600 hover:bg-purple-700' : 'bg-rose-600 border-rose-600 hover:bg-rose-700'
                             }`}
                             title="Klik untuk mengubah atau mereset presensi"
@@ -3842,6 +4220,32 @@ export default function DashboardGuru() {
                             <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
                               Pilih Presensi Siswa
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleWaliQuickPresensi(s, 'H')
+                                setOpenDropdownNisn(null)
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-bold flex items-center justify-between transition cursor-pointer ${
+                                isHadir ? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-emerald-50 hover:text-emerald-700'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">✅ Hadir (H)</span>
+                              {isHadir && <span className="text-emerald-600">✓</span>}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleWaliQuickPresensi(s, 'T')
+                                setOpenDropdownNisn(null)
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-bold flex items-center justify-between transition cursor-pointer ${
+                                isTerlambat ? 'bg-orange-50 text-orange-700' : 'text-slate-700 hover:bg-orange-50 hover:text-orange-700'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">⏰ Terlambat (T)</span>
+                              {isTerlambat && <span className="text-orange-600">✓</span>}
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
@@ -3922,6 +4326,20 @@ export default function DashboardGuru() {
 
           </div>
         </div>
+      )}
+
+      {/* Modal Unduh Kontak Siswa & Ortu untuk Wali Kelas */}
+      {session?.kelas?.length > 0 && (
+        <ExportKontakModal
+          isOpen={showExportKontakModal}
+          onClose={() => setShowExportKontakModal(false)}
+          initialKelas={siswaClassFilter !== 'all' ? siswaClassFilter : (currentWaliClasses[0] || 'Semua Siswa')}
+          semuaKelas={currentWaliClasses}
+          allowedClasses={currentWaliClasses}
+          activeTa={activeTa}
+          hideGuru={true}
+          modalTitle={`Unduh Kontak Siswa & Ortu (${waliClassesStr && waliClassesStr !== '-' ? `Kelas ${waliClassesStr}` : 'Kelas Perwalian'})`}
+        />
       )}
     </div>
   )

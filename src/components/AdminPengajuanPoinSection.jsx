@@ -304,6 +304,70 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
       }, { onConflict: 'nisn' })
     }
 
+    // 4. Kirim notifikasi sistem ke akun siswa & Push Notification Realtime
+    try {
+      let notifJudul = ''
+      let notifPesan = ''
+      let notifTipe = 'info'
+
+      const alasanRingkas = pengajuan.alasan ? (pengajuan.alasan.length > 50 ? pengajuan.alasan.slice(0, 50) + '...' : pengajuan.alasan) : 'Kegiatan Positif'
+      const catatanText = catatanReviewer.trim()
+
+      if (targetStatus === 'disetujui') {
+        notifJudul = `Pengajuan Poin Disetujui (+${pengajuan.poin_diajukan} Poin)`
+        notifPesan = `Selamat! Pengajuan poin mandiri Anda untuk "${alasanRingkas}" telah disetujui oleh ${reviewerName}. Poin Anda bertambah +${pengajuan.poin_diajukan} poin.` + (catatanText ? `\n\nCatatan Guru: "${catatanText}"` : '')
+        notifTipe = 'poin'
+      } else if (targetStatus === 'revisi') {
+        notifJudul = `Pengajuan Poin Memerlukan Revisi`
+        notifPesan = `Pengajuan poin mandiri Anda untuk "${alasanRingkas}" memerlukan perbaikan/kelengkapan bukti.` + (catatanText ? `\n\nCatatan Guru: "${catatanText}"` : '\n\nSilakan periksa catatan dan kirim ulang di menu Pengajuan Poin Positif.')
+        notifTipe = 'warning'
+      } else if (targetStatus === 'ditolak') {
+        notifJudul = `Pengajuan Poin Ditolak`
+        notifPesan = `Pengajuan poin mandiri Anda untuk "${alasanRingkas}" belum dapat disetujui oleh ${reviewerName}.` + (catatanText ? `\n\nAlasan Penolakan: "${catatanText}"` : '')
+        notifTipe = 'info'
+      } else if (isSpam) {
+        notifJudul = `Pengajuan Ditandai Sebagai Spam`
+        notifPesan = `Pengajuan poin Anda ditandai sebagai spam oleh ${reviewerName}. Mohon pastikan bukti dan data yang Anda ajukan valid dan sesuai tata tertib.`
+        notifTipe = 'warning'
+      }
+
+      if (notifJudul) {
+        // Insert ke database notifikasi
+        await supabase.from('notifikasi').insert({
+          judul: notifJudul,
+          pesan: notifPesan,
+          tipe: notifTipe,
+          target_nisn: pengajuan.nisn,
+          target_kelas: pengajuan.kelas || null,
+          dibuat_oleh: reviewerName,
+          created_at: now
+        })
+
+        // Kirim realtime broadcast ke HP siswa
+        const notifChannel = supabase.channel(`dashboard-siswa-live-${pengajuan.nisn}`, { config: { broadcast: { self: true } } })
+        notifChannel.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await notifChannel.send({
+              type: 'broadcast',
+              event: 'pengajuan_poin_update',
+              payload: {
+                judul: notifJudul,
+                pesan: notifPesan,
+                status: targetStatus,
+                poin: pengajuan.poin_diajukan,
+                nisn: pengajuan.nisn
+              }
+            })
+            setTimeout(() => {
+              supabase.removeChannel(notifChannel)
+            }, 3000)
+          }
+        })
+      }
+    } catch (notifErr) {
+      console.warn('Gagal insert notifikasi siswa:', notifErr)
+    }
+
     setReviewModal(null)
     setReviewSaving(false)
     fetchPengajuan()
@@ -397,6 +461,51 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
         poin_default: defaultPoin,
         updated_at: now,
       }, { onConflict: 'nisn,tahun_ajaran_id,semester' })
+    }
+
+    // Kirim notifikasi massal ke seluruh siswa yang disetujui
+    try {
+      const notifInserts = itemsToApprove.map(item => {
+        const alasanRingkas = item.alasan ? (item.alasan.length > 50 ? item.alasan.slice(0, 50) + '...' : item.alasan) : 'Kegiatan Positif'
+        return {
+          judul: `Pengajuan Poin Disetujui (+${item.poin_diajukan} Poin)`,
+          pesan: `Selamat! Pengajuan poin mandiri Anda untuk "${alasanRingkas}" telah disetujui oleh ${reviewerName}. Poin Anda bertambah +${item.poin_diajukan} poin.`,
+          tipe: 'poin',
+          target_nisn: item.nisn,
+          target_kelas: item.kelas || null,
+          dibuat_oleh: reviewerName,
+          created_at: now
+        }
+      })
+      if (notifInserts.length > 0) {
+        await supabase.from('notifikasi').insert(notifInserts)
+
+        // Kirim realtime broadcast untuk masing-masing siswa
+        itemsToApprove.forEach(item => {
+          const alasanRingkas = item.alasan ? (item.alasan.length > 50 ? item.alasan.slice(0, 50) + '...' : item.alasan) : 'Kegiatan Positif'
+          const notifChannel = supabase.channel(`dashboard-siswa-live-${item.nisn}`, { config: { broadcast: { self: true } } })
+          notifChannel.subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+              await notifChannel.send({
+                type: 'broadcast',
+                event: 'pengajuan_poin_update',
+                payload: {
+                  judul: `Pengajuan Poin Disetujui (+${item.poin_diajukan} Poin)`,
+                  pesan: `Selamat! Pengajuan poin mandiri Anda untuk "${alasanRingkas}" telah disetujui oleh ${reviewerName}.`,
+                  status: 'disetujui',
+                  poin: item.poin_diajukan,
+                  nisn: item.nisn
+                }
+              })
+              setTimeout(() => {
+                supabase.removeChannel(notifChannel)
+              }, 3000)
+            }
+          })
+        })
+      }
+    } catch (nErr) {
+      console.warn('Gagal bulk insert notifikasi:', nErr)
     }
 
     setBulkProcessing(false)

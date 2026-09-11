@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
+import { downloadFile } from '../utils/fileDownloader'
 
 const EMPTY_FORM = { nama_tahap: '', batas_poin: '', tindakan: '', penanggung_jawab: '', urutan: '' }
 
@@ -98,7 +99,7 @@ export default function AdminTahapPembinaanSection({ readOnly = false }) {
     ws.eachRow(r => { r.eachCell(c => { c.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } } }) })
     const buf = await wb.xlsx.writeBuffer()
     const today = new Date().toISOString().slice(0, 10)
-    saveAs(new Blob([buf]), `tahap-pembinaan-${today}.xlsx`)
+    await downloadFile(buf, `tahap-pembinaan-${today}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   }
 
   // ─── IMPORT ───────────────────────────────────────────────
@@ -154,7 +155,7 @@ export default function AdminTahapPembinaanSection({ readOnly = false }) {
     ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } }
     ws.addRow({ urutan: 1, nama_tahap: 'Panggilan I', batas_poin: 75, tindakan: 'Pemanggilan Orang Tua', penanggung_jawab: 'Wali Kelas' })
     const buf = await wb.xlsx.writeBuffer()
-    saveAs(new Blob([buf]), 'template-tahap-pembinaan.xlsx')
+    await downloadFile(buf, 'template-tahap-pembinaan.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   }
 
   if (loading) return <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" /></div>

@@ -44,12 +44,12 @@ export default function SiswaRiwayatPresensi({ studentData }) {
       try {
         const { data } = await supabase
           .from('program_sekolah')
-          .select('nama_kegiatan, nama, tanggal_mulai, tanggal_selesai, is_efektif, efektif')
+          .select('nama, tanggal_mulai, tanggal_selesai, hari_efektif')
 
         const map = {}
         if (data) {
           data.forEach(item => {
-            const isNonEfektif = item.is_efektif === false || item.efektif === false
+            const isNonEfektif = item.hari_efektif === false
             if (isNonEfektif && item.tanggal_mulai) {
               const start = new Date(item.tanggal_mulai)
               const end = item.tanggal_selesai ? new Date(item.tanggal_selesai) : new Date(item.tanggal_mulai)
@@ -59,7 +59,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
                 const m = String(d.getMonth() + 1).padStart(2, '0')
                 const day = String(d.getDate()).padStart(2, '0')
                 const dateStr = `${y}-${m}-${day}`
-                map[dateStr] = item.nama_kegiatan || item.nama || 'Hari Libur / Tidak Efektif'
+                map[dateStr] = item.nama || 'Hari Libur / Tidak Efektif'
               }
             }
           })
