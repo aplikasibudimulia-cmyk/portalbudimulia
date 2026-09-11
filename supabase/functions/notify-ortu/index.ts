@@ -188,7 +188,7 @@ serve(async (req) => {
                     android: {
                       priority: "high",
                       notification: {
-                        channel_id: "ebudimulia-notif-v3",
+                        channel_id: "ebudimulia_presensi_v5",
                         icon: "ic_launcher",
                         color: "#4F46E5",
                         sound: "default",

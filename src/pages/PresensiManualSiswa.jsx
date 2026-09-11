@@ -3,6 +3,8 @@ import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
 import { getTodayWIB } from '../utils/dateUtils'
+import { sendFCMPushNotification } from '../utils/fcmSender'
+import { showLocalNotif, isNotifGranted } from '../utils/pushNotif'
 
 // Tipe presensi
 const TIPE = { MASUK: 'masuk', PULANG: 'pulang' }
@@ -305,11 +307,27 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
     } catch { return null }
   }
 
-  // ─── Notify ortu ────────────────────────────────────────────────────────────
+  // ─── Notify ortu & siswa ──────────────────────────────────────────────────
   const notifyOrangTua = async (nisn, namaLengkap, kelas, status, waktu, tipe, selfieUrl) => {
     try {
       const tglFormatted = new Date(today).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-      const payload = { nisn, namaLengkap, kelas, status, statusLabel: STATUS_LABELS[status] || status, waktu, tipe, tipeLabel: tipe === TIPE.PULANG ? 'Pulang' : 'Masuk', tanggal: tglFormatted, selfieUrl, lokasi: 'Presensi Manual di Meja Piket' }
+      const tipeLabel = tipe === TIPE.PULANG ? 'Pulang' : 'Masuk'
+      const statusLabel = STATUS_LABELS[status] || status
+      const payload = { 
+        nisn, 
+        namaLengkap, 
+        kelas, 
+        status, 
+        statusLabel, 
+        waktu, 
+        tipe, 
+        tipeLabel, 
+        tanggal: tglFormatted, 
+        selfieUrl, 
+        lokasi: 'Presensi Manual di Meja Piket' 
+      }
+
+      // 1. Broadcast Supabase Realtime ke HP Orang Tua & Siswa
       const channelsToSend = [`notif-ortu-${nisn}`, `notif-ortu-dash-${nisn}`, `app-notif-${nisn}`]
       channelsToSend.forEach(chName => {
         const broadcastCh = supabase.channel(chName, { config: { broadcast: { self: true } } })
@@ -324,19 +342,42 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
           })
         }
       })
+
+      // 2. Simpan entri ke tabel notifikasi (database)
+      supabase.from('notifikasi').insert({
+        target_nisn: nisn,
+        target_kelas: kelas,
+        judul: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
+        pesan: `${namaLengkap} telah dicatat Presensi ${tipeLabel} oleh Petugas Piket pada pukul ${waktu} WIB (${statusLabel}).`,
+        tipe: 'presensi'
+      }).then(() => {}).catch(() => {})
+
+      // 3. Kirim Google FCM Push Notification langsung ke HP Orang Tua & Siswa
+      sendFCMPushNotification({
+        nisn,
+        title: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
+        body: `${namaLengkap} - Presensi ${tipeLabel} oleh Piket pukul ${waktu} WIB (${statusLabel}).`,
+        targetMenu: 'PRESENSI'
+      }).catch(err => console.warn('[FCM Presensi Manual] Send error:', err))
+
+      // 4. Edge functions & webhook
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-      fetch(`${supabaseUrl}/functions/v1/notify-ortu`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },
-        body: JSON.stringify(payload)
-      }).catch(() => {})
-      fetch(`${supabaseUrl}/functions/v1/line-notify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },
-        body: JSON.stringify({ nisn, nama: namaLengkap, kelas, status, waktu, tipe, fotoUrl: selfieUrl, keterangan: 'Presensi Manual di Meja Piket' })
-      }).catch(() => {})
-    } catch { }
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/functions/v1/notify-ortu`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },
+          body: JSON.stringify(payload)
+        }).catch(() => {})
+        fetch(`${supabaseUrl}/functions/v1/line-notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },
+          body: JSON.stringify({ nisn, nama: namaLengkap, kelas, status, waktu, tipe, fotoUrl: selfieUrl, keterangan: 'Presensi Manual di Meja Piket' })
+        }).catch(() => {})
+      }
+    } catch (e) {
+      console.warn('[notifyOrangTua] Error:', e)
+    }
   }
 
   // ─── Submit Presensi ─────────────────────────────────────────────────────────
@@ -383,6 +424,15 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
 
       const tipeLabel = tipeAktif === TIPE.MASUK ? 'Masuk' : 'Pulang'
       const statusLabel = finalStatus === 'T' ? 'Terlambat' : 'Hadir'
+      
+      // Tampilkan notifikasi konfirmasi di layar usap HP perangkat piket
+      if (isNotifGranted()) {
+        showLocalNotif(`Presensi ${tipeLabel} Berhasil: ${studentSession.nama_lengkap}`, `Presensi ${tipeLabel} (${statusLabel}) pada ${jamSekarang} WIB berhasil dicatat.`, {
+          tag: `presensi-piket-${studentSession.nisn}-${Date.now()}`,
+          data: { url: '/presensi-manual-siswa' }
+        })
+      }
+
       setSuccessMsg(`✅ Presensi ${tipeLabel} — ${statusLabel}!`)
       setScreen('success')
 
