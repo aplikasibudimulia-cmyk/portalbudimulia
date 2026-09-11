@@ -1,20 +1,22 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { useEffect, Component } from 'react'
+import { useEffect, Component, lazy, Suspense } from 'react'
 import { supabase } from './supabaseClient'
 import { showLocalNotif, isNotifGranted, initNativePushNotifications } from './utils/pushNotif'
 import { loadAccounts } from './utils/credentialStore'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Admin from './pages/Admin'
-import LoginAdmin from './pages/LoginAdmin'
-import DashboardGuru from './pages/DashboardGuru'
-import DashboardOrangTua from './pages/DashboardOrangTua'
-import Impersonate from './pages/Impersonate'
-import PresensiTV from './pages/PresensiTV'
-import LaporanPengumuman from './pages/LaporanPengumuman'
-import PresensiManualSiswa from './pages/PresensiManualSiswa'
-import ShowcaseRekapPoin from './pages/ShowcaseRekapPoin'
-import ValidasiKartuPelajar from './pages/ValidasiKartuPelajar'
+
+// Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Admin = lazy(() => import('./pages/Admin'))
+const LoginAdmin = lazy(() => import('./pages/LoginAdmin'))
+const DashboardGuru = lazy(() => import('./pages/DashboardGuru'))
+const DashboardOrangTua = lazy(() => import('./pages/DashboardOrangTua'))
+const Impersonate = lazy(() => import('./pages/Impersonate'))
+const PresensiTV = lazy(() => import('./pages/PresensiTV'))
+const LaporanPengumuman = lazy(() => import('./pages/LaporanPengumuman'))
+const PresensiManualSiswa = lazy(() => import('./pages/PresensiManualSiswa'))
+const ShowcaseRekapPoin = lazy(() => import('./pages/ShowcaseRekapPoin'))
+const ValidasiKartuPelajar = lazy(() => import('./pages/ValidasiKartuPelajar'))
 
 // Error Boundary untuk menangkap error dan menampilkan pesan, bukan layar putih
 class ErrorBoundary extends Component {
@@ -265,23 +267,31 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/" element={<Login />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/dashboard-orang-tua" element={<DashboardOrangTua />} />
-          <Route path="/admin" element={<Admin />} />
-          <Route path="/login-admin" element={<LoginAdmin />} />
-          <Route path="/dashboard-guru" element={<DashboardGuru />} />
-          <Route path="/impersonate" element={<Impersonate />} />
-          <Route path="/presensi-tv" element={<PresensiTV />} />
-          <Route path="/laporan-pengumuman/:typeId" element={<LaporanPengumuman />} />
-          <Route path="/presensi-manual-siswa" element={<PresensiManualSiswa />} />
-          <Route path="/presensi-susulan-siswa" element={<PresensiManualSiswa isSusulanMode={true} />} />
-          <Route path="/showcase-rekap-poin" element={<ShowcaseRekapPoin />} />
-          <Route path="/validasi-kartu" element={<ValidasiKartuPelajar />} />
-          <Route path="/validasi-kartu/:nisn" element={<ValidasiKartuPelajar />} />
-        </Routes>
+        <Suspense fallback={
+          <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', gap: 12 }}>
+            <div style={{ width: '36px', height: '36px', border: '3px solid #e2e8f0', borderTopColor: '#059669', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>Memuat halaman...</span>
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        }>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/dashboard-orang-tua" element={<DashboardOrangTua />} />
+            <Route path="/admin" element={<Admin />} />
+            <Route path="/login-admin" element={<LoginAdmin />} />
+            <Route path="/dashboard-guru" element={<DashboardGuru />} />
+            <Route path="/impersonate" element={<Impersonate />} />
+            <Route path="/presensi-tv" element={<PresensiTV />} />
+            <Route path="/laporan-pengumuman/:typeId" element={<LaporanPengumuman />} />
+            <Route path="/presensi-manual-siswa" element={<PresensiManualSiswa />} />
+            <Route path="/presensi-susulan-siswa" element={<PresensiManualSiswa isSusulanMode={true} />} />
+            <Route path="/showcase-rekap-poin" element={<ShowcaseRekapPoin />} />
+            <Route path="/validasi-kartu" element={<ValidasiKartuPelajar />} />
+            <Route path="/validasi-kartu/:nisn" element={<ValidasiKartuPelajar />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </ErrorBoundary>
   )

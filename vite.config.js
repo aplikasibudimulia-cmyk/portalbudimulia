@@ -19,9 +19,6 @@ function lineWebhookPlugin() {
           req.on('data', chunk => { body += chunk })
           req.on('end', async () => {
             try {
-              const { lineUserId, flexMessage, accessToken } = JSON.parse(body || '{}')
-              const DEFAULT_LINE_TOKEN = 'Q0qsnhosKoxttb4VNrQgZfx9mT0x8RxmzL7GPuf70nvk1YjreV8ie/hVLRzUuglwpznP7gdYw6iBZTUTFEgD2qqNxaVTepk3uRBaNZXgmZYlnslE8ppaqCltuD6WKZFfqcNqqCeGGmkwZk3hJRlUtAdB04t89/10/w1cDnyilFU='
-
               let token = (accessToken && accessToken.trim()) ? accessToken.trim() : null
               if (!token) {
                 const { data: configData } = await supabase
@@ -29,7 +26,7 @@ function lineWebhookPlugin() {
                   .select('setting_value')
                   .eq('setting_key', 'line_channel_access_token')
                   .maybeSingle()
-                token = configData?.setting_value?.trim() || process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_TOKEN
+                token = configData?.setting_value?.trim() || process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || ''
               }
 
               if (!lineUserId) {
@@ -89,7 +86,7 @@ function lineWebhookPlugin() {
                 .eq('setting_key', 'line_channel_access_token')
                 .maybeSingle()
 
-              const lineToken = configData?.setting_value || process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || 'Q0qsnhosKoxttb4VNrQgZfx9mT0x8RxmzL7GPuf70nvk1YjreV8ie/hVLRzUuglwpznP7gdYw6iBZTUTFEgD2qqNxaVTepk3uRBaNZXgmZYlnslE8ppaqCltuD6WKZFfqcNqqCeGGmkwZk3hJRlUtAdB04t89/10/w1cDnyilFU='
+              const lineToken = configData?.setting_value || process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || ''
 
               for (const event of events) {
                 if (event.type === 'message' && event.message && event.message.type === 'text') {
