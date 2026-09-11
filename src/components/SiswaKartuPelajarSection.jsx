@@ -276,14 +276,133 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   const frontCardRef = useRef(null)
   const backCardRef = useRef(null)
 
-  // Hitung status kelengkapan data
-  const audit = useMemo(() => auditStudentCompleteness(studentData), [studentData])
+  // State data siswa terkini langsung dari tabel database siswa_permanent
+  const [liveStudent, setLiveStudent] = useState(studentData)
 
-  const isDirtyRef = useRef(false)
-  const currentNisnRef = useRef(studentData?.nisn)
+  useEffect(() => {
+    setLiveStudent(studentData)
+  }, [studentData])
+
+  const activeStudent = liveStudent || studentData
 
   // Inisialisasi draft dari sessionStorage agar data ketikan tidak pernah hilang jika ada render ulang
   const getDraftKey = (nisn) => `draft_kartu_pelajar_${nisn || 'anonymous'}`
+
+  // Hitung status kelengkapan data berdasarkan activeStudent terkini
+  const audit = useMemo(() => auditStudentCompleteness(activeStudent), [activeStudent])
+
+  const isDirtyRef = useRef(false)
+  const currentNisnRef = useRef(activeStudent?.nisn)
+
+  // Ambil biodata siswa terbaru dari database secara live untuk memastikan kelengkapan data akurat
+  const fetchFreshStudent = useCallback(async () => {
+    const nisn = studentData?.nisn
+    if (!nisn) return
+    try {
+      const { data: fresh, error } = await supabase
+        .from('siswa_permanent')
+        .select('*')
+        .eq('nisn', nisn)
+        .maybeSingle()
+
+      if (error) {
+        console.warn('Gagal memuat biodata siswa terbaru:', error)
+      } else if (fresh) {
+        // Ambil data fresh dari database. Jika di database nilainya null / kosong (karena dihapus admin),
+        // pastikan nilainya benar-benar terhapus di aplikasi siswa!
+        const updated = {
+          ...studentData,
+          ...fresh,
+          alamat: fresh.alamat || '',
+          rt: fresh.rt || '',
+          rw: fresh.rw || '',
+          rt_rw: fresh.rt_rw || '',
+          kelurahan: fresh.kelurahan || '',
+          kecamatan: fresh.kecamatan || '',
+          kota: fresh.kota || '',
+          tempat_lahir: fresh.tempat_lahir || '',
+          tanggal_lahir: fresh.tanggal_lahir || '',
+          jenis_kelamin: fresh.jenis_kelamin || '',
+          kontak_ortu: fresh.kontak_ortu || [],
+          no_hp_ortu: fresh.no_hp_ortu || '',
+          nama_ortu: fresh.nama_ortu || '',
+          tinggal_bersama: fresh.tinggal_bersama || ''
+        }
+        setLiveStudent(updated)
+        onUpdateStudentData?.(updated)
+
+        // Jika data yang baru diambil belum lengkap, bersihkan draft lokal lama agar form menampilkan kolom kosong
+        const freshAudit = auditStudentCompleteness(updated)
+        if (!freshAudit.isComplete) {
+          isDirtyRef.current = false
+          try {
+            sessionStorage.removeItem(getDraftKey(nisn))
+          } catch {}
+          if (freshAudit.initialValues) {
+            setFormData(freshAudit.initialValues)
+          }
+        }
+      } else {
+        // Data siswa telah dihapus dari tabel siswa_permanent oleh admin!
+        // Langsung kosongkan data wajib agar kartu terkunci dan menampilkan form
+        const cleared = {
+          ...studentData,
+          alamat: '',
+          rt: '',
+          rw: '',
+          rt_rw: '',
+          kelurahan: '',
+          kecamatan: '',
+          kota: '',
+          tempat_lahir: '',
+          tanggal_lahir: '',
+          kontak_ortu: [],
+          no_hp_ortu: '',
+          nama_ortu: '',
+          tinggal_bersama: ''
+        }
+        setLiveStudent(cleared)
+        onUpdateStudentData?.(cleared)
+        isDirtyRef.current = false
+        try {
+          sessionStorage.removeItem(getDraftKey(nisn))
+        } catch {}
+        const clearedAudit = auditStudentCompleteness(cleared)
+        if (clearedAudit.initialValues) {
+          setFormData(clearedAudit.initialValues)
+        }
+      }
+    } catch (e) {
+      console.warn('Error fetchFreshStudent:', e)
+    }
+  }, [studentData?.nisn])
+
+  useEffect(() => {
+    fetchFreshStudent()
+  }, [fetchFreshStudent])
+
+  // Realtime subscription agar saat admin mengedit atau menghapus di Admin, HP siswa langsung terkunci otomatis!
+  useEffect(() => {
+    const nisn = studentData?.nisn
+    if (!nisn) return
+
+    const channel = supabase
+      .channel(`realtime_siswa_permanent_kartu_${nisn}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'siswa_permanent',
+        filter: `nisn=eq.${nisn}`
+      }, (payload) => {
+        console.log('[Realtime Siswa Kartu] Perubahan biodata terdeteksi:', payload.eventType)
+        fetchFreshStudent()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [studentData?.nisn, fetchFreshStudent])
 
   const [formData, setFormData] = useState(() => {
     const draftKey = getDraftKey(studentData?.nisn)
@@ -337,10 +456,10 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
 
   // Sinkronisasi data awal HANYA jika akun berganti NISN atau user belum mengetik apapun
   useEffect(() => {
-    if (studentData?.nisn && studentData.nisn !== currentNisnRef.current) {
-      currentNisnRef.current = studentData.nisn
+    if (activeStudent?.nisn && activeStudent.nisn !== currentNisnRef.current) {
+      currentNisnRef.current = activeStudent.nisn
       isDirtyRef.current = false
-      const draftKey = getDraftKey(studentData.nisn)
+      const draftKey = getDraftKey(activeStudent.nisn)
       try {
         sessionStorage.removeItem(draftKey)
       } catch {}
@@ -353,14 +472,14 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         ...prev
       }))
     }
-  }, [studentData?.nisn])
+  }, [activeStudent?.nisn, audit.initialValues])
 
   const handleFieldChange = (key, value) => {
     isDirtyRef.current = true
     setFormData(prev => {
       const next = { ...prev, [key]: value }
       try {
-        sessionStorage.setItem(getDraftKey(studentData?.nisn), JSON.stringify(next))
+        sessionStorage.setItem(getDraftKey(activeStudent?.nisn), JSON.stringify(next))
       } catch {}
       return next
     })
@@ -425,7 +544,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     setIsDownloading(true)
     setDownloadMessage('Menyiapkan file PDF kartu pelajar...')
     try {
-      const fileName = `kartu_pelajar_${studentData?.nisn || 'siswa'}.pdf`
+      const fileName = `kartu_pelajar_${activeStudent?.nisn || 'siswa'}.pdf`
       await exportCardAsPdf(frontCardRef.current, backCardRef.current, fileName)
       setDownloadMessage('Berhasil mengunduh PDF!')
     } catch (err) {
@@ -443,7 +562,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     setDownloadMessage(`Menyiapkan gambar kartu sisi ${currentSide === 'front' ? 'depan' : 'belakang'}...`)
     try {
       const targetElem = currentSide === 'front' ? frontCardRef.current : backCardRef.current
-      const fileName = `kartu_pelajar_${studentData?.nisn || 'siswa'}_${currentSide}.png`
+      const fileName = `kartu_pelajar_${activeStudent?.nisn || 'siswa'}_${currentSide}.png`
       await exportCardAsImage(targetElem, fileName)
       setDownloadMessage('Berhasil mengunduh gambar!')
     } catch (err) {
@@ -562,7 +681,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       const { error: dbError } = await supabase
         .from('siswa_permanent')
         .update(payload)
-        .eq('nisn', studentData.nisn)
+        .eq('nisn', activeStudent.nisn)
 
       if (dbError) {
         throw dbError
@@ -571,7 +690,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       // Jalankan RPC update_kontak_ortu_siswa jika tersedia sebagai fallback sinkronisasi
       try {
         await supabase.rpc('update_kontak_ortu_siswa', {
-          p_nisn: String(studentData.nisn),
+          p_nisn: String(activeStudent.nisn),
           p_kontak_list: cleanKontakList
         })
       } catch (rpcEx) {
@@ -580,12 +699,14 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
 
       // Buat objek siswa yang sudah diperbarui
       const updatedStudent = {
-        ...studentData,
+        ...activeStudent,
         ...payload,
         rt: cleanRt,
         rw: cleanRw,
         rt_rw: rtRwCombined
       }
+
+      setLiveStudent(updatedStudent)
 
       // Panggil callback agar state di parent (Dashboard) langsung terupdate
       if (typeof onUpdateStudentData === 'function') {
@@ -594,7 +715,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
 
       // Hapus draft sesi karena data sudah tersimpan di database
       try {
-        sessionStorage.removeItem(getDraftKey(studentData?.nisn))
+        sessionStorage.removeItem(getDraftKey(activeStudent?.nisn))
       } catch {}
       isDirtyRef.current = false
 
@@ -612,7 +733,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     }
   }
 
-  const alamatTeks = formatAlamatLengkap(studentData)
+  const alamatTeks = formatAlamatLengkap(activeStudent)
 
   // =========================================================================
   // VIEW A: JIKA DATA BELUM LENGKAP (ATAU SEDANG DALAM MODE EDIT DATA)
@@ -1110,11 +1231,11 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   Status: Aktif Berlaku
                 </span>
                 <span className="text-xs font-bold text-slate-500">
-                  • Kelas {studentData?.kelas || '-'} ({studentData?.tahun_ajaran || '-'})
+                  • Kelas {activeStudent?.kelas || '-'} ({activeStudent?.tahun_ajaran || '-'})
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5 font-medium">
-                {studentData?.nama_lengkap || studentData?.nama || '-'} • NISN: {studentData?.nisn || '-'}
+                {activeStudent?.nama_lengkap || activeStudent?.nama || '-'} • NISN: {activeStudent?.nisn || '-'}
               </p>
             </div>
           </div>
@@ -1184,7 +1305,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
               }}
             >
               <KartuPelajarCard
-                student={studentData}
+                student={activeStudent}
                 photoUrl={photoUrl}
                 settings={settings}
                 side={currentSide}
@@ -1232,7 +1353,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       <div id="student-card-printable" className="fixed -left-[9999px] -top-[9999px] pointer-events-none">
         <KartuPelajarCard
           ref={frontCardRef}
-          student={studentData}
+          student={activeStudent}
           photoUrl={photoUrl}
           settings={settings}
           side="front"
@@ -1240,7 +1361,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         />
         <KartuPelajarCard
           ref={backCardRef}
-          student={studentData}
+          student={activeStudent}
           photoUrl={photoUrl}
           settings={settings}
           side="back"

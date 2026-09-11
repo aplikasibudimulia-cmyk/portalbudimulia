@@ -425,7 +425,48 @@ function Dashboard() {
       }
 
       if (latestStudentData) {
-        data = { ...data, ...latestStudentData }
+        data = {
+          ...data,
+          ...latestStudentData,
+          alamat: latestStudentData.alamat || '',
+          rt: latestStudentData.rt || '',
+          rw: latestStudentData.rw || '',
+          rt_rw: latestStudentData.rt_rw || '',
+          kelurahan: latestStudentData.kelurahan || '',
+          kecamatan: latestStudentData.kecamatan || '',
+          kota: latestStudentData.kota || '',
+          tempat_lahir: latestStudentData.tempat_lahir || '',
+          tanggal_lahir: latestStudentData.tanggal_lahir || '',
+          jenis_kelamin: latestStudentData.jenis_kelamin || '',
+          kontak_ortu: latestStudentData.kontak_ortu || [],
+          no_hp_ortu: latestStudentData.no_hp_ortu || '',
+          nama_ortu: latestStudentData.nama_ortu || '',
+          tinggal_bersama: latestStudentData.tinggal_bersama || ''
+        }
+        try {
+          localStorage.setItem('siswa_session', JSON.stringify(data))
+        } catch {}
+      } else if (!latestStudentData && data.nisn) {
+        // Data siswa telah dihapus dari tabel siswa_permanent oleh admin
+        data = {
+          ...data,
+          alamat: '',
+          rt: '',
+          rw: '',
+          rt_rw: '',
+          kelurahan: '',
+          kecamatan: '',
+          kota: '',
+          tempat_lahir: '',
+          tanggal_lahir: '',
+          kontak_ortu: [],
+          no_hp_ortu: '',
+          nama_ortu: '',
+          tinggal_bersama: ''
+        }
+        try {
+          localStorage.setItem('siswa_session', JSON.stringify(data))
+        } catch {}
       }
     } catch (err) {
       console.warn('Failed to fetch latest siswa_permanent biodata:', err)
@@ -626,10 +667,19 @@ function Dashboard() {
           }
         }
       })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'siswa_permanent',
+        filter: `nisn=eq.${studentData.nisn}`
+      }, () => {
+        console.log('[Realtime Dashboard] Terdeteksi perubahan siswa_permanent, sinkronisasi data...')
+        init()
+      })
       .subscribe()
       
     return () => supabase.removeChannel(channel)
-  }, [studentData])
+  }, [studentData, init])
 
   const fetchBerandaPoints = useCallback(async () => {
     if (!studentData?.nisn) return
