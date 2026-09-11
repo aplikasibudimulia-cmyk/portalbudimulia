@@ -112,12 +112,18 @@ function App() {
       if (storedOrtu) {
         try {
           const ortuObj = JSON.parse(storedOrtu)
-          if (ortuObj?.nisn) initNativePushNotifications({ nisn: ortuObj.nisn, role: 'Orang Tua' })
+          if (ortuObj?.nisn) {
+            targetNisns.add(String(ortuObj.nisn))
+            initNativePushNotifications({ nisn: ortuObj.nisn, role: 'Orang Tua' })
+          }
         } catch {}
       } else if (storedSiswa) {
         try {
           const siswaObj = JSON.parse(storedSiswa)
-          if (siswaObj?.nisn) initNativePushNotifications({ nisn: siswaObj.nisn, role: 'Siswa' })
+          if (siswaObj?.nisn) {
+            targetNisns.add(String(siswaObj.nisn))
+            initNativePushNotifications({ nisn: siswaObj.nisn, role: 'Siswa' })
+          }
         } catch {}
       } else {
         initNativePushNotifications({})

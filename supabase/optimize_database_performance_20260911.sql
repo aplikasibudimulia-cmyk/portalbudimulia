@@ -71,5 +71,19 @@ ANALYZE tagihan_spp;
 ANALYZE akun_pengguna;
 ANALYZE siswa_permanent;
 ANALYZE enrollment;
-ANALYZE foto;
+-- 7. Pastikan presensi_harian dan notifikasi menyiarkan data lengkap saat Realtime (INSERT & UPDATE)
+ALTER TABLE public.presensi_harian REPLICA IDENTITY FULL;
+ALTER TABLE public.notifikasi REPLICA IDENTITY FULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' 
+    AND schemaname = 'public' 
+    AND tablename = 'notifikasi'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.notifikasi;
+  END IF;
+END $$;
 

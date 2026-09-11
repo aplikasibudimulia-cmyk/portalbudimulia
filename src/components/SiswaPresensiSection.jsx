@@ -8,6 +8,9 @@ import { sendFCMPushNotification } from '../utils/fcmSender'
 import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
 import { getTodayWIB, getCurrentTimeWIB } from '../utils/dateUtils'
 
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 const STATUS_COLORS = {
   H: 'text-emerald-600 bg-emerald-50 border-emerald-200',
@@ -554,7 +557,7 @@ export default function SiswaPresensiSection({ studentData }) {
   }
 
   // === Kirim Notifikasi Web ke Orangtua via Supabase realtime broadcast + Web Push ===
-  const notifyOrangTua = async (nisn, namaLengkap, kelas, status, waktu, tipe, selfieUrl) => {
+  const notifyOrangTua = async (nisn, namaLengkap, kelas, status, waktu, tipe, selfieUrl, lokasi = '') => {
     try {
       const tglFormatted = new Date(today).toLocaleDateString('id-ID', {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
@@ -564,11 +567,12 @@ export default function SiswaPresensiSection({ studentData }) {
 
       const payload = {
         nisn, namaLengkap, kelas, status, statusLabel, waktu,
-        tipe, tipeLabel, tanggal: tglFormatted, selfieUrl
+        tipe, tipeLabel, tanggal: tglFormatted, selfieUrl,
+        lokasi: lokasi || ''
       }
 
       // 1. Broadcast ke channel orangtua via Supabase Realtime (saat app terbuka)
-      const channelsToSend = [`notif-ortu-${nisn}`, `notif-ortu-dash-${nisn}`, `app-notif-${nisn}`]
+      const channelsToSend = [`notif-ortu-${nisn}`, `app-notif-${nisn}`]
       channelsToSend.forEach(chName => {
         const broadcastCh = supabase.channel(chName, { config: { broadcast: { self: true } } })
         broadcastCh.subscribe(async (s) => {
@@ -579,7 +583,7 @@ export default function SiswaPresensiSection({ studentData }) {
         })
       })
 
-      // 1. Simpan entri ke tabel notifikasi
+      // 2. Simpan entri ke tabel notifikasi
       supabase.from('notifikasi').insert({
         target_nisn: nisn,
         target_kelas: kelas,
@@ -588,7 +592,7 @@ export default function SiswaPresensiSection({ studentData }) {
         tipe: 'presensi'
       }).then(() => {}).catch(() => {})
 
-      // 2. Kirim Google FCM Push Notification langsung ke HP Orang Tua & Siswa (Membangunkan HP walau aplikasi mati)
+      // 3. Kirim Google FCM Push Notification langsung ke HP Orang Tua & Siswa (Membangunkan HP walau aplikasi mati)
       sendFCMPushNotification({
         nisn,
         title: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
@@ -597,25 +601,27 @@ export default function SiswaPresensiSection({ studentData }) {
         targetMenu: 'PRESENSI'
       }).catch(err => console.warn('[FCM Presensi] Send error:', err))
 
-      // 3. Kirim LINE Push Notification via Supabase Edge Function line-notify
-      fetch(`${supabaseUrl}/functions/v1/line-notify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-          'apikey': supabaseAnonKey,
-        },
-        body: JSON.stringify({
-          nisn,
-          nama: namaLengkap,
-          kelas,
-          status,
-          waktu,
-          tipe,
-          fotoUrl: selfieUrl,
-          keterangan: payload.lokasi || '-'
-        }),
-      }).catch(err => console.warn('[line-notify] Fetch error:', err))
+      // 4. Kirim LINE Push Notification via Supabase Edge Function line-notify
+      if (supabaseUrl && supabaseAnonKey) {
+        fetch(`${supabaseUrl}/functions/v1/line-notify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'apikey': supabaseAnonKey,
+          },
+          body: JSON.stringify({
+            nisn,
+            nama: namaLengkap,
+            kelas,
+            status,
+            waktu,
+            tipe,
+            fotoUrl: selfieUrl,
+            keterangan: lokasi || '-'
+          }),
+        }).catch(err => console.warn('[line-notify] Fetch error:', err))
+      }
 
     } catch (err) {
       console.warn('Gagal kirim notif ke orangtua:', err)

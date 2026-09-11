@@ -523,7 +523,7 @@ function DashboardOrangTua() {
     
     fetchNotifCount()
     
-    const notifChannel = supabase.channel(`ortu-notif-realtime-${studentData.nisn}-${Date.now()}`)
+    const notifChannel = supabase.channel(`ortu-notif-realtime-${studentData.nisn}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifikasi' }, (payload) => {
         fetchNotifCount()
         const newNotif = payload.new
@@ -593,7 +593,7 @@ function DashboardOrangTua() {
   // Realtime listener notifikasi presensi dari anak ke orangtua
   useEffect(() => {
     if (!studentData?.nisn) return
-    const channel = supabase.channel(`notif-ortu-dash-${studentData.nisn}-${Date.now()}`)
+    const channel = supabase.channel(`notif-ortu-${studentData.nisn}`)
       .on('broadcast', { event: 'presensi_update' }, ({ payload }) => {
         setPresensiToast(payload)
         if (isNotifGranted()) {
