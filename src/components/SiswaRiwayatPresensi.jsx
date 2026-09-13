@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabaseClient'
+import { getTodayWIB, getServerNow } from '../utils/dateUtils'
 
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
 const STATUS_COLORS = {
@@ -26,7 +27,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
 
   // Mode Tampilan: 'calendar' atau 'list'
   const [viewMode, setViewMode] = useState('calendar')
-  const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [currentMonth, setCurrentMonth] = useState(() => getServerNow())
 
   // Data Hari Tidak Efektif / Libur
   const [holidaysMap, setHolidaysMap] = useState({})
@@ -101,7 +102,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
   useEffect(() => {
     const fetchSemesterRange = async () => {
       if (!studentData?.tahun_ajaran_id) {
-        const y = new Date().getFullYear()
+        const y = getServerNow().getFullYear()
         setStartDate(`${y}-01-01`)
         setEndDate(`${y}-12-31`)
         return
@@ -114,7 +115,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
           .eq('tahun_ajaran_id', studentData.tahun_ajaran_id)
 
         if (!error && data && data.length > 0) {
-          const today = new Date()
+          const today = getServerNow()
           today.setHours(0, 0, 0, 0)
 
           let activeSem = data.find(s => {
@@ -188,7 +189,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
   }
 
   const goToToday = () => {
-    setCurrentMonth(new Date())
+    setCurrentMonth(getServerNow())
   }
 
   // ── DETAIL TAMPILAN PRESENSI ──────────────────────────────────────────────
@@ -477,7 +478,7 @@ export default function SiswaRiwayatPresensi({ studentData }) {
   const firstDayOfWeek = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = getTodayWIB()
 
   // Generate grid cell
   const calendarCells = []

@@ -343,32 +343,21 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
         }
       })
 
-      // 2. Simpan entri ke tabel notifikasi (database)
-      supabase.from('notifikasi').insert({
-        target_nisn: nisn,
-        target_kelas: kelas,
-        judul: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
-        pesan: `${namaLengkap} telah dicatat Presensi ${tipeLabel} oleh Petugas Piket pada pukul ${waktu} WIB (${statusLabel}).`,
-        tipe: 'presensi'
-      }).then(() => {}).catch(() => {})
-
-      // 3. Kirim Google FCM Push Notification langsung ke HP Orang Tua & Siswa
+      // 2. Kirim Google FCM Push Notification langsung ke HP Orang Tua
       sendFCMPushNotification({
         nisn,
-        title: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
+        role: 'Orang Tua',
+        title: `[Orang Tua] Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
         body: `${namaLengkap} - Presensi ${tipeLabel} oleh Piket pukul ${waktu} WIB (${statusLabel}).`,
-        targetMenu: 'PRESENSI'
+        image: selfieUrl || undefined,
+        targetMenu: 'PRESENSI',
+        data: { tag: `presensi-ortu-${nisn}-${tipe}` }
       }).catch(err => console.warn('[FCM Presensi Manual] Send error:', err))
 
       // 4. Edge functions & webhook
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
       if (supabaseUrl && supabaseAnonKey) {
-        fetch(`${supabaseUrl}/functions/v1/notify-ortu`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },
-          body: JSON.stringify(payload)
-        }).catch(() => {})
         fetch(`${supabaseUrl}/functions/v1/line-notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`, 'apikey': supabaseAnonKey },

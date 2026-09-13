@@ -1321,18 +1321,63 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     }
 
     // Update permanent data
+    const updatePerm = {
+      nama_lengkap: editFormData.nama_lengkap,
+      kode_akses: editFormData.kode_akses,
+      email_aktif: editFormData.email_aktif
+    }
+    if (editFormData.ortu_password !== undefined) {
+      updatePerm.ortu_password = editFormData.ortu_password
+    }
+
     const { error: err1 } = await supabase.from('siswa_permanent')
-      .update({
-        nama_lengkap: editFormData.nama_lengkap,
-        kode_akses: editFormData.kode_akses,
-        email_aktif: editFormData.email_aktif
-      })
+      .update(updatePerm)
       .eq('nisn', editFormData.nisn)
       
     if (err1) {
       alert('Gagal update data siswa: ' + err1.message)
       setIsSavingModal(false)
       return
+    }
+
+    // Sinkronkan password Siswa ke auth.users jika diisi
+    if (editFormData.kode_akses && editFormData.kode_akses.trim()) {
+      try {
+        const { data: akunSiswa } = await supabase
+          .from('akun_pengguna')
+          .select('id')
+          .eq('foreign_id', editFormData.nisn)
+          .eq('role', 'murid')
+          .maybeSingle()
+        if (akunSiswa?.id) {
+          await supabase.rpc('admin_reset_password', {
+            p_akun_id: akunSiswa.id,
+            p_new_password: editFormData.kode_akses.trim()
+          })
+        }
+      } catch (errSyncSiswa) {
+        console.warn('Gagal sinkron password siswa ke auth.users:', errSyncSiswa)
+      }
+    }
+
+    // Sinkronkan password Orang Tua ke auth.users jika diisi
+    if (editFormData.ortu_password && editFormData.ortu_password.trim()) {
+      try {
+        const { data: akunOrtu } = await supabase
+          .from('akun_pengguna')
+          .select('id')
+          .eq('foreign_id', editFormData.nisn)
+          .eq('role', 'orang_tua')
+          .maybeSingle()
+        if (akunOrtu?.id) {
+          await supabase.rpc('admin_reset_password', {
+            p_akun_id: akunOrtu.id,
+            p_new_password: editFormData.ortu_password.trim()
+          })
+        }
+      } catch (errSyncOrtu) {
+        console.warn('Gagal sinkron password orang tua ke auth.users:', errSyncOrtu)
+      }
     }
 
     // Update enrollment if it exists
@@ -1741,14 +1786,21 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
                 <input type="email" value={editFormData.email_aktif || ''} onChange={e => setEditFormData({...editFormData, email_aktif: e.target.value})} placeholder="Email siswa" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Kelas <span className="text-red-500">*</span></label>
+                <input type="text" required value={editFormData.kelas || ''} onChange={e => setEditFormData({...editFormData, kelas: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Kelas <span className="text-red-500">*</span></label>
-                  <input type="text" required value={editFormData.kelas || ''} onChange={e => setEditFormData({...editFormData, kelas: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Password Siswa (Kode Akses)</label>
+                  <input type="text" value={editFormData.kode_akses || ''} onChange={e => setEditFormData({...editFormData, kode_akses: e.target.value})} placeholder="Biarkan jika tidak diubah" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">Akun: {editFormData.username || `ebmsiswa.${(editFormData.nama_lengkap || '').split(' ')[0].toLowerCase()}`}</span>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Password Baru</label>
-                  <input type="text" value={editFormData.kode_akses || ''} onChange={e => setEditFormData({...editFormData, kode_akses: e.target.value})} placeholder="Biarkan jika tidak diubah" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm" />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Password Akun Orang Tua</label>
+                  <input type="text" value={editFormData.ortu_password || ''} onChange={e => setEditFormData({...editFormData, ortu_password: e.target.value})} placeholder="Biarkan jika tidak diubah" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono" />
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">Akun: {editFormData.ortu_username || '-'}</span>
                 </div>
               </div>
             </form>

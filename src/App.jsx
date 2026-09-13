@@ -134,28 +134,20 @@ function App() {
 
       targetNisns.forEach(nisn => {
         if (!nisn) return
-        const ch = supabase.channel(`app-notif-${nisn}`)
+        const ch = supabase.channel(`app-notif-${nisn}`, { config: { broadcast: { self: true } } })
           .on('broadcast', { event: 'presensi_update' }, ({ payload }) => {
             if (isNotifGranted()) {
               const lokasiText = payload.lokasi ? ` Lokasi: ${payload.lokasi}` : ""
               const body = `${payload.namaLengkap} - ${payload.tipeLabel} pukul ${payload.waktu} WIB (${payload.statusLabel}).${lokasiText}`
-              showLocalNotif(`Presensi ${payload.tipeLabel} Siswa (${payload.statusLabel} - ${payload.waktu} WIB)`, body, { 
-                tag: `presensi-${payload.tipe}-${nisn}`,
+              showLocalNotif(`[Orang Tua] Presensi ${payload.tipeLabel} Siswa (${payload.statusLabel} - ${payload.waktu} WIB)`, body, { 
+                tag: `presensi-ortu-${nisn}-${payload.tipe}`,
                 image: payload.selfieUrl || undefined,
                 summaryText: body,
-                data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua' }
+                data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua', nisn }
               })
             }
           })
-          .on('broadcast', { event: 'pengajuan_poin_update' }, ({ payload }) => {
-            if (isNotifGranted()) {
-              showLocalNotif(payload.judul || 'Status Pengajuan Poin', payload.pesan || 'Ada pembaruan status pengajuan poin Anda.', { 
-                tag: `pengajuan-${payload.status}-${nisn}-${Date.now()}`,
-                data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
-              })
-            }
-          })
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${nisn}` }, (payload) => {
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${nisn}` }, (payload) => {
             const row = payload.new
             if (!row) return
             const tipeLabel = row.tipe === 'pulang' ? 'Pulang' : 'Masuk'
@@ -163,21 +155,41 @@ function App() {
             if (isNotifGranted()) {
               const lokasiText = row.keterangan ? ` Lokasi: ${row.keterangan}` : ""
               const body = `Siswa (${nisn}) - ${tipeLabel} pukul ${row.waktu} WIB (${statusLabel}).${lokasiText}`
-              showLocalNotif(`Presensi ${tipeLabel} Siswa (${statusLabel} - ${row.waktu} WIB)`, body, { 
-                tag: `presensi-${row.tipe}-${row.id}`,
+              showLocalNotif(`[Orang Tua] Presensi ${tipeLabel} Siswa (${statusLabel} - ${row.waktu} WIB)`, body, { 
+                tag: `presensi-ortu-${nisn}-${row.tipe}`,
                 image: row.selfie_url || undefined,
                 summaryText: body,
-                data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua' }
+                data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua', nisn }
+              })
+            }
+          })
+          .on('broadcast', { event: 'pengajuan_poin_update' }, ({ payload }) => {
+            if (isNotifGranted()) {
+              const baseJudul = payload.judul || 'Status Pengajuan Poin'
+              const formattedJudul = baseJudul.startsWith('[Siswa]') ? baseJudul : `[Siswa] ${baseJudul}`
+              showLocalNotif(formattedJudul, payload.pesan || 'Ada pembaruan status pengajuan poin Anda.', { 
+                tag: `pengajuan-${payload.status}-${nisn}`,
+                data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa', nisn }
               })
             }
           })
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifikasi', filter: `target_nisn=eq.${nisn}` }, (payload) => {
             const row = payload.new
             if (!row) return
+            // Abaikan tipe 'presensi' agar siswa tidak menerima notifikasi berulang (karena siswa sudah mendapat konfirmasi langsung)
+            if (row.tipe === 'presensi' || row.judul?.toLowerCase().includes('presensi')) return
             if (isNotifGranted()) {
-              showLocalNotif(row.judul, row.pesan, { 
+              const baseJudul = row.judul || 'Notifikasi'
+              const formattedJudul = (baseJudul.startsWith('[Siswa]') || baseJudul.startsWith('[Orang Tua]')) ? baseJudul : `[Siswa] ${baseJudul}`
+              showLocalNotif(formattedJudul, row.pesan, { 
                 tag: `notif-${row.id}`,
-                data: { url: row.tipe === 'poin' || row.judul?.toLowerCase().includes('pengajuan') ? '/dashboard?menu=AJUKAN_POIN' : '/dashboard', role: 'Siswa' }
+                data: { 
+                  url: row.tipe === 'poin' || row.judul?.toLowerCase().includes('pengajuan') ? '/dashboard?menu=AJUKAN_POIN&tab=riwayat' : '/dashboard', 
+                  targetMenu: row.tipe === 'poin' || row.judul?.toLowerCase().includes('pengajuan') ? 'AJUKAN_POIN' : undefined, 
+                  targetTab: 'riwayat', 
+                  role: 'Siswa',
+                  nisn
+                }
               })
             }
           })
@@ -196,7 +208,7 @@ function App() {
               const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(row.jumlah)
               const saldo = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(row.saldo_akhir)
               
-              const title = isSetor ? 'Setoran Tabungan Berhasil' : 'Penarikan Tabungan Berhasil'
+              const title = isSetor ? '[Orang Tua] Setoran Tabungan Berhasil' : '[Orang Tua] Penarikan Tabungan Berhasil'
               const body = isSetor
                 ? `Setoran tabungan sebesar ${nominal} telah diverifikasi. Total tabungan: ${saldo}.`
                 : `Penarikan tabungan sebesar ${nominal} berhasil. Total tabungan: ${saldo}.`
@@ -205,7 +217,7 @@ function App() {
                 showLocalNotif(title, body, {
                   tag: `tabungan-${row.id}-${Date.now()}`,
                   summaryText: body,
-                  data: { url: '/dashboard-orang-tua?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Orang Tua' }
+                  data: { url: '/dashboard-orang-tua?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Orang Tua', nisn }
                 })
               }
             }
@@ -216,24 +228,24 @@ function App() {
             const oldRow = payload.old
             if (oldRow && oldRow.status === row.status) return
 
-            let title = 'Pembaruan Status Pengajuan Poin'
+            let title = '[Siswa] Pembaruan Status Pengajuan Poin'
             let body = `Pengajuan "${row.jenis || 'Poin Positif'}" Anda telah diperbarui.`
 
             if (row.status === 'disetujui') {
-              title = `Pengajuan Poin Disetujui (+${row.poin_diajukan} Poin)`
+              title = `[Siswa] Pengajuan Poin Disetujui (+${row.poin_diajukan} Poin)`
               body = `Selamat! Pengajuan "${row.jenis || 'Prestasi'}" Anda telah disetujui.`
             } else if (row.status === 'revisi') {
-              title = 'Pengajuan Poin Perlu Revisi'
+              title = '[Siswa] Pengajuan Poin Perlu Revisi'
               body = `Pengajuan "${row.jenis || 'Kegiatan'}" memerlukan perbaikan bukti: ${row.catatan_reviewer || 'Silakan cek menu Pengajuan Poin.'}`
             } else if (row.status === 'ditolak') {
-              title = 'Pengajuan Poin Ditolak'
+              title = '[Siswa] Pengajuan Poin Ditolak'
               body = `Pengajuan "${row.jenis || 'Kegiatan'}" belum dapat disetujui: ${row.catatan_reviewer || '-'}`
             }
 
             if (isNotifGranted()) {
               showLocalNotif(title, body, {
                 tag: `pengajuan-${row.id}-${row.status}`,
-                data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+                data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa', nisn }
               })
             }
           })
@@ -249,10 +261,30 @@ function App() {
     const setupNotifClick = async () => {
       try {
         const { LocalNotifications } = await import('@capacitor/local-notifications')
-        notifActionListener = await LocalNotifications.addListener('localNotificationActionPerformed', (notificationAction) => {
+        notifActionListener = await LocalNotifications.addListener('localNotificationActionPerformed', async (notificationAction) => {
           try {
             const extra = notificationAction.notification?.extra
-            const targetUrl = extra?.url || (extra?.targetMenu === 'PRESENSI' ? '/dashboard-orang-tua?menu=PRESENSI' : null)
+            const targetRole = extra?.role
+            const targetNisn = extra?.nisn
+            if (targetRole) {
+              try {
+                const { switchToRoleAccount } = await import('./utils/credentialStore')
+                await switchToRoleAccount(targetRole, targetNisn)
+              } catch (e) {
+                console.warn('[LocalNotif] Auto-switch error:', e)
+              }
+            }
+
+            let targetUrl = extra?.url
+            if (!targetUrl) {
+              if (extra?.targetMenu === 'AJUKAN_POIN') {
+                targetUrl = '/dashboard?menu=AJUKAN_POIN&tab=riwayat'
+              } else if (extra?.targetMenu === 'PRESENSI') {
+                targetUrl = extra?.role === 'Orang Tua' ? '/dashboard-orang-tua?menu=PRESENSI' : '/dashboard?menu=PRESENSI'
+              } else if (extra?.targetMenu === 'POIN') {
+                targetUrl = '/dashboard?menu=POIN'
+              }
+            }
             if (targetUrl) {
               window.location.href = targetUrl
             }

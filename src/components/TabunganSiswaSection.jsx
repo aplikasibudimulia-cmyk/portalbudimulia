@@ -51,6 +51,12 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState('daftar') // 'daftar' | 'pending' | 'riwayat' | 'kolektif'
+  const [filterSaldo, setFilterSaldo] = useState('semua') // 'semua' | 'ada_saldo' | 'saldo_nol' (tab daftar)
+  const [filterStatusMutasi, setFilterStatusMutasi] = useState('semua') // 'semua' | 'VERIFIED' | 'PENDING' | 'REJECTED' (tab riwayat)
+  const [filterTipeMutasi, setFilterTipeMutasi] = useState('semua') // 'semua' | 'SETOR' | 'TARIK' (tab riwayat)
+  const [selectedPendingIds, setSelectedPendingIds] = useState([]) // Array of transaction IDs for multi-select
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false)
+  const initialClassSetRef = useRef(false)
 
   // Modal states
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -217,11 +223,14 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       const uniqueClasses = [...new Set(siswaList.map(s => s.kelas).filter(Boolean))].sort()
       setSemuaKelas(uniqueClasses)
 
-      if (!selectedKelas && uniqueClasses.length > 0) {
+      if (!initialClassSetRef.current && uniqueClasses.length > 0) {
+        initialClassSetRef.current = true
         if (isWaliOnly && waliClassesForActiveTa.length > 0) {
           setSelectedKelas(waliClassesForActiveTa[0])
         } else if (mode === 'siswa' && studentData?.kelas) {
           setSelectedKelas(studentData.kelas)
+        } else if (mode === 'admin') {
+          setSelectedKelas('Semua Kelas')
         } else {
           setSelectedKelas(uniqueClasses[0])
         }
@@ -288,7 +297,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     } finally {
       setLoading(false)
     }
-  }, [mode, studentData, isWaliOnly, waliClassesForActiveTa, selectedKelas, isBendaharaActive])
+  }, [mode, studentData, isWaliOnly, waliClassesForActiveTa, isBendaharaActive])
 
   useEffect(() => {
     fetchData()
@@ -324,21 +333,102 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     }
   }, [fetchData, fetchSettings])
 
-  // Filter students based on selected class & search query
+  // Filter students based on selected class, search query & saldo filter
   const filteredStudents = useMemo(() => {
+    const q = (searchQuery || '').trim().toLowerCase()
     return semuaSiswa.filter(s => {
-      const matchKelas = !selectedKelas || selectedKelas === 'Semua Kelas' || s.kelas === selectedKelas
-      const matchSearch = !searchQuery || 
-        s.nama_lengkap.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        s.nisn.includes(searchQuery)
+      const matchKelas = !selectedKelas || 
+        selectedKelas === 'Semua Kelas' || 
+        selectedKelas === 'all' || 
+        (s.kelas && s.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase())
+
+      const matchSearch = !q || 
+        (s.nama_lengkap || '').toLowerCase().includes(q) || 
+        (s.nisn || '').toLowerCase().includes(q) ||
+        (s.kelas || '').toLowerCase().includes(q)
+
+      const saldo = rekeningMap[s.nisn]?.saldo || 0
+      const matchSaldo = filterSaldo === 'semua' || 
+        (filterSaldo === 'ada_saldo' ? saldo > 0 : saldo === 0)
+
+      return matchKelas && matchSearch && matchSaldo
+    })
+  }, [semuaSiswa, selectedKelas, searchQuery, filterSaldo, rekeningMap])
+
+  // Filter transactions for Tab 4 (Riwayat Mutasi)
+  const filteredTransactions = useMemo(() => {
+    const q = (searchQuery || '').trim().toLowerCase()
+    return transaksiList.filter(t => {
+      // 1. Filter Kelas
+      const matchKelas = !selectedKelas || 
+        selectedKelas === 'Semua Kelas' || 
+        selectedKelas === 'all' || 
+        (t.kelas && t.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase())
+
+      // 2. Filter Status Mutasi
+      const matchStatus = filterStatusMutasi === 'semua' || t.status_verifikasi === filterStatusMutasi
+
+      // 3. Filter Tipe Mutasi
+      const matchTipe = filterTipeMutasi === 'semua' || t.tipe === filterTipeMutasi
+
+      // 4. Filter Search
+      let matchSearch = true
+      if (q) {
+        const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+        const penginput = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+        const studentName = (student?.nama_lengkap || '').toLowerCase()
+        const studentNisn = (t.siswa_nisn || '').toLowerCase()
+        const studentKelas = (t.kelas || '').toLowerCase()
+        const keterangan = (t.keterangan || '').toLowerCase()
+        const penginputName = (penginput?.nama_lengkap || t.diinput_oleh_nisn || '').toLowerCase()
+
+        matchSearch = studentName.includes(q) || 
+          studentNisn.includes(q) || 
+          studentKelas.includes(q) || 
+          keterangan.includes(q) || 
+          penginputName.includes(q)
+      }
+
+      return matchKelas && matchStatus && matchTipe && matchSearch
+    })
+  }, [transaksiList, selectedKelas, searchQuery, filterStatusMutasi, filterTipeMutasi, semuaSiswa])
+
+  // Filter pending transactions for Tab 3 (Verifikasi Bendahara)
+  const pendingTransactions = useMemo(() => {
+    const q = (searchQuery || '').trim().toLowerCase()
+    return transaksiList.filter(t => {
+      if (t.status_verifikasi !== 'PENDING') return false
+
+      const matchKelas = !selectedKelas || 
+        selectedKelas === 'Semua Kelas' || 
+        selectedKelas === 'all' || 
+        (t.kelas && t.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase())
+
+      if (!q) return matchKelas
+
+      const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+      const penginput = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+      const studentName = (student?.nama_lengkap || '').toLowerCase()
+      const studentNisn = (t.siswa_nisn || '').toLowerCase()
+      const studentKelas = (t.kelas || '').toLowerCase()
+      const keterangan = (t.keterangan || '').toLowerCase()
+      const penginputName = (penginput?.nama_lengkap || t.diinput_oleh_nisn || '').toLowerCase()
+
+      const matchSearch = studentName.includes(q) || 
+        studentNisn.includes(q) || 
+        studentKelas.includes(q) || 
+        keterangan.includes(q) || 
+        penginputName.includes(q)
+
       return matchKelas && matchSearch
     })
-  }, [semuaSiswa, selectedKelas, searchQuery])
+  }, [transaksiList, selectedKelas, searchQuery, semuaSiswa])
 
   // Stats calculation for current view
   const classStats = useMemo(() => {
-    const studentsInCurrentView = selectedKelas && selectedKelas !== 'Semua Kelas'
-      ? semuaSiswa.filter(s => s.kelas === selectedKelas)
+    const isSemua = !selectedKelas || selectedKelas === 'Semua Kelas' || selectedKelas === 'all'
+    const studentsInCurrentView = !isSemua
+      ? semuaSiswa.filter(s => s.kelas && s.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase())
       : semuaSiswa
 
     let totalSaldo = 0
@@ -347,7 +437,10 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     })
 
     const nisnSet = new Set(studentsInCurrentView.map(s => s.nisn))
-    const currentClassTrans = transaksiList.filter(t => nisnSet.has(t.siswa_nisn) && t.status_verifikasi === 'VERIFIED')
+    const currentClassTrans = transaksiList.filter(t => 
+      (isSemua || (t.kelas && t.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase()) || nisnSet.has(t.siswa_nisn)) && 
+      t.status_verifikasi === 'VERIFIED'
+    )
 
     const now = new Date()
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -360,7 +453,11 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       .filter(t => t.tipe === 'TARIK' && t.created_at >= startOfMonth)
       .reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
 
-    const pendingCount = transaksiList.filter(t => nisnSet.has(t.siswa_nisn) && t.status_verifikasi === 'PENDING').length
+    // Calculate pending count for current class or all
+    const pendingCount = transaksiList.filter(t => 
+      (isSemua || (t.kelas && t.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase()) || nisnSet.has(t.siswa_nisn)) && 
+      t.status_verifikasi === 'PENDING'
+    ).length
 
     return {
       totalSaldo,
@@ -370,6 +467,102 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       pendingCount
     }
   }, [semuaSiswa, selectedKelas, rekeningMap, transaksiList])
+
+  // Multi-select helpers for pending verification
+  const isAllPendingSelected = pendingTransactions.length > 0 && selectedPendingIds.length === pendingTransactions.length
+
+  const handleToggleSelectPending = (id) => {
+    setSelectedPendingIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+
+  const handleToggleSelectAllPending = () => {
+    if (isAllPendingSelected) {
+      setSelectedPendingIds([])
+    } else {
+      setSelectedPendingIds(pendingTransactions.map(t => t.id))
+    }
+  }
+
+  // Handle Batch Verification / Approval / Rejection
+  const handleBatchVerifikasi = async (approve = true) => {
+    const selectedList = pendingTransactions.filter(t => selectedPendingIds.includes(t.id))
+    if (selectedList.length === 0) {
+      setNotifModal({
+        type: 'error',
+        title: 'Pilih Transaksi',
+        message: 'Silakan centang minimal satu transaksi yang ingin diproses!'
+      })
+      return
+    }
+
+    const actionLabel = approve ? 'menyetujui' : 'menolak'
+    const confirmed = await requestConfirm({
+      title: approve ? `Setujui ${selectedList.length} Transaksi Sekaligus` : `Tolak ${selectedList.length} Transaksi`,
+      message: `Apakah Anda yakin ingin ${actionLabel} ${selectedList.length} transaksi setoran tabungan yang dipilih?`,
+      confirmLabel: approve ? `Ya, Setujui (${selectedList.length})` : `Ya, Tolak (${selectedList.length})`,
+      confirmColor: approve ? 'emerald' : 'red'
+    })
+
+    if (!confirmed) return
+
+    setIsBatchProcessing(true)
+    let successCount = 0
+    const rpcName = approve ? 'verifikasi_transaksi_tabungan' : 'tolak_transaksi_tabungan'
+
+    for (const tx of selectedList) {
+      try {
+        const { data, error } = await supabase.rpc(rpcName, {
+          p_transaksi_id: tx.id,
+          p_user_id: session?.id || null
+        })
+
+        if (!error && data?.success) {
+          successCount++
+          if (approve) {
+            const nominalStr = `Rp ${parseFloat(tx.jumlah || 0).toLocaleString('id-ID')}`
+            const student = semuaSiswa.find(s => s.nisn === tx.siswa_nisn)
+            const nama = tx.nama_lengkap || student?.nama_lengkap || 'Siswa'
+
+            sendFCMPushNotification({
+              nisn: tx.siswa_nisn,
+              title: `Setoran Tabungan ${nama}`,
+              body: `${nama} telah menabung sebesar ${nominalStr}. Transaksi setoran berhasil diverifikasi.`,
+              targetMenu: 'TABUNGAN'
+            }).catch(e => console.warn('[FCM batch error]:', e))
+          }
+        }
+      } catch (err) {
+        console.error('Batch verify error:', tx.id, err)
+      }
+    }
+
+    setIsBatchProcessing(false)
+    setSelectedPendingIds([])
+    setNotifModal({
+      type: 'success',
+      title: approve ? 'Verifikasi Selesai' : 'Penolakan Selesai',
+      message: `Berhasil ${actionLabel} ${successCount} dari ${selectedList.length} transaksi setoran!`
+    })
+    fetchData()
+  }
+
+  // Quick Reset Filter helper
+  const handleResetFilter = () => {
+    setSearchQuery('')
+    if (mode === 'admin') setSelectedKelas('Semua Kelas')
+    setFilterSaldo('semua')
+    setFilterStatusMutasi('semua')
+    setFilterTipeMutasi('semua')
+    setSelectedPendingIds([])
+  }
+
+  const isFilterActive = (searchQuery.trim() !== '') || 
+    (mode === 'admin' && selectedKelas !== 'Semua Kelas' && selectedKelas !== '') || 
+    (filterSaldo !== 'semua') || 
+    (filterStatusMutasi !== 'semua') || 
+    (filterTipeMutasi !== 'semua')
 
   // Open transaction modal
   const handleOpenTransaction = (siswa, tipe = 'SETOR') => {
@@ -776,16 +969,60 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     return 'Rp ' + (parseFloat(val || 0)).toLocaleString('id-ID')
   }
 
-  // Export to Excel / CSV simple downloader
+  // Export to Excel / CSV based on active tab and filters
   const handleExportCSV = () => {
-    const headers = ['No', 'NISN', 'Nama Siswa', 'Kelas', 'Saldo Akhir (Rp)']
-    const rows = filteredStudents.map((s, idx) => [
-      idx + 1,
-      s.nisn,
-      `"${s.nama_lengkap}"`,
-      s.kelas,
-      rekeningMap[s.nisn]?.saldo || 0
-    ])
+    let headers = []
+    let rows = []
+    let filename = ''
+    const dateStr = new Date().toLocaleDateString('en-CA')
+    const kelasLabel = !selectedKelas || selectedKelas === 'Semua Kelas' || selectedKelas === 'all' ? 'Semua' : selectedKelas
+
+    if (activeTab === 'daftar' || activeTab === 'kolektif') {
+      headers = ['No', 'NISN', 'Nama Siswa', 'Kelas', 'Saldo Akhir (Rp)']
+      rows = filteredStudents.map((s, idx) => [
+        idx + 1,
+        s.nisn,
+        `"${(s.nama_lengkap || '').replace(/"/g, '""')}"`,
+        s.kelas,
+        rekeningMap[s.nisn]?.saldo || 0
+      ])
+      filename = `Tabungan_Siswa_${kelasLabel}_${dateStr}.csv`
+    } else if (activeTab === 'pending') {
+      headers = ['No', 'Waktu', 'NISN', 'Nama Siswa', 'Kelas', 'Nominal (Rp)', 'Penginput (Bendahara)', 'Keterangan']
+      rows = pendingTransactions.map((t, idx) => {
+        const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+        const bendahara = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+        return [
+          idx + 1,
+          `"${new Date(t.created_at).toLocaleString('id-ID')}"`,
+          t.siswa_nisn,
+          `"${(student?.nama_lengkap || '').replace(/"/g, '""')}"`,
+          t.kelas,
+          parseFloat(t.jumlah || 0),
+          `"${(bendahara?.nama_lengkap || t.diinput_oleh_nisn || '').replace(/"/g, '""')}"`,
+          `"${(t.keterangan || '').replace(/"/g, '""')}"`
+        ]
+      })
+      filename = `Setoran_Pending_${kelasLabel}_${dateStr}.csv`
+    } else if (activeTab === 'riwayat') {
+      headers = ['No', 'Waktu', 'NISN', 'Nama Siswa', 'Kelas', 'Tipe', 'Nominal (Rp)', 'Saldo Akhir (Rp)', 'Status', 'Keterangan']
+      rows = filteredTransactions.map((t, idx) => {
+        const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+        return [
+          idx + 1,
+          `"${new Date(t.created_at).toLocaleString('id-ID')}"`,
+          t.siswa_nisn,
+          `"${(student?.nama_lengkap || '').replace(/"/g, '""')}"`,
+          t.kelas,
+          t.tipe,
+          parseFloat(t.jumlah || 0),
+          parseFloat(t.saldo_akhir || 0),
+          t.status_verifikasi,
+          `"${(t.keterangan || '').replace(/"/g, '""')}"`
+        ]
+      })
+      filename = `Riwayat_Mutasi_Tabungan_${kelasLabel}_${dateStr}.csv`
+    }
 
     const csvContent = 'data:text/csv;charset=utf-8,' + 
       [headers.join(','), ...rows.map(e => e.join(','))].join('\n')
@@ -793,11 +1030,13 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     const encodedUri = encodeURI(csvContent)
     const link = document.createElement('a')
     link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `Tabungan_Siswa_${selectedKelas || 'Semua'}_${new Date().toLocaleDateString('en-CA')}.csv`)
+    link.setAttribute('download', filename)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
   }
+
+  const isSpecificClassSelected = selectedKelas && selectedKelas !== 'Semua Kelas' && selectedKelas !== 'all'
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -808,7 +1047,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 tracking-tight">
-              Tabungan Siswa {selectedKelas ? `(Kelas ${selectedKelas})` : ''}
+              Tabungan Siswa {isSpecificClassSelected ? `(Kelas ${selectedKelas})` : '(Semua Kelas)'}
             </h1>
             <p className="text-sm text-slate-500 mt-1 max-w-2xl">
               Kelola saldo tabungan, verifikasi setoran harian, dan tunjuk Bendahara Kelas dengan aman.
@@ -824,7 +1063,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
               Export Excel/CSV
             </button>
             
-            {selectedKelas && (
+            {isSpecificClassSelected && (
               <button
                 onClick={() => {
                   setSelectedBendaharaNisn(bendaharaClassMap[selectedKelas]?.siswa_nisn || '')
@@ -925,104 +1164,228 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white border-2 border-indigo-600 rounded-xl p-5 shadow-xs">
-            <p className="text-xs text-indigo-600 font-bold tracking-wide">Total Saldo Kelas</p>
+            <p className="text-xs text-indigo-600 font-bold tracking-wide">
+              {isSpecificClassSelected ? `Total Saldo Kelas ${selectedKelas}` : 'Total Saldo Semua Siswa'}
+            </p>
             <p className="text-2xl md:text-3xl font-extrabold mt-1 text-indigo-700">{formatRupiah(classStats.totalSaldo)}</p>
           </div>
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <p className="text-xs text-slate-500 font-semibold tracking-wide">Setor Bulan Ini</p>
+            <p className="text-xs text-slate-500 font-semibold tracking-wide">
+              Setor Bulan Ini {isSpecificClassSelected ? `(${selectedKelas})` : '(Semua)'}
+            </p>
             <p className="text-2xl md:text-3xl font-extrabold mt-1 text-emerald-600">+{formatRupiah(classStats.totalSetorBulanIni)}</p>
           </div>
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <p className="text-xs text-slate-500 font-semibold tracking-wide">Menunggu Verifikasi</p>
+            <p className="text-xs text-slate-500 font-semibold tracking-wide">
+              Menunggu Verifikasi {isSpecificClassSelected ? `(${selectedKelas})` : '(Semua)'}
+            </p>
             <p className="text-2xl md:text-3xl font-extrabold mt-1 text-amber-600">{classStats.pendingCount} <span className="text-sm font-semibold text-slate-500">Transaksi</span></p>
           </div>
         </div>
       )}
 
       {/* FILTER & CONTROLS */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* TAB BUTTONS */}
-        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 overflow-x-auto custom-scrollbar">
-          {(mode !== 'siswa' || isBendaharaActive) && (
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          {/* TAB BUTTONS */}
+          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 overflow-x-auto custom-scrollbar">
+            {(mode !== 'siswa' || isBendaharaActive) && (
+              <button
+                onClick={() => setActiveTab('daftar')}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                  activeTab === 'daftar' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                📋 Daftar Siswa & Saldo
+              </button>
+            )}
+
+            {(mode !== 'siswa' || isBendaharaActive) && (
+              <button
+                onClick={() => setActiveTab('kolektif')}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                  activeTab === 'kolektif' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ⚡ Setor Massal (Kolektif)
+              </button>
+            )}
+
+            {mode !== 'siswa' && (
+              <button
+                onClick={() => setActiveTab('pending')}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                  activeTab === 'pending' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ⏳ Verifikasi Bendahara
+                {pendingTransactions.length > 0 && (
+                  <span className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded-full font-extrabold animate-pulse">
+                    {pendingTransactions.length}
+                  </span>
+                )}
+              </button>
+            )}
+
             <button
-              onClick={() => setActiveTab('daftar')}
+              onClick={() => setActiveTab('riwayat')}
               className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'daftar' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                activeTab === 'riwayat' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              📋 Daftar Siswa & Saldo
+              📜 Riwayat Mutasi Tabungan
             </button>
-          )}
+          </div>
 
-          {(mode !== 'siswa' || isBendaharaActive) && (
-            <button
-              onClick={() => setActiveTab('kolektif')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'kolektif' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ⚡ Setor Massal (Kolektif)
-            </button>
-          )}
+          {/* CLASS SELECTOR, SEARCH & RESET */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {mode !== 'siswa' && semuaKelas.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 hidden sm:inline">Kelas:</span>
+                <select
+                  value={selectedKelas}
+                  onChange={(e) => {
+                    setSelectedKelas(e.target.value)
+                    setSelectedPendingIds([])
+                  }}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+                >
+                  {!isWaliOnly && <option value="Semua Kelas">Semua Kelas</option>}
+                  {semuaKelas.map(k => (
+                    <option key={k} value={k}>Kelas {k}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          {mode !== 'siswa' && (
-            <button
-              onClick={() => setActiveTab('pending')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 ${
-                activeTab === 'pending' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ⏳ Verifikasi Bendahara
-              {classStats.pendingCount > 0 && (
-                <span className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded-full font-extrabold animate-pulse">
-                  {classStats.pendingCount}
-                </span>
-              )}
-            </button>
-          )}
+            {mode !== 'siswa' && (
+              <div className="relative flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  placeholder="Cari siswa, NISN, atau keterangan..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+                />
+                <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
 
-          <button
-            onClick={() => setActiveTab('riwayat')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-              activeTab === 'riwayat' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            📜 Riwayat Mutasi Tabungan
-          </button>
+            {isFilterActive && (
+              <button
+                type="button"
+                onClick={handleResetFilter}
+                className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-2xs"
+                title="Reset Semua Filter"
+              >
+                <span>↺</span>
+                <span>Reset</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* CLASS SELECTOR & SEARCH */}
-        <div className="flex items-center gap-3 flex-wrap">
-          {mode !== 'siswa' && semuaKelas.length > 0 && (
-            <select
-              value={selectedKelas}
-              onChange={(e) => setSelectedKelas(e.target.value)}
-              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              {!isWaliOnly && <option value="Semua Kelas">Semua Kelas</option>}
-              {semuaKelas.map(k => (
-                <option key={k} value={k}>Kelas {k}</option>
-              ))}
-            </select>
-          )}
-
-          {mode !== 'siswa' && (
-            <div className="relative flex-1 min-w-[200px]">
-              <input
-                type="text"
-                placeholder="Cari siswa atau NISN..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        {/* SUB-FILTERS FOR SPECIFIC TABS */}
+        {activeTab === 'daftar' && mode !== 'siswa' && (
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500 font-bold text-[11px]">Filter Saldo:</span>
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setFilterSaldo('semua')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${filterSaldo === 'semua' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Semua Siswa ({semuaSiswa.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSaldo('ada_saldo')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${filterSaldo === 'ada_saldo' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  🟢 Memiliki Saldo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSaldo('saldo_nol')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${filterSaldo === 'saldo_nol' ? 'bg-white text-slate-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  ⚪ Saldo Rp 0
+                </button>
+              </div>
             </div>
-          )}
-        </div>
+            <div className="text-[11px] text-slate-500 font-medium">
+              Menampilkan <span className="font-extrabold text-slate-800">{filteredStudents.length}</span> siswa
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'riwayat' && (
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500 font-bold text-[11px]">Tipe:</span>
+                <select
+                  value={filterTipeMutasi}
+                  onChange={(e) => setFilterTipeMutasi(e.target.value)}
+                  className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none"
+                >
+                  <option value="semua">Semua Tipe</option>
+                  <option value="SETOR">💰 Setoran (+)</option>
+                  <option value="TARIK">💸 Penarikan (-)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500 font-bold text-[11px]">Status:</span>
+                <select
+                  value={filterStatusMutasi}
+                  onChange={(e) => setFilterStatusMutasi(e.target.value)}
+                  className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none"
+                >
+                  <option value="semua">Semua Status</option>
+                  <option value="VERIFIED">✅ Terverifikasi</option>
+                  <option value="PENDING">⏳ Menunggu Verifikasi</option>
+                  <option value="REJECTED">❌ Ditolak</option>
+                </select>
+              </div>
+            </div>
+            <div className="text-[11px] text-slate-500 font-medium">
+              Menampilkan <span className="font-extrabold text-slate-800">{filteredTransactions.length}</span> transaksi
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'pending' && mode !== 'siswa' && (
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="text-[11px] text-amber-800 font-bold flex items-center gap-1.5">
+              <span>⏳</span>
+              <span>Menampilkan {pendingTransactions.length} setoran menunggu verifikasi {isSpecificClassSelected ? `(Kelas ${selectedKelas})` : ''}</span>
+            </div>
+            {pendingTransactions.length > 0 && (
+              <button
+                type="button"
+                onClick={handleToggleSelectAllPending}
+                className="text-xs font-extrabold text-indigo-600 hover:text-indigo-800 transition-colors"
+              >
+                {isAllPendingSelected ? 'Batal Pilih Semua' : `Pilih Semua (${pendingTransactions.length})`}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* BENDAHARA KELAS INFO BANNER */}
-      {mode !== 'siswa' && selectedKelas && bendaharaClassMap[selectedKelas] && (
+      {mode !== 'siswa' && isSpecificClassSelected && bendaharaClassMap[selectedKelas] && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-lg">
@@ -1209,99 +1572,219 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
             <div>
               <h3 className="font-bold text-slate-800 text-lg">Setor Tabungan Massal / Kolektif</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Ketikkan nominal setoran masing-masing siswa untuk Kelas {selectedKelas || 'Aktif'}, lalu klik Simpan Semua.
+                {isSpecificClassSelected
+                  ? `Ketikkan nominal setoran masing-masing siswa untuk Kelas ${selectedKelas}, lalu klik Simpan Semua.`
+                  : 'Pilih kelas tertentu terlebih dahulu untuk melakukan penginputan setoran massal per rombel.'}
               </p>
             </div>
-            <button
-              onClick={handleSubmitKolektif}
-              disabled={isSaving}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
-              {isSaving ? 'Memproses...' : 'Simpan Semua Setoran'}
-            </button>
+            {isSpecificClassSelected && (
+              <button
+                onClick={handleSubmitKolektif}
+                disabled={isSaving}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                {isSaving ? 'Memproses...' : 'Simpan Semua Setoran'}
+              </button>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {filteredStudents.map(siswa => (
-              <div key={siswa.nisn} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-bold text-xs text-slate-800 truncate">{siswa.nama_lengkap}</p>
-                  <p className="text-[10px] text-slate-500 font-mono">Saldo: {formatRupiah(rekeningMap[siswa.nisn]?.saldo || 0)}</p>
-                </div>
-                <div className="w-32">
-                  <input
-                    type="number"
-                    placeholder="Rp 0"
-                    value={kolektifData[siswa.nisn] || ''}
-                    onChange={(e) => setKolektifData({ ...kolektifData, [siswa.nisn]: e.target.value })}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 text-right focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
+          {!isSpecificClassSelected ? (
+            <div className="py-12 px-4 text-center bg-amber-50/50 rounded-2xl border border-dashed border-amber-200 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center text-2xl mx-auto font-bold">
+                👥
               </div>
-            ))}
-          </div>
+              <p className="text-sm font-black text-amber-900">Pilih Kelas Tertentu untuk Setor Massal</p>
+              <p className="text-xs text-amber-700 max-w-md mx-auto leading-relaxed">
+                Setor massal kolektif dilakukan per rombel kelas agar tidak tercampur. Silakan pilih salah satu kelas di bawah atau dari dropdown kelas di atas:
+              </p>
+              {semuaKelas.length > 0 && (
+                <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                  {semuaKelas.map(k => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setSelectedKelas(k)}
+                      className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-extrabold transition-all shadow-2xs hover:scale-105"
+                    >
+                      Kelas {k}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : filteredStudents.length === 0 ? (
+            <div className="py-12 text-center text-slate-400 text-xs font-medium space-y-2">
+              <p>Tidak ada siswa ditemukan di Kelas {selectedKelas} {searchQuery ? `dengan pencarian "${searchQuery}"` : ''}.</p>
+              {isFilterActive && (
+                <button
+                  type="button"
+                  onClick={handleResetFilter}
+                  className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all"
+                >
+                  Reset Pencarian
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {filteredStudents.map(siswa => (
+                <div key={siswa.nisn} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 hover:border-slate-300 transition-colors">
+                  <div className="min-w-0">
+                    <p className="font-bold text-xs text-slate-800 truncate">{siswa.nama_lengkap}</p>
+                    <p className="text-[10px] text-slate-500 font-mono">Saldo: {formatRupiah(rekeningMap[siswa.nisn]?.saldo || 0)}</p>
+                  </div>
+                  <div className="w-32">
+                    <input
+                      type="number"
+                      placeholder="Rp 0"
+                      value={kolektifData[siswa.nisn] || ''}
+                      onChange={(e) => setKolektifData({ ...kolektifData, [siswa.nisn]: e.target.value })}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 text-right focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB CONTENT 3: PENDING VERIFICATION */}
+      {/* TAB CONTENT 3: PENDING VERIFICATION WITH MULTI-SELECT */}
       {activeTab === 'pending' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+          {/* Header Banner */}
+          <div className="p-4 bg-amber-50/80 border-b border-amber-200/80 flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
               <span>⏳</span>
-              <span>Daftar Setoran Bendahara Kelas yang Menunggu Verifikasi Wali Kelas</span>
+              <span>
+                Daftar Setoran Bendahara yang Menunggu Verifikasi {isSpecificClassSelected ? `(Kelas ${selectedKelas})` : '(Semua Kelas)'}
+              </span>
             </div>
+            {pendingTransactions.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleSelectAllPending}
+                  className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition-all shadow-2xs"
+                >
+                  {isAllPendingSelected ? 'Batal Pilih Semua' : `Pilih Semua (${pendingTransactions.length})`}
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* FLOATING / STICKY BATCH ACTION BAR WHEN SELECTED */}
+          {selectedPendingIds.length > 0 && (
+            <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 text-white p-3 px-4 flex items-center justify-between gap-3 flex-wrap shadow-md animate-fade-in sticky top-0 z-20">
+              <div className="flex items-center gap-2.5">
+                <span className="w-7 h-7 rounded-full bg-indigo-500/80 text-white flex items-center justify-center text-xs font-black ring-2 ring-indigo-400">
+                  {selectedPendingIds.length}
+                </span>
+                <span className="text-xs font-bold text-indigo-100">
+                  Transaksi Setoran Terpilih
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleBatchVerifikasi(true)}
+                  disabled={isBatchProcessing}
+                  className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black rounded-xl text-xs transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <span>✓</span>
+                  <span>{isBatchProcessing ? 'Memproses...' : `Setujui Terpilih (${selectedPendingIds.length})`}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBatchVerifikasi(false)}
+                  disabled={isBatchProcessing}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black rounded-xl text-xs transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <span>✕</span>
+                  <span>{isBatchProcessing ? 'Memproses...' : `Tolak Terpilih (${selectedPendingIds.length})`}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPendingIds([])}
+                  disabled={isBatchProcessing}
+                  className="px-2.5 py-1.5 bg-white/20 hover:bg-white/30 text-white font-bold rounded-xl text-xs transition-all"
+                >
+                  Batal
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* MOBILE LIST VIEW */}
           <div className="md:hidden divide-y divide-slate-100">
-            {transaksiList.filter(t => t.status_verifikasi === 'PENDING').length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-xs">
-                Tidak ada transaksi setoran yang menunggu verifikasi.
+            {pendingTransactions.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+                <p>Tidak ada transaksi setoran yang menunggu verifikasi untuk filter ini.</p>
+                {isFilterActive && (
+                  <button
+                    type="button"
+                    onClick={handleResetFilter}
+                    className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all"
+                  >
+                    Reset Filter
+                  </button>
+                )}
               </div>
             ) : (
-              transaksiList
-                .filter(t => t.status_verifikasi === 'PENDING')
-                .map(t => {
-                  const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
-                  const bendahara = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+              pendingTransactions.map(t => {
+                const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+                const bendahara = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+                const isSelected = selectedPendingIds.includes(t.id)
 
-                  return (
-                    <div key={t.id} className="p-4 space-y-2.5">
-                      <div className="flex items-start justify-between gap-2">
+                return (
+                  <div
+                    key={t.id}
+                    className={`p-4 space-y-2.5 transition-colors ${
+                      isSelected ? 'bg-indigo-50/70 border-l-4 border-indigo-600' : 'hover:bg-slate-50/80'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectPending(t.id)}
+                          className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer mt-0.5"
+                        />
                         <div>
                           <p className="font-bold text-slate-800 text-sm">{student?.nama_lengkap || t.siswa_nisn}</p>
                           <p className="text-[11px] text-slate-500 font-mono">
                             Kelas {t.kelas} • {new Date(t.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
                           </p>
                         </div>
-                        <span className="font-black text-emerald-700 text-sm">
-                          {formatRupiah(t.jumlah)}
-                        </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-                        <p className="text-[10px] text-amber-800 font-semibold truncate">
-                          Input: {bendahara?.nama_lengkap || 'Bendahara'}
-                        </p>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            onClick={() => handleVerifikasiTransaksi(t.id, true)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-sm"
-                          >
-                            Setujui
-                          </button>
-                          <button
-                            onClick={() => handleVerifikasiTransaksi(t.id, false)}
-                            className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl font-bold text-xs"
-                          >
-                            Tolak
-                          </button>
-                        </div>
+                      <span className="font-black text-emerald-700 text-sm shrink-0">
+                        {formatRupiah(t.jumlah)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      <p className="text-[10px] text-amber-800 font-semibold truncate">
+                        Input: {bendahara?.nama_lengkap || 'Bendahara'}
+                      </p>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleVerifikasiTransaksi(t.id, true)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-sm"
+                        >
+                          Setujui
+                        </button>
+                        <button
+                          onClick={() => handleVerifikasiTransaksi(t.id, false)}
+                          className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl font-bold text-xs"
+                        >
+                          Tolak
+                        </button>
                       </div>
                     </div>
-                  )
-                })
+                  </div>
+                )
+              })
             )}
           </div>
 
@@ -1309,63 +1792,99 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-extrabold uppercase">
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-extrabold uppercase tracking-wider">
+                  <th className="py-3.5 px-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllPendingSelected}
+                      onChange={handleToggleSelectAllPending}
+                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      title={isAllPendingSelected ? 'Batal Pilih Semua' : 'Pilih Semua'}
+                    />
+                  </th>
                   <th className="py-3.5 px-4">Waktu</th>
                   <th className="py-3.5 px-4">Siswa</th>
                   <th className="py-3.5 px-4">Kelas</th>
                   <th className="py-3.5 px-4">Penginput (Bendahara)</th>
                   <th className="py-3.5 px-4 text-right">Nominal</th>
-                  <th className="py-3.5 px-4 text-center">Verifikasi</th>
+                  <th className="py-3.5 px-4 text-center">Aksi Individual</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
-                {transaksiList.filter(t => t.status_verifikasi === 'PENDING').length === 0 ? (
+                {pendingTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="py-12 text-center text-slate-400">
-                      Tidak ada transaksi setoran yang menunggu verifikasi.
+                    <td colSpan="7" className="py-12 text-center text-slate-400">
+                      <div className="space-y-2">
+                        <p>Tidak ada transaksi setoran yang menunggu verifikasi untuk filter ini.</p>
+                        {isFilterActive && (
+                          <button
+                            type="button"
+                            onClick={handleResetFilter}
+                            className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all"
+                          >
+                            Reset Filter
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  transaksiList
-                    .filter(t => t.status_verifikasi === 'PENDING')
-                    .map(t => {
-                      const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
-                      const bendahara = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+                  pendingTransactions.map(t => {
+                    const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
+                    const bendahara = semuaSiswa.find(s => s.nisn === t.diinput_oleh_nisn)
+                    const isSelected = selectedPendingIds.includes(t.id)
 
-                      return (
-                        <tr key={t.id} className="hover:bg-slate-50/80">
-                          <td className="py-3.5 px-4 font-mono text-slate-500">
-                            {new Date(t.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
-                          </td>
-                          <td className="py-3.5 px-4 font-bold text-slate-800">
-                            {student?.nama_lengkap || t.siswa_nisn}
-                          </td>
-                          <td className="py-3.5 px-4">{t.kelas}</td>
-                          <td className="py-3.5 px-4 text-amber-800 font-bold">
-                            {bendahara?.nama_lengkap || t.diinput_oleh_nisn || 'Bendahara Kelas'}
-                          </td>
-                          <td className="py-3.5 px-4 text-right font-black text-emerald-700 text-sm">
-                            {formatRupiah(t.jumlah)}
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                onClick={() => handleVerifikasiTransaksi(t.id, true)}
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-sm flex items-center gap-1"
-                              >
-                                Setujui
-                              </button>
-                              <button
-                                onClick={() => handleVerifikasiTransaksi(t.id, false)}
-                                className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl font-bold transition-all shadow-sm"
-                              >
-                                Tolak
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })
+                    return (
+                      <tr
+                        key={t.id}
+                        className={`transition-colors ${
+                          isSelected ? 'bg-indigo-50/80 font-semibold' : 'hover:bg-slate-50/80'
+                        }`}
+                      >
+                        <td className="py-3.5 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelectPending(t.id)}
+                            className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-slate-500">
+                          {new Date(t.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                        <td className="py-3.5 px-4 font-bold text-slate-800">
+                          {student?.nama_lengkap || t.siswa_nisn}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2 py-0.5 bg-slate-100 rounded text-[11px] font-bold">
+                            {t.kelas}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-amber-800 font-bold">
+                          {bendahara?.nama_lengkap || t.diinput_oleh_nisn || 'Bendahara Kelas'}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-black text-emerald-700 text-sm">
+                          {formatRupiah(t.jumlah)}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleVerifikasiTransaksi(t.id, true)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-sm flex items-center gap-1"
+                            >
+                              Setujui
+                            </button>
+                            <button
+                              onClick={() => handleVerifikasiTransaksi(t.id, false)}
+                              className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl font-bold transition-all shadow-sm"
+                            >
+                              Tolak
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -1373,17 +1892,26 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
         </div>
       )}
 
-      {/* TAB CONTENT 4: RIWAYAT MUTASI */}
+      {/* TAB CONTENT 4: RIWAYAT MUTASI WITH FILTERED DATA */}
       {activeTab === 'riwayat' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           {/* MOBILE LIST VIEW */}
           <div className="md:hidden divide-y divide-slate-100">
-            {transaksiList.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-xs">
-                Belum ada riwayat transaksi tabungan.
+            {filteredTransactions.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+                <p>Belum ada riwayat transaksi tabungan yang sesuai dengan filter.</p>
+                {isFilterActive && (
+                  <button
+                    type="button"
+                    onClick={handleResetFilter}
+                    className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all"
+                  >
+                    Reset Filter
+                  </button>
+                )}
               </div>
             ) : (
-              transaksiList.map(t => {
+              filteredTransactions.map(t => {
                 const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
 
                 return (
@@ -1467,14 +1995,25 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
-                {transaksiList.length === 0 ? (
+                {filteredTransactions.length === 0 ? (
                   <tr>
                     <td colSpan={mode !== 'siswa' ? 9 : (isBendaharaActive ? 7 : 6)} className="py-12 text-center text-slate-400">
-                      Belum ada riwayat transaksi tabungan.
+                      <div className="space-y-2">
+                        <p>Belum ada riwayat transaksi tabungan yang sesuai dengan filter.</p>
+                        {isFilterActive && (
+                          <button
+                            type="button"
+                            onClick={handleResetFilter}
+                            className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all"
+                          >
+                            Reset Filter
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  transaksiList.map(t => {
+                  filteredTransactions.map(t => {
                     const student = semuaSiswa.find(s => s.nisn === t.siswa_nisn)
 
                     return (
@@ -1487,7 +2026,11 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                             <td className="py-3.5 px-4 font-bold text-slate-800">
                               {student?.nama_lengkap || t.siswa_nisn}
                             </td>
-                            <td className="py-3.5 px-4">{t.kelas}</td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2 py-0.5 bg-slate-100 rounded text-[11px] font-bold">
+                                {t.kelas}
+                              </span>
+                            </td>
                           </>
                         )}
                         <td className="py-3.5 px-4">

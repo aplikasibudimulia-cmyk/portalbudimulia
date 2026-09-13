@@ -69,7 +69,16 @@ node_modules/
 .dataconnect
     .env
     node_modules/
-    dist/
+# Build output
+dist/
+dist
+
+# Android credentials and keystore
+android/gradle.properties
+android/app/*.keystore
+android/app/*.jks
+*.keystore
+*.jks
 
 # OS metadata
 .DS_Store
@@ -79,4 +88,5 @@ node_modules/
 scratch/db_dump.json
 hasil.json
 *.log
-
+current_*.png
+tablet_*.png

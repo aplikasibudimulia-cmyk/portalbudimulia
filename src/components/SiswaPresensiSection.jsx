@@ -2,11 +2,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useConfirm } from '../utils/useConfirm'
-import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification } from '../utils/pushNotif'
+import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, clearPresensiNotif } from '../utils/pushNotif'
 import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
 import { sendFCMPushNotification } from '../utils/fcmSender'
 import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
-import { getTodayWIB, getCurrentTimeWIB } from '../utils/dateUtils'
+import { getTodayWIB, getCurrentTimeWIB, getServerNow, getDayIndexWIB, syncServerTime } from '../utils/dateUtils'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -41,153 +41,229 @@ function hitungJarak(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+const getPresensiCacheKey = (nisn, tgl) => `ebm_presensi_cache_${nisn}_${tgl}`
+
+const getCachedPresensiData = (nisn, tgl) => {
+  if (!nisn) return null
+  try {
+    const raw = sessionStorage.getItem(getPresensiCacheKey(nisn, tgl))
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 export default function SiswaPresensiSection({ studentData }) {
   const [step, setStep] = useState(STEP.IDLE)
-  const [presensiMasuk, setPresensiMasuk] = useState(null)
-  const [presensiPulang, setPresensiPulang] = useState(null)
-  const [loadingStatus, setLoadingStatus] = useState(true)
-  const [errorMsg, setErrorMsg] = useState('')
-  const [cameraError, setCameraError] = useState('')
-  const [selfieSrc, setSelfieSrc] = useState(null)
-  const [selfieBlob, setSelfieBlob] = useState(null)
-  const [scannedToken, setScannedToken] = useState(null)
-  const [jamBatasHadir, setJamBatasHadir] = useState('07:00')
-  const [qrAktif, setQrAktif] = useState(true)
-  const [selfieRequired, setSelfieRequired] = useState(true)
-  const [activeTab, setActiveTab] = useState('isi_presensi')
-  const [tipeAktif, setTipeAktif] = useState(TIPE.MASUK) // masuk atau pulang
-  const [sesiAktif, setSesiAktif] = useState(false)
-  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(false)
-  const [jamMulaiPresensi, setJamMulaiPresensi] = useState('')
-  const [jamMulaiPulang, setJamMulaiPulang] = useState('13:00')
-  const [hariAktifPresensi, setHariAktifPresensi] = useState('1,2,3,4,5')
-  const [jamBatasPulang, setJamBatasPulang] = useState('')
-  const [presensiMasukMode, setPresensiMasukMode] = useState('qr') // 'qr' | 'geofence' | 'both'
-  const [presensiPulangAktif, setPresensiPulangAktif] = useState(false)
-  const [selectedMode, setSelectedMode] = useState(null) // null | 'qr' | 'geofence'
-  const [notifGranted, setNotifGranted] = useState(isNotifGranted())
-  const { requestConfirm, ConfirmModalComponent } = useConfirm()
-  const [geofenceConfig, setGeofenceConfig] = useState({
-    aktif: false,
-    lat: null,
-    lng: null,
-    radius: 200
-  })
-  const [geofenceAreas, setGeofenceAreas] = useState([]) // multiple extra areas
-
-  const scannerRef = useRef(null)
-  const selfieFileInputRef = useRef(null)
-  const qrFileInputRef = useRef(null)
-  const videoRef = useRef(null)
-  const selectedModeRef = useRef(null) // ref agar tidak stale di async callbacks
-  const [currentDate, setCurrentDate] = useState(() => new Date())
+  const [currentDate, setCurrentDate] = useState(() => getServerNow())
   useEffect(() => {
+    syncServerTime()
     const timer = setInterval(() => {
-      setCurrentDate(new Date())
+      setCurrentDate(getServerNow())
     }, 15000)
     return () => clearInterval(timer)
   }, [])
 
   const today = useMemo(() => getTodayWIB(currentDate), [currentDate])
 
+  const cachedData = useMemo(() => {
+    return getCachedPresensiData(studentData?.nisn, today)
+  }, [studentData?.nisn, today])
+
+  const [loadingStatus, setLoadingStatus] = useState(() => !cachedData)
+  const [presensiMasuk, setPresensiMasuk] = useState(() => cachedData?.presensiMasuk || null)
+  const [presensiPulang, setPresensiPulang] = useState(() => cachedData?.presensiPulang || null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [cameraError, setCameraError] = useState('')
+  const [selfieSrc, setSelfieSrc] = useState(null)
+  const [selfieBlob, setSelfieBlob] = useState(null)
+  const [scannedToken, setScannedToken] = useState(null)
+  const [jamBatasHadir, setJamBatasHadir] = useState(() => cachedData?.jamBatasHadir || '07:00')
+  const [qrAktif, setQrAktif] = useState(() => cachedData?.qrAktif ?? true)
+  const [selfieRequired, setSelfieRequired] = useState(() => cachedData?.selfieRequired ?? true)
+  const [activeTab, setActiveTab] = useState('isi_presensi')
+  const [tipeAktif, setTipeAktif] = useState(() => cachedData?.tipeAktif || TIPE.MASUK)
+  const [sesiAktif, setSesiAktif] = useState(() => cachedData?.sesiAktif || false)
+  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(() => cachedData?.jadwalOtomatisAktif || false)
+  const [jamMulaiPresensi, setJamMulaiPresensi] = useState(() => cachedData?.jamMulaiPresensi || '05:00')
+  const [jamMulaiPulang, setJamMulaiPulang] = useState(() => cachedData?.jamMulaiPulang || '13:00')
+  const [hariAktifPresensi, setHariAktifPresensi] = useState(() => cachedData?.hariAktifPresensi || '1,2,3,4,5')
+  const [jamBatasPulang, setJamBatasPulang] = useState(() => cachedData?.jamBatasPulang || '18:00')
+  const [presensiMasukMode, setPresensiMasukMode] = useState(() => cachedData?.presensiMasukMode || 'qr')
+  const [presensiPulangAktif, setPresensiPulangAktif] = useState(() => cachedData?.presensiPulangAktif || false)
+  const [selectedMode, setSelectedMode] = useState(null)
+  const [notifGranted, setNotifGranted] = useState(isNotifGranted())
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
+  const [geofenceConfig, setGeofenceConfig] = useState(() => cachedData?.geofenceConfig || {
+    aktif: false,
+    lat: null,
+    lng: null,
+    radius: 200
+  })
+  const [geofenceAreas, setGeofenceAreas] = useState(() => cachedData?.geofenceAreas || [])
+
+  const scannerRef = useRef(null)
+  const selfieFileInputRef = useRef(null)
+  const qrFileInputRef = useRef(null)
+  const videoRef = useRef(null)
+  const selectedModeRef = useRef(null) // ref agar tidak stale di async callbacks
+
   // Load status presensi hari ini & pengaturan
-  const loadStatus = useCallback(async () => {
-    setLoadingStatus(true)
-    const [{ data: prDataAll }, { data: settings }, { data: sesi }] = await Promise.all([
-      supabase.from('presensi_harian')
-        .select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
-      supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
-      supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
-    ])
-
-    if (settings) {
-      const jam = settings.find(s => s.setting_key === 'jam_batas_hadir')?.setting_value
-      if (jam) setJamBatasHadir(jam)
-      const qrStatus = settings.find(s => s.setting_key === 'presensi_qr_aktif')?.setting_value
-      setQrAktif(qrStatus !== 'false')
-      const autAct = settings.find(s => s.setting_key === 'jadwal_otomatis_aktif')?.setting_value === 'true'
-      setJadwalOtomatisAktif(autAct)
-      const mul = settings.find(s => s.setting_key === 'jam_mulai_presensi')?.setting_value || '05:00'
-      setJamMulaiPresensi(mul)
-      const mulP = settings.find(s => s.setting_key === 'jam_mulai_pulang')?.setting_value || '13:00'
-      setJamMulaiPulang(mulP)
-      const har = settings.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value || '1,2,3,4,5'
-      setHariAktifPresensi(har)
-      const pul = settings.find(s => s.setting_key === 'jam_batas_pulang')?.setting_value || '18:00'
-      setJamBatasPulang(pul)
-      const pulAktifVal = settings.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
-      const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
-
-      // Hitung apakah hari ini dan jam ini aktif otomatis
-      const now = new Date()
-      const currentDow = now.getDay()
-      const currentH = now.getHours()
-      const currentM = now.getMinutes()
-      const isHariJadwal = har.split(',').map(Number).includes(currentDow)
-
-      const [mh, mm] = mul.split(':').map(Number)
-      const [mph, mpm] = mulP.split(':').map(Number)
-      const [bh, bm] = pul.split(':').map(Number)
-
-      const isSudahMulai = currentH > mh || (currentH === mh && currentM >= (mm || 0))
-      const isBelumLewatBatas = currentH < bh || (currentH === bh && currentM < (bm || 0))
-      const isAutoActive = autAct && isHariJadwal && isSudahMulai && isBelumLewatBatas
-
-      // Sesi Masuk aktif jika ada sesi manual ATAU jadwal otomatis berjalan
-      setSesiAktif(!!sesi || isAutoActive)
-
-      // Sesi Pulang aktif jika dinyalakan manual ATAU jika jam sudah mencapai jam_mulai_pulang
-      const isSudahWaktuPulang = currentH > mph || (currentH === mph && currentM >= (mpm || 0))
-      const isAutoPulangActive = autAct && isHariJadwal && isSudahWaktuPulang && isBelumLewatBatas
-      const isSesiPulangAktif = pulAktif || isAutoPulangActive
-      setPresensiPulangAktif(isSesiPulangAktif)
-
-      if (prDataAll) {
-        const masuk = prDataAll.find(p => !p.tipe || p.tipe === TIPE.MASUK) || null
-        const pulang = prDataAll.find(p => p.tipe === TIPE.PULANG) || null
-        setPresensiMasuk(masuk)
-        setPresensiPulang(pulang)
-
-        // Aturan: Jika sudah masuk jam presensi pulang -> KUNCI PRESENSI MASUK, HANYA BISA PRESENSI PULANG
-        if (isSesiPulangAktif) {
-          setTipeAktif(TIPE.PULANG)
-        } else if (!masuk) {
-          setTipeAktif(TIPE.MASUK)
-        } else {
-          setTipeAktif(TIPE.MASUK)
-        }
-      } else {
-        setTipeAktif(isSesiPulangAktif ? TIPE.PULANG : TIPE.MASUK)
-      }
-
-      const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
-      setSelfieRequired(selfieReq !== 'false')
-      const mMode = settings.find(s => s.setting_key === 'presensi_masuk_mode')?.setting_value || 'qr'
-      setPresensiMasukMode(mMode)
-
-      // Geofence config
-      const geoAktif = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
-      const geoLat = parseFloat(settings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
-      const geoLng = parseFloat(settings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
-      const geoRadius = parseInt(settings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
-      setGeofenceConfig({
-        aktif: geoAktif,
-        lat: isNaN(geoLat) ? null : geoLat,
-        lng: isNaN(geoLng) ? null : geoLng,
-        radius: isNaN(geoRadius) ? 200 : geoRadius
-      })
-      // Load extra geofence areas
-      const areasRaw = settings.find(s => s.setting_key === 'geofence_areas')?.setting_value
-      if (areasRaw) {
-        try { setGeofenceAreas(JSON.parse(areasRaw)) } catch { setGeofenceAreas([]) }
-      }
+  const loadStatus = useCallback(async (isSilent = false) => {
+    if (!isSilent && !getCachedPresensiData(studentData?.nisn, today)) {
+      setLoadingStatus(true)
     }
-    setLoadingStatus(false)
-  }, [studentData.nisn, today])
+    try {
+      const [{ data: prDataAll }, { data: settings }, { data: sesi }] = await Promise.all([
+        supabase.from('presensi_harian')
+          .select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
+        supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
+        supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
+      ])
+
+      let masuk = null
+      let pulang = null
+      let newTipeAktif = TIPE.MASUK
+      let isSesiPulangAktif = false
+      let isSesiMasukAktif = false
+
+      let curJamBatasHadir = '07:00'
+      let curQrAktif = true
+      let curJadwalOtomatisAktif = false
+      let curJamMulaiPresensi = '05:00'
+      let curJamMulaiPulang = '13:00'
+      let curHariAktifPresensi = '1,2,3,4,5'
+      let curJamBatasPulang = '18:00'
+      let curSelfieRequired = true
+      let curPresensiMasukMode = 'qr'
+      let curGeofenceConfig = { aktif: false, lat: null, lng: null, radius: 200 }
+      let curGeofenceAreas = []
+
+      if (settings) {
+        const jam = settings.find(s => s.setting_key === 'jam_batas_hadir')?.setting_value
+        if (jam) { curJamBatasHadir = jam; setJamBatasHadir(jam); }
+        const qrStatus = settings.find(s => s.setting_key === 'presensi_qr_aktif')?.setting_value
+        curQrAktif = qrStatus !== 'false'
+        setQrAktif(curQrAktif)
+        const autAct = settings.find(s => s.setting_key === 'jadwal_otomatis_aktif')?.setting_value === 'true'
+        curJadwalOtomatisAktif = autAct
+        setJadwalOtomatisAktif(autAct)
+        const mul = settings.find(s => s.setting_key === 'jam_mulai_presensi')?.setting_value || '05:00'
+        curJamMulaiPresensi = mul
+        setJamMulaiPresensi(mul)
+        const mulP = settings.find(s => s.setting_key === 'jam_mulai_pulang')?.setting_value || '13:00'
+        curJamMulaiPulang = mulP
+        setJamMulaiPulang(mulP)
+        const har = settings.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value || '1,2,3,4,5'
+        curHariAktifPresensi = har
+        setHariAktifPresensi(har)
+        const pul = settings.find(s => s.setting_key === 'jam_batas_pulang')?.setting_value || '18:00'
+        curJamBatasPulang = pul
+        setJamBatasPulang(pul)
+        const pulAktifVal = settings.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
+        const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
+
+        // Hitung apakah hari ini dan jam ini aktif otomatis (berbasis jam resmi server WIB)
+        const now = getServerNow()
+        const currentDow = getDayIndexWIB(now)
+        const [currentH, currentM] = getCurrentTimeWIB(now).split(':').map(Number)
+        const isHariJadwal = har.split(',').map(Number).includes(currentDow)
+
+        const [mh, mm] = mul.split(':').map(Number)
+        const [mph, mpm] = mulP.split(':').map(Number)
+        const [bh, bm] = pul.split(':').map(Number)
+
+        const isSudahMulai = currentH > mh || (currentH === mh && currentM >= (mm || 0))
+        const isBelumLewatBatas = currentH < bh || (currentH === bh && currentM < (bm || 0))
+        const isAutoActive = autAct && isHariJadwal && isSudahMulai && isBelumLewatBatas
+
+        isSesiMasukAktif = !!sesi || isAutoActive
+        setSesiAktif(isSesiMasukAktif)
+
+        const isSudahWaktuPulang = currentH > mph || (currentH === mph && currentM >= (mpm || 0))
+        const isAutoPulangActive = autAct && isHariJadwal && isSudahWaktuPulang && isBelumLewatBatas
+        isSesiPulangAktif = pulAktif || isAutoPulangActive
+        setPresensiPulangAktif(isSesiPulangAktif)
+
+        if (prDataAll) {
+          masuk = prDataAll.find(p => !p.tipe || p.tipe === TIPE.MASUK) || null
+          pulang = prDataAll.find(p => p.tipe === TIPE.PULANG) || null
+          setPresensiMasuk(masuk)
+          setPresensiPulang(pulang)
+
+          if (isSesiPulangAktif) {
+            newTipeAktif = TIPE.PULANG
+          } else {
+            newTipeAktif = TIPE.MASUK
+          }
+          setTipeAktif(newTipeAktif)
+        } else {
+          newTipeAktif = isSesiPulangAktif ? TIPE.PULANG : TIPE.MASUK
+          setTipeAktif(newTipeAktif)
+        }
+
+        const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
+        curSelfieRequired = selfieReq !== 'false'
+        setSelfieRequired(curSelfieRequired)
+        const mMode = settings.find(s => s.setting_key === 'presensi_masuk_mode')?.setting_value || 'qr'
+        curPresensiMasukMode = mMode
+        setPresensiMasukMode(mMode)
+
+        // Geofence config
+        const geoAktif = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
+        const geoLat = parseFloat(settings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
+        const geoLng = parseFloat(settings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
+        const geoRadius = parseInt(settings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
+        curGeofenceConfig = {
+          aktif: geoAktif,
+          lat: isNaN(geoLat) ? null : geoLat,
+          lng: isNaN(geoLng) ? null : geoLng,
+          radius: isNaN(geoRadius) ? 200 : geoRadius
+        }
+        setGeofenceConfig(curGeofenceConfig)
+        const areasRaw = settings.find(s => s.setting_key === 'geofence_areas')?.setting_value
+        if (areasRaw) {
+          try {
+            curGeofenceAreas = JSON.parse(areasRaw)
+            setGeofenceAreas(curGeofenceAreas)
+          } catch {
+            setGeofenceAreas([])
+          }
+        }
+      }
+
+      // Simpan snapshot ke sessionStorage untuk render instan di kunjungan berikutnya
+      try {
+        sessionStorage.setItem(getPresensiCacheKey(studentData.nisn, today), JSON.stringify({
+          presensiMasuk: masuk,
+          presensiPulang: pulang,
+          sesiAktif: isSesiMasukAktif,
+          presensiPulangAktif: isSesiPulangAktif,
+          tipeAktif: newTipeAktif,
+          jamBatasHadir: curJamBatasHadir,
+          qrAktif: curQrAktif,
+          jadwalOtomatisAktif: curJadwalOtomatisAktif,
+          jamMulaiPresensi: curJamMulaiPresensi,
+          jamMulaiPulang: curJamMulaiPulang,
+          hariAktifPresensi: curHariAktifPresensi,
+          jamBatasPulang: curJamBatasPulang,
+          selfieRequired: curSelfieRequired,
+          presensiMasukMode: curPresensiMasukMode,
+          geofenceConfig: curGeofenceConfig,
+          geofenceAreas: curGeofenceAreas,
+          timestamp: Date.now()
+        }))
+      } catch {}
+    } catch (e) {
+      console.warn('Gagal memuat status presensi:', e)
+    } finally {
+      setLoadingStatus(false)
+    }
+  }, [studentData?.nisn, today])
 
   const isHariAktif = useMemo(() => {
     if (!jadwalOtomatisAktif) return true
-    const todayDow = currentDate.getDay()
+    const todayDow = getDayIndexWIB(currentDate)
     const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
     return activeDays.includes(todayDow)
   }, [jadwalOtomatisAktif, hariAktifPresensi, currentDate])
@@ -196,7 +272,7 @@ export default function SiswaPresensiSection({ studentData }) {
     if (!jadwalOtomatisAktif || !jamMulaiPresensi) return false
     if (!isHariAktif) return false
     const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
-    const [nh, nm] = [currentDate.getHours(), currentDate.getMinutes()]
+    const [nh, nm] = getCurrentTimeWIB(currentDate).split(':').map(Number)
     return nh < mh || (nh === mh && nm < mm)
   }, [jadwalOtomatisAktif, jamMulaiPresensi, isHariAktif, currentDate])
 
@@ -205,20 +281,27 @@ export default function SiswaPresensiSection({ studentData }) {
     if (!isHariAktif) return false
     if (presensiPulangAktif) return false
     const [bh, bm] = jamBatasPulang.split(':').map(Number)
-    const [nh, nm] = [currentDate.getHours(), currentDate.getMinutes()]
+    const [nh, nm] = getCurrentTimeWIB(currentDate).split(':').map(Number)
     return nh > bh || (nh === bh && nm >= bm)
   }, [jadwalOtomatisAktif, jamBatasPulang, isHariAktif, currentDate, presensiPulangAktif])
 
-  useEffect(() => { loadStatus() }, [loadStatus])
+  useEffect(() => { loadStatus(true) }, [loadStatus])
+
+  const loadStatusRef = useRef(loadStatus)
+  useEffect(() => {
+    loadStatusRef.current = loadStatus
+  }, [loadStatus])
 
   // Auto-subscribe to Web Push jika izin sudah diberikan sebelumnya
   useEffect(() => {
-    if (!notifGranted) return;
+    if (!notifGranted || !studentData?.nisn) return
+    const subKey = `push_subscribed_${studentData.nisn}`
+    if (sessionStorage.getItem(subKey)) return
+
     const autoSubscribe = async () => {
       try {
         const subscription = await subscribeToPushNotification()
         if (subscription) {
-          // Hapus subscription dari user lain yang menggunakan browser/perangkat ini
           const endpointUrl = subscription.endpoint
           if (endpointUrl) {
             await supabase.from('push_subscriptions')
@@ -230,41 +313,36 @@ export default function SiswaPresensiSection({ studentData }) {
             nisn: studentData.nisn,
             subscription: subscription.toJSON()
           }, { onConflict: 'nisn' })
+
+          sessionStorage.setItem(subKey, 'true')
         }
       } catch (err) {
         console.error('Gagal auto-subscribe push notification:', err)
       }
     }
     autoSubscribe()
-  }, [notifGranted, studentData.nisn])
+  }, [notifGranted, studentData?.nisn])
 
-  // Realtime update
+  // Realtime update: gabungkan 3 listener dalam 1 saluran channel
   useEffect(() => {
+    if (!studentData?.nisn) return
     let timer = null
     const debouncedLoadStatus = () => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => {
-        loadStatus()
-      }, 300)
+        loadStatusRef.current?.(true)
+      }, 400)
     }
 
-    const channel1 = supabase
-      .channel(`presensi-siswa-${studentData.nisn}`)
+    const channel = supabase
+      .channel(`presensi-section-live-${studentData.nisn}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'presensi_harian',
         filter: `siswa_nisn=eq.${studentData.nisn}`
       }, debouncedLoadStatus)
-      .subscribe()
-
-    const channel2 = supabase
-      .channel(`pengaturan-sekolah-siswa`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'pengaturan_sekolah'
       }, debouncedLoadStatus)
-      .subscribe()
-
-    const channel3 = supabase
-      .channel(`sesi-presensi-siswa`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'sesi_presensi'
       }, debouncedLoadStatus)
@@ -272,11 +350,9 @@ export default function SiswaPresensiSection({ studentData }) {
 
     return () => {
       if (timer) clearTimeout(timer)
-      supabase.removeChannel(channel1)
-      supabase.removeChannel(channel2)
-      supabase.removeChannel(channel3)
+      supabase.removeChannel(channel)
     }
-  }, [studentData.nisn, loadStatus])
+  }, [studentData?.nisn])
 
   const handleMulaiPresensiQR = () => {
     selectedModeRef.current = 'qr'
@@ -428,7 +504,7 @@ export default function SiswaPresensiSection({ studentData }) {
         .from('qr_tokens')
         .select('*')
         .eq('token', token)
-        .gt('expires_at', new Date().toISOString())
+        .gt('expires_at', getServerNow().toISOString())
         .maybeSingle()
 
       if (error || !data) {
@@ -587,22 +663,15 @@ export default function SiswaPresensiSection({ studentData }) {
         }
       })
 
-      // 2. Simpan entri ke tabel notifikasi
-      supabase.from('notifikasi').insert({
-        target_nisn: nisn,
-        target_kelas: kelas,
-        judul: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
-        pesan: `${namaLengkap} telah melakukan Presensi ${tipeLabel} pada pukul ${waktu} WIB (${statusLabel}).`,
-        tipe: 'presensi'
-      }).then(() => {}).catch(() => {})
-
-      // 3. Kirim Google FCM Push Notification langsung ke HP Orang Tua & Siswa (Membangunkan HP walau aplikasi mati)
+      // 2. Kirim Google FCM Push Notification ke semua HP Siswa & Orang Tua terdaftar (Membangunkan HP walau aplikasi mati)
       sendFCMPushNotification({
         nisn,
+        // Dikosongkan agar baik HP Siswa maupun HP Orang Tua sama-sama menerima notifikasi di layar usap
         title: `Presensi ${tipeLabel} Siswa (${statusLabel} - ${waktu} WIB)`,
-        body: `${namaLengkap} - Presensi ${tipeLabel} pukul ${waktu} WIB (${statusLabel}).`,
+        body: `${namaLengkap} - Presensi ${tipeLabel} pukul ${waktu} WIB (${statusLabel}).${lokasi ? ` Lokasi: ${lokasi}` : ''}`,
         image: selfieUrl || undefined,
-        targetMenu: 'PRESENSI'
+        targetMenu: 'PRESENSI',
+        data: { tag: `presensi-${nisn}-${tipe}`, tipe }
       }).catch(err => console.warn('[FCM Presensi] Send error:', err))
 
       // 4. Kirim LINE Push Notification via Supabase Edge Function line-notify
@@ -717,17 +786,16 @@ export default function SiswaPresensiSection({ studentData }) {
         }
       }
 
-      const now = new Date();
-      const jamSekarang = now.toTimeString().slice(0, 5);
+      // Ambil waktu dari server resmi WIB (kebal manipulasi jam di HP)
+      const now = getServerNow();
+      const jamSekarang = getCurrentTimeWIB(now);
       const [bH, bM] = jamBatasHadir.split(':').map(Number);
       const [sH, sM] = jamSekarang.split(':').map(Number);
       const lewatBatas = sH > bH || (sH === bH && sM > bM);
 
       // Kunci presensi masuk jika sudah masuk waktu pulang
-      const currentH = now.getHours();
-      const currentM = now.getMinutes();
       const [mph, mpm] = (jamMulaiPulang || '13:00').split(':').map(Number);
-      const isSudahWaktuPulang = currentH > mph || (currentH === mph && currentM >= (mpm || 0));
+      const isSudahWaktuPulang = sH > mph || (sH === mph && sM >= (mpm || 0));
       const targetTipe = (presensiPulangAktif || isSudahWaktuPulang) ? TIPE.PULANG : tipeAktif;
 
       const statusOtomatis = (targetTipe === TIPE.MASUK) ? (lewatBatas ? 'T' : 'H') : 'P';
@@ -791,15 +859,16 @@ export default function SiswaPresensiSection({ studentData }) {
         keteranganStr
       ).catch(err => console.warn('[Background Notif Ortu] Error:', err))
 
-      // Tampilkan local notification ke siswa
+      // Tampilkan 1 notifikasi konfirmasi ke siswa lengkap dengan foto & lokasi
       if (isNotifGranted()) {
         const tipeLabelSiswa = tipeAktif === TIPE.PULANG ? 'Pulang' : 'Masuk'
         const statusLabelSiswa = STATUS_LABELS[statusOtomatis] || statusOtomatis
-        showLocalNotif(`Presensi ${tipeLabelSiswa} Berhasil (${statusLabelSiswa} - ${jamSekarang} WIB)`, `Presensi ${tipeLabelSiswa} berhasil dikonfirmasi (${statusLabelSiswa}) pada ${jamSekarang} WIB.`, {
-          tag: `presensi-${tipeAktif}`,
-          image: selfieUrl || undefined,
-          summaryText: `Presensi ${tipeLabelSiswa} berhasil dikonfirmasi (${statusLabelSiswa}) pada ${jamSekarang} WIB.`,
-          data: { url: '/dashboard?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Siswa' }
+        const bodyText = `${studentData.nama_lengkap || studentData.nama || 'Siswa'} - Presensi ${tipeLabelSiswa} (${statusLabelSiswa}) berhasil dicatat pukul ${jamSekarang} WIB.${keteranganStr ? ' Lokasi: ' + keteranganStr : ''}`
+        showLocalNotif(`[Siswa] Presensi ${tipeLabelSiswa} Berhasil (${statusLabelSiswa} - ${jamSekarang} WIB)`, bodyText, {
+          tag: `presensi-siswa-${studentData.nisn}-${tipeAktif}`,
+          image: selfieUrl || selfieSrc || undefined,
+          summaryText: bodyText,
+          data: { url: '/dashboard?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Siswa', nisn: studentData?.nisn }
         })
       }
     } catch (err) {
@@ -850,6 +919,9 @@ export default function SiswaPresensiSection({ studentData }) {
       if (filesToDelete.length > 0) {
         await supabase.storage.from('selfie-presensi').remove(filesToDelete)
       }
+
+      // Bersihkan cache notifikasi & batalkan notifikasi tray sebelumnya
+      await clearPresensiNotif(studentData.nisn)
 
       setPresensiMasuk(null); setPresensiPulang(null)
       setTipeAktif(TIPE.MASUK)
@@ -977,6 +1049,8 @@ export default function SiswaPresensiSection({ studentData }) {
             <h2 className="text-2xl font-black text-slate-900">Presensi Hari Ini</h2>
             <p className="text-sm text-slate-500 mt-1">Scan QR Code dari layar TV sekolah untuk mencatat kehadiran Anda.</p>
           </div>
+
+
 
 
 

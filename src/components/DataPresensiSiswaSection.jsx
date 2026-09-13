@@ -175,11 +175,11 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
     return () => supabase.removeChannel(channel)
   }, [tanggal])
 
-  // Fast-poll fallback (4s) to guarantee updates if websocket experiences RLS or channel errors
+  // Backup heartbeat poll (60s) — jaring pengaman pasif jika websocket sempat disconnect
   useEffect(() => {
     const poll = setInterval(() => {
       latestFetchRef.current?.(true)
-    }, 4000)
+    }, 60000)
     return () => clearInterval(poll)
   }, [tanggal])
 

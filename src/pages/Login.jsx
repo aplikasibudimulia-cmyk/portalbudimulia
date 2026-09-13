@@ -467,6 +467,7 @@ function Login() {
           displayName: result.siswa?.nama_lengkap || result.siswa?.nama || username,
           className: result.kelas || result.siswa?.kelas || '',
           avatarUrl: result.siswa?.foto_url || null,
+          nisn: result.siswa?.nisn || result.siswa?.id || username.trim(),
           lastLogin: Date.now()
         })
 
@@ -509,6 +510,7 @@ function Login() {
           displayName: `Orang Tua (${result.siswa?.nama_lengkap || result.siswa?.nama || username})`,
           className: result.kelas || result.siswa?.kelas || '',
           avatarUrl: null,
+          nisn: result.siswa?.nisn || result.siswa?.id || username.trim(),
           lastLogin: Date.now()
         })
 

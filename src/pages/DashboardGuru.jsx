@@ -1489,7 +1489,7 @@ export default function DashboardGuru() {
         setProgramBulanIni(progData || [])
 
         // Set agenda hari ini
-        const todayDateStr = new Date().toISOString().split('T')[0]
+        const todayDateStr = getTodayWIB()
         setSelectedDateEvents((progData || []).filter(p => p.tanggal_mulai === todayDateStr))
       } catch (err) {
         console.warn("Error fetching program_sekolah:", err)

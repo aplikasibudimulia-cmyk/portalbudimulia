@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
 import { downloadFile } from '../utils/fileDownloader'
+import { sendFCMPushNotification } from '../utils/fcmSender'
 
 const getPoinColor = (p) => {
   if (p > 75) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
@@ -396,6 +397,104 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     } else {
       setSuccessMsg(`✓ Poin ${poinNum > 0 ? '+' : ''}${poinNum} berhasil dicatat untuk ${selectedStudent.nama_lengkap}. Total poin: ${newPoin}`)
       setTimeout(() => setSuccessMsg(''), 4000)
+    }
+
+    // 4. Kirim notifikasi lonceng, realtime broadcast, dan Google FCM push ke HP Siswa & Orang Tua
+    try {
+      const isPrestasi = poinNum > 0
+      const detailInfo = selectedKatalogs.length > 0 
+        ? selectedKatalogs.map(k => k.nama).join(', ') 
+        : (keterangan || (isPrestasi ? 'Poin Prestasi' : 'Pelanggaran Tata Tertib'))
+      
+      const notifJudul = isPrestasi 
+        ? `⭐ Catatan Poin Prestasi (+${poinNum})` 
+        : `⚠️ Catatan Poin Pelanggaran (${poinNum})`
+      
+      const notifPesan = isPrestasi
+        ? `Selamat! Anda mendapatkan catatan prestasi: "${detailInfo}" (+${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
+        : `Peringatan: Anda mendapatkan catatan pelanggaran: "${detailInfo}" (${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
+
+      // Simpan ke database notifikasi agar muncul di menu lonceng notifikasi siswa
+      supabase.from('notifikasi').insert({
+        judul: notifJudul,
+        pesan: notifPesan,
+        tipe: isPrestasi ? 'poin' : 'warning',
+        target_nisn: selectedStudent.nisn,
+        target_kelas: selectedStudent.kelas || null,
+        dibuat_oleh: finalPetugas,
+        created_at: nowIso
+      }).then(() => {}).catch(err => console.warn('[Notifikasi DB] Error:', err))
+
+      // Realtime broadcast ke HP Siswa yang sedang membuka aplikasi
+      const targetChannels = [
+        `dashboard-siswa-live-${selectedStudent.nisn}`,
+        `app-notif-${selectedStudent.nisn}`
+      ]
+      targetChannels.forEach(chName => {
+        const notifChannel = supabase.channel(chName, { config: { broadcast: { self: true } } })
+        if (notifChannel.state === 'joined') {
+          notifChannel.send({
+            type: 'broadcast',
+            event: 'catat_poin_update',
+            payload: {
+              judul: notifJudul,
+              pesan: notifPesan,
+              poin: poinNum,
+              totalPoin: newPoin,
+              nisn: selectedStudent.nisn
+            }
+          })
+        } else {
+          notifChannel.subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+              await notifChannel.send({
+                type: 'broadcast',
+                event: 'catat_poin_update',
+                payload: {
+                  judul: notifJudul,
+                  pesan: notifPesan,
+                  poin: poinNum,
+                  totalPoin: newPoin,
+                  nisn: selectedStudent.nisn
+                }
+              })
+              setTimeout(() => supabase.removeChannel(notifChannel), 3000)
+            }
+          })
+        }
+      })
+
+      // Kirim Google FCM Push Notification ke HP Siswa (muncul di status bar & layar usap HP)
+      sendFCMPushNotification({
+        nisn: selectedStudent.nisn,
+        role: 'Siswa',
+        title: notifJudul,
+        body: notifPesan,
+        targetMenu: 'POIN_PELANGGARAN',
+        data: {
+          type: 'CATAT_POIN',
+          poin: String(poinNum),
+          totalPoin: String(newPoin)
+        }
+      }).catch(err => console.warn('[FCM Catat Poin Siswa] Error:', err))
+
+      // Jika pelanggaran (poin negatif), kirim juga ke HP Orang Tua
+      if (!isPrestasi) {
+        sendFCMPushNotification({
+          nisn: selectedStudent.nisn,
+          role: 'Orang Tua',
+          title: `⚠️ Pelanggaran Siswa (${selectedStudent.nama_lengkap})`,
+          body: `Catatan pelanggaran: "${detailInfo}" (${poinNum} poin). Total poin saat ini: ${newPoin}.`,
+          targetMenu: 'POIN_PELANGGARAN',
+          data: {
+            type: 'CATAT_POIN',
+            poin: String(poinNum),
+            totalPoin: String(newPoin)
+          }
+        }).catch(err => console.warn('[FCM Catat Poin Ortu] Error:', err))
+      }
+    } catch (notifErr) {
+      console.warn('[Catat Poin] Gagal kirim notifikasi:', notifErr)
     }
 
     // Reset form

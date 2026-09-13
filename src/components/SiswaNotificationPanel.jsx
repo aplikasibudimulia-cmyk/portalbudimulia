@@ -36,6 +36,11 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
           if (isOrangTua && (n.tipe === 'poin' || n.judul?.toLowerCase().includes('poin') || n.pesan?.toLowerCase().includes('poin'))) {
             return false
           }
+          // Presensi BUKAN pengumuman: jangan sertakan entri presensi dari tabel notifikasi
+          // karena riwayat presensi sudah dimuat lengkap beserta foto dari tabel presensi_harian (di tab Presensi)
+          if (n.tipe === 'presensi' || n.judul?.toLowerCase().includes('presensi') || n.pesan?.toLowerCase().includes('melakukan presensi')) {
+            return false
+          }
           return true
         }).map(n => {
           const isWarning = n.tipe === 'warning' || n.judul?.toLowerCase().includes('peringatan') || n.judul?.toLowerCase().includes('pelanggaran')
@@ -266,9 +271,9 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
     } else if (n.source === 'poin' && onNavigateMenu) {
       onNavigateMenu('POIN')
     } else if (n.source === 'pengajuan_poin' && onNavigateMenu) {
-      onNavigateMenu('AJUKAN_POIN')
+      onNavigateMenu('AJUKAN_POIN', 'riwayat')
     } else if (n.tipe === 'poin' || n.judul?.toLowerCase().includes('pengajuan') || n.pesan?.toLowerCase().includes('pengajuan')) {
-      if (onNavigateMenu) onNavigateMenu('AJUKAN_POIN')
+      if (onNavigateMenu) onNavigateMenu('AJUKAN_POIN', 'riwayat')
     }
     if (onClose) onClose()
   }

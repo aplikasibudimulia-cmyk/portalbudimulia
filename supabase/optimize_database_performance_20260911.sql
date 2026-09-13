@@ -16,6 +16,13 @@ ON presensi_harian (tahun_ajaran_id, tipe, tanggal DESC, siswa_nisn ASC);
 CREATE INDEX IF NOT EXISTS idx_presensi_harian_tgl_tipe 
 ON presensi_harian (tanggal, tipe);
 
+-- Index kunci untuk pencarian status presensi harian per siswa (kecepatan menu presensi siswa & orang tua < 1ms)
+CREATE INDEX IF NOT EXISTS idx_presensi_harian_siswa_tanggal 
+ON presensi_harian (siswa_nisn, tanggal);
+
+CREATE INDEX IF NOT EXISTS idx_sesi_presensi_tanggal 
+ON sesi_presensi (tanggal);
+
 -- 2. Index untuk tabel notifikasi & read status
 CREATE INDEX IF NOT EXISTS idx_notifikasi_target_nisn 
 ON notifikasi (target_nisn);

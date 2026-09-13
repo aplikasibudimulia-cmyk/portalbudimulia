@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { sendFCMPushToWaliKelas } from '../utils/fcmSender'
+import { getTodayWIB } from '../utils/dateUtils'
 
 export default function BendaharaInputTabunganSection({ studentData, bendaharaKelas, activeTa }) {
   const [semuaSiswaKelas, setSemuaSiswaKelas] = useState([])
@@ -10,7 +11,7 @@ export default function BendaharaInputTabunganSection({ studentData, bendaharaKe
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
-  const [transTanggal, setTransTanggal] = useState(() => new Date().toISOString().split('T')[0])
+  const [transTanggal, setTransTanggal] = useState(() => getTodayWIB())
   const [transNominal, setTransNominal] = useState('')
   const [loading, setLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)

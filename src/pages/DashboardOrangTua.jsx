@@ -503,6 +503,8 @@ function DashboardOrangTua() {
         if (n.target_kelas && n.target_kelas !== studentData.kelas) return false
         // Abaikan notifikasi poin untuk orang tua
         if (n.tipe === 'poin' || n.judul?.toLowerCase().includes('poin') || n.pesan?.toLowerCase().includes('poin')) return false
+        // Abaikan notifikasi presensi di counter pengumuman
+        if (n.tipe === 'presensi' || n.judul?.toLowerCase().includes('presensi') || n.pesan?.toLowerCase().includes('melakukan presensi')) return false
         return true
       })
       
@@ -534,9 +536,11 @@ function DashboardOrangTua() {
               return
             }
             if (isNotifGranted()) {
-              showLocalNotif(newNotif.judul || 'Notifikasi Sekolah', newNotif.pesan || 'Ada notifikasi baru dari pihak sekolah.', {
+              const baseJudul = newNotif.judul || 'Notifikasi Sekolah'
+              const formattedJudul = baseJudul.startsWith('[Orang Tua]') ? baseJudul : `[Orang Tua] ${baseJudul}`
+              showLocalNotif(formattedJudul, newNotif.pesan || 'Ada notifikasi baru dari pihak sekolah.', {
                 tag: `notif-${newNotif.id}`,
-                data: { url: '/dashboard-orang-tua', role: 'Orang Tua' }
+                data: { url: '/dashboard-orang-tua', role: 'Orang Tua', nisn: studentData.nisn }
               })
             }
           }
@@ -547,9 +551,9 @@ function DashboardOrangTua() {
         const newBerita = payload.new
         if (newBerita && newBerita.is_published !== false) {
           if (isNotifGranted()) {
-            showLocalNotif(`Pengumuman: ${newBerita.judul}`, newBerita.konten ? newBerita.konten.slice(0, 120) : 'Pengumuman baru telah diterbitkan.', {
+            showLocalNotif(`[Orang Tua] Pengumuman: ${newBerita.judul}`, newBerita.konten ? newBerita.konten.slice(0, 120) : 'Pengumuman baru telah diterbitkan.', {
               tag: `berita-${newBerita.id}`,
-              data: { url: '/dashboard-orang-tua', role: 'Orang Tua' }
+              data: { url: '/dashboard-orang-tua', role: 'Orang Tua', nisn: studentData.nisn }
             })
           }
         }
@@ -571,7 +575,7 @@ function DashboardOrangTua() {
           const saldo = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(row.saldo_akhir)
           const nama = studentData.nama_lengkap || studentData.nama || 'Siswa'
           
-          const title = isSetor ? `Setoran Tabungan ${nama}` : `Penarikan Tabungan ${nama}`
+          const title = isSetor ? `[Orang Tua] Setoran Tabungan ${nama}` : `[Orang Tua] Penarikan Tabungan ${nama}`
           const body = isSetor 
             ? `${nama} telah menabung sebesar ${nominal}. Total tabungan sekarang: ${saldo}.`
             : `Penarikan tabungan sebesar ${nominal} telah berhasil. Total tabungan sekarang: ${saldo}.`
@@ -580,7 +584,7 @@ function DashboardOrangTua() {
             showLocalNotif(title, body, {
               tag: `tabungan-${row.id}-${Date.now()}`,
               summaryText: body,
-              data: { url: '/dashboard-orang-tua?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Orang Tua' }
+              data: { url: '/dashboard-orang-tua?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Orang Tua', nisn: studentData.nisn }
             })
           }
         }
@@ -596,16 +600,6 @@ function DashboardOrangTua() {
     const channel = supabase.channel(`notif-ortu-${studentData.nisn}`)
       .on('broadcast', { event: 'presensi_update' }, ({ payload }) => {
         setPresensiToast(payload)
-        if (isNotifGranted()) {
-          const lokasiText = payload.lokasi ? ` Lokasi: ${payload.lokasi}` : ""
-          const body = `${payload.namaLengkap} - ${payload.tipeLabel} pukul ${payload.waktu} WIB (${payload.statusLabel}).${lokasiText}`
-          showLocalNotif(`Presensi ${payload.tipeLabel} Siswa (${payload.statusLabel} - ${payload.waktu} WIB)`, body, { 
-            tag: `presensi-${payload.tipe}-${Date.now()}`,
-            image: payload.selfieUrl || undefined,
-            summaryText: body,
-            data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua' }
-          })
-        }
         setTimeout(() => setPresensiToast(null), 15000)
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, (payload) => {
@@ -622,16 +616,6 @@ function DashboardOrangTua() {
           selfieUrl: row.selfie_url
         }
         setPresensiToast(toastObj)
-        if (isNotifGranted()) {
-          const lokasiText = row.keterangan ? ` Lokasi: ${row.keterangan}` : ""
-          const body = `${studentData.nama_lengkap} - ${tipeLabel} pukul ${row.waktu} WIB (${statusLabel}).${lokasiText}`
-          showLocalNotif(`Presensi ${tipeLabel} Siswa (${statusLabel} - ${row.waktu} WIB)`, body, { 
-            tag: `presensi-${row.tipe}-${row.id}`,
-            image: row.selfie_url || undefined,
-            summaryText: body,
-            data: { url: '/dashboard-orang-tua?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Orang Tua' }
-          })
-        }
         setTimeout(() => setPresensiToast(null), 15000)
       })
       .subscribe()

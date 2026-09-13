@@ -944,6 +944,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     
     if (activeTab === 'murid') {
       const nisn = row.foreign_id
+      const cleanNisn = String(nisn || '').trim()
       // Delete all related records across all tables for this student
       await Promise.all([
         supabase.from('enrollment').delete().eq('nisn', nisn),
@@ -957,7 +958,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         supabase.from('impersonate_tokens').delete().eq('target_user_id', nisn)
       ])
       if (row.akun_id) await supabase.from('akun_pengguna').delete().eq('id', row.akun_id)
-      await supabase.from('akun_pengguna').delete().eq('foreign_id', nisn)
+      if (cleanNisn) {
+        await supabase.from('akun_pengguna').delete().eq('foreign_id', cleanNisn)
+      }
+      if (nisn && nisn !== cleanNisn) {
+        await supabase.from('akun_pengguna').delete().eq('foreign_id', nisn)
+      }
       const { error } = await supabase.from('siswa_permanent').delete().eq('nisn', nisn)
       if (error) alert("Gagal hapus data siswa: " + error.message)
     } else if (activeTab === 'orang_tua') {
@@ -1037,6 +1043,31 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       const rawJk = String(rawStudent?.jenis_kelamin || rawStudent?.gender || '').trim().toUpperCase();
       const jkVal = rawJk.startsWith('L') ? 'L' : rawJk.startsWith('P') ? 'P' : (rawStudent?.jenis_kelamin || '');
 
+      let currentHasAkun = row?.hasAkun || false;
+      let currentAkunId = row?.akun_id || null;
+      let currentAkunStatus = row?.hasAkun ? row.status : 'aktif';
+      let currentUsername = row?.hasAkun ? row.username : (activeTab === 'orang_tua' ? '' : emailAktifVal);
+
+      if (!currentHasAkun && row?.foreign_id) {
+        const targetRole = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'murid' : activeTab);
+        const cleanFId = String(row.foreign_id).trim();
+        const { data: liveAkun } = await supabase
+          .from('akun_pengguna')
+          .select('id, username, status')
+          .eq('role', targetRole)
+          .eq('foreign_id', cleanFId)
+          .maybeSingle();
+        if (liveAkun) {
+          currentHasAkun = true;
+          currentAkunId = liveAkun.id;
+          currentAkunStatus = liveAkun.status || 'aktif';
+          currentUsername = liveAkun.username;
+          if (activeTab === 'murid' && (!usernameSiswaVal || usernameSiswaVal.startsWith('ebmsiswa.'))) {
+            usernameSiswaVal = liveAkun.username;
+          }
+        }
+      }
+
       const formState = {
         isNew: !row,
         row: row,
@@ -1045,14 +1076,14 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         nama: initialNama,
         jenis_kelamin: jkVal,
         kelas: row?.kelas !== '-' ? row?.kelas : '',
-        username: row?.hasAkun ? row.username : (activeTab === 'orang_tua' ? '' : emailAktifVal),
+        username: currentUsername,
         email_aktif: emailAktifVal,
         username_siswa: usernameSiswaVal,
         password: '',
-        hasAkun: row?.hasAkun || false,
-        akun_id: row?.akun_id,
+        hasAkun: currentHasAkun,
+        akun_id: currentAkunId,
         foto_url: row?.foto_url || null,
-        akun_status: row?.hasAkun ? row.status : 'aktif',
+        akun_status: currentAkunStatus,
         telegram_ortu: rawStudent?.telegram_ortu || '',
         no_whatsapp: rawStudent?.no_whatsapp || '',
         no_hp: rawStudent?.no_hp || rawStudent?.no_whatsapp || '',
@@ -1221,7 +1252,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setProgressText("Menyimpan data...")
 
     try {
-      let f_id = biodataForm.foreign_id
+      let f_id = String(biodataForm.foreign_id || '').trim()
       
       // 1. Save Biodata
       if (activeTab === 'murid' || activeTab === 'orang_tua') {
@@ -1431,11 +1462,26 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         // Selalu potong domain dari username sebelum dikirim ke DB
         // Ini penting agar auth.users email tersimpan sebagai: username@ebudimulia.local (bukan username@gmail.com@ebudimulia.local)
         const cleanUsernameForAkun = uName.includes('@') ? uName.split('@')[0].toLowerCase() : uName.toLowerCase()
+        const cleanFId = String(f_id || '').trim()
 
-        if (biodataForm.hasAkun && biodataForm.akun_id) {
+        // Cari tahu akun_id: pertama dari state, jika tidak ada cek langsung ke akun_pengguna untuk menghindari duplicate key
+        let resolvedAkunId = (biodataForm.hasAkun && biodataForm.akun_id) ? biodataForm.akun_id : null;
+        if (!resolvedAkunId && cleanFId) {
+          const { data: directAkun } = await supabase
+            .from('akun_pengguna')
+            .select('id')
+            .eq('role', roleName)
+            .eq('foreign_id', cleanFId)
+            .maybeSingle()
+          if (directAkun?.id) {
+            resolvedAkunId = directAkun.id;
+          }
+        }
+
+        if (resolvedAkunId) {
           // Panggil RPC untuk sinkronisasi username ke akun_pengguna DAN auth.users sekaligus
           const { data: updateResult, error: updateErr } = await supabase.rpc('admin_update_username', {
-            p_akun_id: biodataForm.akun_id,
+            p_akun_id: resolvedAkunId,
             p_new_username: cleanUsernameForAkun
           })
           if (updateErr || !updateResult?.ok) {
@@ -1445,12 +1491,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           // Update status akun
           await supabase.from('akun_pengguna').update({
             status: biodataForm.akun_status
-          }).eq('id', biodataForm.akun_id)
+          }).eq('id', resolvedAkunId)
 
           // Jika ada password baru, panggil RPC reset password
           if (biodataForm.password) {
             const { data: resetResult, error: resetErr } = await supabase.rpc('admin_reset_password', {
-              p_akun_id: biodataForm.akun_id,
+              p_akun_id: resolvedAkunId,
               p_new_password: biodataForm.password
             })
             if (resetErr || !resetResult?.ok) throw new Error(resetResult?.msg || resetErr?.message || "Gagal mereset password")
@@ -1464,7 +1510,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             p_username: cleanUsernameForAkun,
             p_password: pWord,
             p_role: roleName,
-            p_foreign_id: f_id,
+            p_foreign_id: cleanFId,
             p_status: biodataForm.akun_status
           })
           if (createErr || !createResult?.ok) throw new Error(createResult?.msg || createErr?.message || "Gagal membuat akun")
@@ -1493,35 +1539,41 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           const { data: existingOrtu } = await supabase
             .from('akun_pengguna')
             .select('id')
-            .eq('foreign_id', f_id)
+            .eq('foreign_id', cleanFId)
             .eq('role', 'orang_tua')
             .maybeSingle()
 
           if (existingOrtu) {
-            // Update username dan status ortu
+            // Akun ortu sudah ada — update username & status saja, JANGAN reset password yang sudah aktif!
+            await supabase.rpc('admin_update_username', {
+              p_akun_id: existingOrtu.id,
+              p_new_username: ortuUsername
+            })
+
             await supabase.from('akun_pengguna').update({
-              username: ortuUsername,
               status: biodataForm.akun_status
             }).eq('id', existingOrtu.id)
 
-            // Reset password ortu
-            await supabase.rpc('admin_reset_password', {
-              p_akun_id: existingOrtu.id,
-              p_new_password: ortuPassword
-            })
+            await supabase.from('siswa_permanent').update({
+              ortu_username: ortuUsername
+            }).eq('nisn', cleanFId)
           } else {
-            // Buat akun ortu baru
+            // Hanya buat password baru jika akun ortu memang BELUM PERNAH ADA
+            const ortuPassword = Math.random().toString(36).substring(2, 8).toUpperCase() // 6 karakter acak
             const { data: ortuResult, error: ortuErr } = await supabase.rpc('admin_create_user', {
               p_username: ortuUsername,
               p_password: ortuPassword,
               p_role: 'orang_tua',
-              p_foreign_id: f_id,
+              p_foreign_id: cleanFId,
               p_status: biodataForm.akun_status
             })
             if (ortuErr || !ortuResult?.ok) throw new Error(ortuResult?.msg || ortuErr?.message || "Gagal membuat akun orang tua")
+
+            await supabase.from('siswa_permanent').update({
+              ortu_username: ortuUsername,
+              ortu_password: ortuPassword
+            }).eq('nisn', cleanFId)
           }
-          
-          await supabase.from('siswa_permanent').update({ ortu_username: ortuUsername, ortu_password: ortuPassword }).eq('nisn', f_id)
         }
       }
 
@@ -2751,16 +2803,11 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
         let hasDuplicate = false
         const currentContacts = Array.isArray(s.kontak_ortu) ? [...s.kontak_ortu] : []
-        let newContacts = []
 
         if (currentContacts.length > 0) {
-          newContacts = currentContacts.filter(k => {
+          hasDuplicate = currentContacts.some(k => {
             const kPhone = cleanPhone(k.nomor)
-            if (kPhone && kPhone === studentPhone) {
-              hasDuplicate = true
-              return false // bersihkan duplikasi kontak ortu yang sama dengan nomor siswa
-            }
-            return true
+            return kPhone && kPhone === studentPhone
           })
         }
 
@@ -2770,12 +2817,32 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }
 
         if (hasDuplicate) {
+          // Pastikan nomor kembar tersimpan AMAN di kontak Orang Tua
+          let preservedContacts = [...currentContacts]
+          const targetPhone = s.no_hp_ortu || studentPhone
+
+          if (preservedContacts.length === 0) {
+            preservedContacts = [{
+              tag: 'Orang Tua',
+              nama: s.nama_ortu || 'Orang Tua',
+              nomor: targetPhone
+            }]
+          } else {
+            preservedContacts = preservedContacts.map(k => {
+              const kPhone = cleanPhone(k.nomor)
+              if (!kPhone || kPhone === studentPhone) {
+                return { ...k, nomor: k.nomor || targetPhone }
+              }
+              return k
+            })
+          }
+
           duplicates.push({
             nisn: s.nisn,
             nama: s.nama_lengkap,
-            studentPhone,
-            newContacts,
-            newNoHpOrtu: newContacts.length > 0 ? (newContacts[0].nomor || null) : null
+            sharedPhone: studentPhone,
+            preservedContacts,
+            preservedNoHpOrtu: targetPhone
           })
         }
       }
@@ -2787,8 +2854,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       const confirmed = await requestConfirm({
         title: `Bersihkan ${duplicates.length} Data HP Kembar?`,
-        message: `Ditemukan ${duplicates.length} siswa yang nomor HP-nya tercatat ganda sebagai kontak Orang Tua (karena riwayat pengisian lama menduplikasi nomor siswa ke kolom orang tua).\n\nSistem akan membersihkan duplikasi tersebut dari data Orang Tua.\n\n🛡️ Nomor WhatsApp/HP Siswa dijamin TETAP AMAN dan tidak terhapus. Lanjutkan?`,
-        confirmLabel: `Bersihkan (${duplicates.length})`,
+        message: `Ditemukan ${duplicates.length} data di mana nomor WhatsApp siswa sama persis dengan kontak Orang Tua.\n\n🛡️ Nomor tersebut akan DITETAPKAN SEBAGAI NOMOR ORANG TUA (AMAN & TETAP ADA).\n\nNomor duplikasi pada kolom nomor siswa akan dikosongkan agar siswa dapat melengkapi nomor HP pribadinya sendiri saat membuka Kartu Pelajar.\n\nLanjutkan pemisahan?`,
+        confirmLabel: `Pisahkan Kontak (${duplicates.length})`,
         confirmColor: 'amber',
         icon: 'warning',
       })
@@ -2797,12 +2864,16 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       let cleanedCount = 0
       for (const item of duplicates) {
-        setProgressText(`Membersihkan (${cleanedCount + 1}/${duplicates.length}): ${item.nama}`)
+        setProgressText(`Memisahkan kontak (${cleanedCount + 1}/${duplicates.length}): ${item.nama}`)
         const { error: updateErr } = await supabase
           .from('siswa_permanent')
           .update({
-            kontak_ortu: item.newContacts,
-            no_hp_ortu: item.newNoHpOrtu
+            // Nomor Orang Tua tetap aman dan terjaga
+            kontak_ortu: item.preservedContacts,
+            no_hp_ortu: item.preservedNoHpOrtu,
+            // Kosongkan dari kolom siswa agar siswa mengisi nomor pribadinya sendiri
+            no_whatsapp: null,
+            no_hp: null
           })
           .eq('nisn', item.nisn)
 
@@ -2813,7 +2884,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
 
       await fetchData()
       if (onRefresh) onRefresh()
-      alert(`✅ Selesai! Berhasil membersihkan ${cleanedCount} data nomor HP kembar. Sekarang nomor HP siswa dan orang tua sudah terpisah rapi.`)
+      alert(`✅ Selesai! Berhasil memisahkan ${cleanedCount} data nomor HP kembar. Nomor HP orang tua tetap aman tersimpan, dan siswa akan diminta mengisi nomor pribadinya sendiri.`)
     } catch (err) {
       console.error('Error saat membersihkan HP kembar:', err)
       alert('Terjadi kesalahan saat membersihkan data: ' + err.message)

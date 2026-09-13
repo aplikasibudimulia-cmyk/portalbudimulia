@@ -422,13 +422,13 @@ export default function PresensiTV() {
     return () => supabase.removeChannel(channel)
   }, [fetchStats, fetchLatestCheckins, getSiswaInfo])
 
-  // Fast-poll fallback for activity feed (2s) — catches missed realtime events
+  // Backup heartbeat poll (60s) — jaring pengaman pasif jika websocket sempat disconnect
   useEffect(() => {
     if (loading) return
     const poll = setInterval(() => {
       fetchLatestCheckins()
       fetchStats()
-    }, 2000)
+    }, 60000)
     return () => clearInterval(poll)
   }, [loading, fetchLatestCheckins, fetchStats])
 

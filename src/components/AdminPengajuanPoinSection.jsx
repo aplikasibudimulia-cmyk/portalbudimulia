@@ -389,7 +389,11 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
           role: 'Siswa',
           title: notifJudul,
           body: notifPesan,
-          targetMenu: 'AJUKAN_POIN'
+          targetMenu: 'AJUKAN_POIN',
+          data: {
+            targetTab: 'riwayat',
+            url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat'
+          }
         }).catch(fcmErr => console.warn('[FCM Poin] Push error:', fcmErr))
       }
     } catch (notifErr) {
@@ -557,7 +561,11 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
             role: 'Siswa',
             title: judul,
             body: pesan,
-            targetMenu: 'AJUKAN_POIN'
+            targetMenu: 'AJUKAN_POIN',
+            data: {
+              targetTab: 'riwayat',
+              url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat'
+            }
           }).catch(fcmErr => console.warn('[FCM Bulk Poin] Push error:', fcmErr))
         })
       }

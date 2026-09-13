@@ -21,8 +21,21 @@ import { getTodayWIB, getDayIndexWIB, getCurrentTimeWIB } from '../utils/dateUti
 
 function Dashboard() {
   const navigate = useNavigate()
-  const [studentData, setStudentData] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [studentData, setStudentData] = useState(() => {
+    try {
+      const raw = localStorage.getItem('siswa_session')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })
+  const [loading, setLoading] = useState(() => {
+    try {
+      return !localStorage.getItem('siswa_session')
+    } catch {
+      return true
+    }
+  })
   const [menuTypes, setMenuTypes] = useState([])
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
   
@@ -88,6 +101,20 @@ function Dashboard() {
           .eq('tanggal', todayStr)
 
         const sudahMasuk = presensiData?.some(p => p.tipe === 'masuk')
+        const masuk = presensiData?.find(p => !p.tipe || p.tipe === 'masuk') || null
+        const pulang = presensiData?.find(p => p.tipe === 'pulang') || null
+        try {
+          const cacheKey = `ebm_presensi_cache_${studentData.nisn}_${todayStr}`
+          const prevCache = JSON.parse(sessionStorage.getItem(cacheKey) || '{}')
+          sessionStorage.setItem(cacheKey, JSON.stringify({
+            ...prevCache,
+            presensiMasuk: masuk,
+            presensiPulang: pulang,
+            tipeAktif: pulang ? 'pulang' : 'masuk',
+            jamBatasHadir,
+            timestamp: Date.now()
+          }))
+        } catch {}
 
         if (!sudahMasuk) {
           setPresensiHariIniStatus('belum_masuk')
@@ -104,9 +131,12 @@ function Dashboard() {
 
           if (notifAktif && currentTimeStr >= jamMulaiNotif) {
             showLocalNotif(
-              'Pengingat Presensi Masuk',
+              '[Siswa] Pengingat Presensi Masuk',
               `Halo ${studentData.nama_lengkap || studentData.nama || 'Siswa'}, Anda belum melakukan presensi hari ini (Batas hadir: ${jamBatasHadir} WIB). Silakan lakukan presensi.`,
-              { tag: `pengingat-presensi-${Date.now()}` }
+              { 
+                tag: `pengingat-presensi-${Date.now()}`,
+                data: { url: '/dashboard?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Siswa', nisn: studentData.nisn }
+              }
             )
           }
         } else {
@@ -151,7 +181,7 @@ function Dashboard() {
       }
     }
     checkBendahara()
-  }, [studentData])
+  }, [studentData?.nisn, studentData?.tahun_ajaran_id])
 
   // Realtime Notification Listener untuk Siswa yang sedang login
   useEffect(() => {
@@ -159,10 +189,12 @@ function Dashboard() {
     const nisn = String(studentData.nisn)
 
     const handleIncomingNotif = (payload) => {
+      const rawTitle = payload.judul || 'Status Pengajuan Poin'
+      const titleWithRole = rawTitle.includes('[Siswa]') ? rawTitle : `[Siswa] ${rawTitle}`
       if (isNotifGranted()) {
-        showLocalNotif(payload.judul || 'Status Pengajuan Poin', payload.pesan || 'Ada pembaruan status pengajuan poin Anda.', {
+        showLocalNotif(titleWithRole, payload.pesan || 'Ada pembaruan status pengajuan poin Anda.', {
           tag: `pengajuan-${payload.status || 'update'}-${nisn}-${Date.now()}`,
-          data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+          data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa', nisn }
         })
       }
     }
@@ -201,11 +233,12 @@ function Dashboard() {
         if (!row) return
         const isPos = (row.poin_diberikan || 0) > 0
         const title = isPos ? `Poin Prestasi (+${row.poin_diberikan})` : `Catatan Pelanggaran (${row.poin_diberikan} Poin)`
+        const titleWithRole = `[Siswa] ${title}`
         const body = `${row.jenis || 'Catatan Karakter'}\n${row.keterangan ? row.keterangan : ''}`
         if (isNotifGranted()) {
-          showLocalNotif(title, body, {
+          showLocalNotif(titleWithRole, body, {
             tag: `poin-rec-${row.id}`,
-            data: { url: '/dashboard?menu=POIN', targetMenu: 'POIN', role: 'Siswa' }
+            data: { url: '/dashboard?menu=POIN', targetMenu: 'POIN', role: 'Siswa', nisn }
           })
         }
       })
@@ -241,12 +274,26 @@ function Dashboard() {
     }
   })
 
+  const [targetSubTab, setTargetSubTab] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      return params.get('tab') || null
+    } catch {
+      return null
+    }
+  })
+
   useEffect(() => {
     const checkMenuParam = () => {
       try {
         const params = new URLSearchParams(window.location.search)
         const m = params.get('menu')
+        const t = params.get('tab')
         if (m) setSelectedType(m)
+        if (t) {
+          setTargetSubTab(t)
+          window.dispatchEvent(new CustomEvent('switch-pengajuan-tab', { detail: { tab: t } }))
+        }
       } catch {}
     }
     checkMenuParam()
@@ -378,39 +425,50 @@ function Dashboard() {
       return
     }
     
-    // Fetch historical enrollments to check ta_referensi_id correctly
-    const { data: enrollments } = await supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn)
-    if (enrollments) data.enrollments = enrollments
-    
-    // Ambil tahun ajaran yang sedang aktif saat ini
+    // Fetch historical enrollments, active TA, biodata, menu types, school settings, and photos in ONE parallel round-trip
+    let enrollments = null
+    let activeTaData = null
+    let latestStudentData = null
+    let types = null
+    let pengaturan = null
+    let allFotos = null
+
     try {
-      const { data: activeTaData } = await supabase
-        .from('tahun_ajaran')
-        .select('*')
-        .eq('is_aktif', true)
-        .maybeSingle()
-
-      if (activeTaData) {
-        data.tahun_ajaran_id = activeTaData.id
-        data.tahun_ajaran = activeTaData.nama
-
-        // Ambil rombel/kelas siswa di tahun ajaran aktif tersebut jika ada
-        const currentEnr = enrollments?.find(e => e.tahun_ajaran_id === activeTaData.id)
-        if (currentEnr) {
-          data.kelas = currentEnr.kelas
-          data.kode = currentEnr.kode
-        }
-      }
+      const [resEnr, resTa, resBio, resTypes, resSettings, resFotos] = await Promise.all([
+        supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn),
+        supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
+        supabase.from('siswa_permanent').select('*').eq('nisn', data.nisn).maybeSingle(),
+        supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
+        supabase.from('pengaturan_sekolah').select('*'),
+        data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
+      ])
+      enrollments = resEnr?.data
+      activeTaData = resTa?.data
+      latestStudentData = resBio?.data
+      types = resTypes?.data
+      pengaturan = resSettings?.data
+      allFotos = resFotos?.data
     } catch (err) {
-      console.warn('Gagal fetch active tahun_ajaran:', err)
+      console.warn('Error during parallel init queries:', err)
     }
 
-    // Fetch latest biodata directly from siswa_permanent to ensure up-to-date parent data & NISN
-    try {
-      let { data: latestStudentData } = await supabase.from('siswa_permanent').select('*').eq('nisn', data.nisn).maybeSingle()
-      
-      // Auto-heal jika NISN siswa sudah di-update oleh sekolah namun HP siswa masih menyimpan NISN lama:
-      if (!latestStudentData && data.nama_lengkap) {
+    if (enrollments) data.enrollments = enrollments
+
+    if (activeTaData) {
+      data.tahun_ajaran_id = activeTaData.id
+      data.tahun_ajaran = activeTaData.nama
+
+      // Ambil rombel/kelas siswa di tahun ajaran aktif tersebut jika ada
+      const currentEnr = enrollments?.find(e => e.tahun_ajaran_id === activeTaData.id)
+      if (currentEnr) {
+        data.kelas = currentEnr.kelas
+        data.kode = currentEnr.kode
+      }
+    }
+
+    // Auto-heal jika NISN siswa sudah di-update oleh sekolah namun HP siswa masih menyimpan NISN lama:
+    if (!latestStudentData && data.nama_lengkap) {
+      try {
         const { data: healedStudent } = await supabase
           .from('siswa_permanent')
           .select('*')
@@ -422,68 +480,61 @@ function Dashboard() {
           data.nisn = healedStudent.nisn
           localStorage.setItem('siswa_session', JSON.stringify({ ...data, ...healedStudent }))
         }
+      } catch (e) {
+        console.warn('Auto-heal check failed:', e)
       }
-
-      if (latestStudentData) {
-        data = {
-          ...data,
-          ...latestStudentData,
-          alamat: latestStudentData.alamat || '',
-          rt: latestStudentData.rt || '',
-          rw: latestStudentData.rw || '',
-          rt_rw: latestStudentData.rt_rw || '',
-          kelurahan: latestStudentData.kelurahan || '',
-          kecamatan: latestStudentData.kecamatan || '',
-          kota: latestStudentData.kota || '',
-          tempat_lahir: latestStudentData.tempat_lahir || '',
-          tanggal_lahir: latestStudentData.tanggal_lahir || '',
-          jenis_kelamin: latestStudentData.jenis_kelamin || '',
-          kontak_ortu: latestStudentData.kontak_ortu || [],
-          no_hp_ortu: latestStudentData.no_hp_ortu || '',
-          nama_ortu: latestStudentData.nama_ortu || '',
-          tinggal_bersama: latestStudentData.tinggal_bersama || ''
-        }
-        try {
-          localStorage.setItem('siswa_session', JSON.stringify(data))
-        } catch {}
-      } else if (!latestStudentData && data.nisn) {
-        // Data siswa telah dihapus dari tabel siswa_permanent oleh admin
-        data = {
-          ...data,
-          alamat: '',
-          rt: '',
-          rw: '',
-          rt_rw: '',
-          kelurahan: '',
-          kecamatan: '',
-          kota: '',
-          tempat_lahir: '',
-          tanggal_lahir: '',
-          kontak_ortu: [],
-          no_hp_ortu: '',
-          nama_ortu: '',
-          tinggal_bersama: ''
-        }
-        try {
-          localStorage.setItem('siswa_session', JSON.stringify(data))
-        } catch {}
-      }
-    } catch (err) {
-      console.warn('Failed to fetch latest siswa_permanent biodata:', err)
     }
 
-    setStudentData(data)
+    if (latestStudentData) {
+      data = {
+        ...data,
+        ...latestStudentData,
+        alamat: latestStudentData.alamat || '',
+        rt: latestStudentData.rt || '',
+        rw: latestStudentData.rw || '',
+        rt_rw: latestStudentData.rt_rw || '',
+        kelurahan: latestStudentData.kelurahan || '',
+        kecamatan: latestStudentData.kecamatan || '',
+        kota: latestStudentData.kota || '',
+        tempat_lahir: latestStudentData.tempat_lahir || '',
+        tanggal_lahir: latestStudentData.tanggal_lahir || '',
+        jenis_kelamin: latestStudentData.jenis_kelamin || '',
+        kontak_ortu: latestStudentData.kontak_ortu || [],
+        no_hp_ortu: latestStudentData.no_hp_ortu || '',
+        nama_ortu: latestStudentData.nama_ortu || '',
+        tinggal_bersama: latestStudentData.tinggal_bersama || ''
+      }
+      try {
+        localStorage.setItem('siswa_session', JSON.stringify(data))
+      } catch {}
+    } else if (!latestStudentData && data.nisn) {
+      // Data siswa telah dihapus dari tabel siswa_permanent oleh admin
+      data = {
+        ...data,
+        alamat: '',
+        rt: '',
+        rw: '',
+        rt_rw: '',
+        kelurahan: '',
+        kecamatan: '',
+        kota: '',
+        tempat_lahir: '',
+        tanggal_lahir: '',
+        kontak_ortu: [],
+        no_hp_ortu: '',
+        nama_ortu: '',
+        tinggal_bersama: ''
+      }
+      try {
+        localStorage.setItem('siswa_session', JSON.stringify(data))
+      } catch {}
+    }
 
-    // Parallelize all initial Supabase queries (types, pengaturan, foto)
-    const [
-      { data: types },
-      { data: pengaturan },
-      { data: allFotos }
-    ] = await Promise.all([
-      supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
-      supabase.from('pengaturan_sekolah').select('*'),
-      data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
-    ])
+    setStudentData(prev => {
+      if (!prev) return data
+      if (JSON.stringify(prev) === JSON.stringify(data)) return prev
+      return data
+    })
     
     const visible = types ?? []
     
@@ -604,8 +655,11 @@ function Dashboard() {
       .order('created_at', { ascending: false })
       .limit(50)
     
-    if (!allNotif) return
-    const valid = allNotif.filter(n => !n.target_kelas || n.target_kelas === studentData.kelas)
+    const valid = allNotif.filter(n => {
+      if (n.target_kelas && n.target_kelas !== studentData.kelas) return false
+      if (n.tipe === 'presensi' || n.judul?.toLowerCase().includes('presensi') || n.pesan?.toLowerCase().includes('melakukan presensi')) return false
+      return true
+    })
     
     const { data: readNotif } = await supabase.from('notifikasi_read')
       .select('notifikasi_id')
@@ -630,8 +684,13 @@ function Dashboard() {
     setRecentNotifications(mapped)
   }
 
+  const initRef = useRef(init)
   useEffect(() => {
-    if (!studentData) return
+    initRef.current = init
+  }, [init])
+
+  useEffect(() => {
+    if (!studentData?.nisn) return
     initNativePushNotifications({ nisn: studentData.nisn, role: 'Siswa' })
     fetchNotifCount()
     
@@ -653,7 +712,7 @@ function Dashboard() {
           const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(row.jumlah)
           const saldo = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(row.saldo_akhir)
           
-          const title = isSetor ? 'Setoran Tabungan Berhasil' : 'Penarikan Tabungan Berhasil'
+          const title = isSetor ? '[Siswa] Setoran Tabungan Berhasil' : '[Siswa] Penarikan Tabungan Berhasil'
           const body = isSetor
             ? `Setoran tabungan sebesar ${nominal} telah diverifikasi. Total tabungan kamu sekarang: ${saldo}.`
             : `Penarikan tabungan sebesar ${nominal} berhasil. Total tabungan kamu sekarang: ${saldo}.`
@@ -662,7 +721,7 @@ function Dashboard() {
             showLocalNotif(title, body, {
               tag: `tabungan-${row.id}-${Date.now()}`,
               summaryText: body,
-              data: { url: '/dashboard?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Siswa' }
+              data: { url: '/dashboard?menu=TABUNGAN', targetMenu: 'TABUNGAN', role: 'Siswa', nisn: studentData.nisn }
             })
           }
         }
@@ -674,12 +733,12 @@ function Dashboard() {
         filter: `nisn=eq.${studentData.nisn}`
       }, () => {
         console.log('[Realtime Dashboard] Terdeteksi perubahan siswa_permanent, sinkronisasi data...')
-        init()
+        initRef.current?.()
       })
       .subscribe()
       
     return () => supabase.removeChannel(channel)
-  }, [studentData, init])
+  }, [studentData?.nisn, studentData?.kelas])
 
   const fetchBerandaPoints = useCallback(async () => {
     if (!studentData?.nisn) return
@@ -717,7 +776,7 @@ function Dashboard() {
     } finally {
       setLoadingBerandaPoints(false)
     }
-  }, [studentData])
+  }, [studentData?.nisn, studentData?.tahun_ajaran_id])
 
   useEffect(() => {
     if (studentData?.nisn) {
@@ -730,7 +789,7 @@ function Dashboard() {
 
       return () => supabase.removeChannel(pChannel)
     }
-  }, [studentData, fetchBerandaPoints])
+  }, [studentData?.nisn, studentData?.tahun_ajaran_id, fetchBerandaPoints])
 
   const handleRequestPushNotif = async () => {
     const permission = await requestNotifPermission()
@@ -835,23 +894,29 @@ function Dashboard() {
     }
   }, [pdfUrl, selectedType, studentData, loggedTypes])
 
+  const studentDataRef = useRef(studentData)
+  useEffect(() => {
+    studentDataRef.current = studentData
+  }, [studentData])
+
   // Supabase Realtime — menggantikan polling setInterval 1.5 detik
   // Subscribe ke 3 tabel: jenis_pengumuman, berkas_pengumuman, pengaturan_sekolah
   useEffect(() => {
-    if (loading || !studentData) return
+    if (loading || !studentData?.nisn) return
 
     const handleMenuUpdate = async () => {
+      const currentStudent = studentDataRef.current || studentData
       const { data: types } = await supabase
         .from('jenis_pengumuman').select('*').eq('visible', true).order('urutan')
       const visible = types ?? []
       const applicableTypes = visible.filter(t => {
         const target = t.target_kelas || []
         if (!Array.isArray(target) || target.length === 0) return true
-        if (t.ta_referensi_id && studentData?.enrollments) {
-          const enr = studentData.enrollments.find(e => e.tahun_ajaran_id === t.ta_referensi_id)
+        if (t.ta_referensi_id && currentStudent?.enrollments) {
+          const enr = currentStudent.enrollments.find(e => e.tahun_ajaran_id === t.ta_referensi_id)
           if (enr) return target.includes(enr.kelas)
         }
-        return target.includes(studentData?.kelas)
+        return target.includes(currentStudent?.kelas)
       })
       setMenuTypes(prev => {
         if (JSON.stringify(prev) === JSON.stringify(applicableTypes)) return prev
@@ -934,11 +999,12 @@ function Dashboard() {
           table: 'berkas_pengumuman'
         },
         (payload) => {
+          const currentStudent = studentDataRef.current || studentData
           console.log('[REALTIME DEBUG] Berkas update received:', payload)
-          if (payload.new && payload.new.kode_siswa === (studentData?.enrollments?.find(e => e.tahun_ajaran_id === (studentData.tahun_ajaran_id))?.kode || studentData.kode)) {
+          if (payload.new && payload.new.kode_siswa === (currentStudent?.enrollments?.find(e => e.tahun_ajaran_id === (currentStudent.tahun_ajaran_id))?.kode || currentStudent.kode)) {
             console.log('[REALTIME DEBUG] Matched kode_siswa, updating state!')
             handleBerkasUpdate()
-          } else if (payload.eventType === 'DELETE' && payload.old && (studentData?.enrollments?.map(e => e.kode).includes(payload.old.kode_siswa) || payload.old.kode_siswa === studentData.kode)) {
+          } else if (payload.eventType === 'DELETE' && payload.old && (currentStudent?.enrollments?.map(e => e.kode).includes(payload.old.kode_siswa) || payload.old.kode_siswa === currentStudent.kode)) {
              handleBerkasUpdate()
           } else {
             // Also call handleBerkasUpdate just in case the filter was failing due to missing columns
@@ -954,8 +1020,9 @@ function Dashboard() {
     const broadcastChannel = supabase.channel('ebudimulia-global-settings-broadcast')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, handleSettingsUpdate)
       .on('broadcast', { event: 'berkas_updated' }, (payload) => {
+        const currentStudent = studentDataRef.current || studentData
         console.log('[REALTIME DEBUG] Broadcast received:', payload)
-        if (payload.payload && (studentData?.enrollments?.map(e => e.kode).includes(payload.payload.kode_siswa) || payload.payload.kode_siswa === studentData.kode || studentData?.nisn === payload.payload.kode_siswa)) {
+        if (payload.payload && (currentStudent?.enrollments?.map(e => e.kode).includes(payload.payload.kode_siswa) || payload.payload.kode_siswa === currentStudent.kode || currentStudent?.nisn === payload.payload.kode_siswa)) {
           handleBerkasUpdate()
         } else if (payload.payload && String(payload.payload.kode_siswa).toLowerCase() === 'all') {
           handleBerkasUpdate()
@@ -983,7 +1050,7 @@ function Dashboard() {
       supabase.removeChannel(broadcastChannel)
       supabase.removeChannel(jenisChannel)
     }
-  }, [loading, studentData])
+  }, [loading, studentData?.nisn])
 
   const handleLogout = async () => {
     window.__ebudimuliaExplicitLogout = true
@@ -1929,13 +1996,18 @@ function Dashboard() {
               <SiswaPengajuanPoinSection 
                 studentData={studentData} 
                 activeTa={{ id: studentData?.tahun_ajaran_id, nama: studentData?.tahun_ajaran }} 
+                initialTab={targetSubTab || 'katalog'}
               />
             ) : selectedType === 'KARTU_PELAJAR' ? (
               <SiswaKartuPelajarSection 
                 studentData={studentData} 
                 photoUrls={photoUrls} 
                 onUpdateStudentData={(updated) => {
-                  setStudentData(updated)
+                  setStudentData(prev => {
+                    if (!prev) return updated
+                    if (JSON.stringify(prev) === JSON.stringify(updated)) return prev
+                    return updated
+                  })
                   try {
                     localStorage.setItem('siswa_session', JSON.stringify(updated))
                   } catch (e) {
@@ -2323,8 +2395,12 @@ function Dashboard() {
         isOpen={showNotifPanel} 
         onClose={() => setShowNotifPanel(false)} 
         studentData={studentData}
-        onNavigateMenu={(menuKey) => {
+        onNavigateMenu={(menuKey, tabKey) => {
           setSelectedType(menuKey)
+          if (tabKey) {
+            setTargetSubTab(tabKey)
+            window.dispatchEvent(new CustomEvent('switch-pengajuan-tab', { detail: { tab: tabKey } }))
+          }
           setShowNotifPanel(false)
         }}
       />

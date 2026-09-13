@@ -88,7 +88,7 @@ async function getGoogleAccessToken() {
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
   const keyBuffer = pemToBinary(SERVICE_ACCOUNT.private_key);
-  const cryptoKey = await window.crypto.subtle.importKey(
+  const cryptoKey = await (window.crypto || crypto).subtle.importKey(
     "pkcs8",
     keyBuffer,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
@@ -96,7 +96,7 @@ async function getGoogleAccessToken() {
     ["sign"]
   );
 
-  const signature = await window.crypto.subtle.sign(
+  const signature = await (window.crypto || crypto).subtle.sign(
     "RSASSA-PKCS1-v1_5",
     cryptoKey,
     new TextEncoder().encode(signatureInput)
@@ -129,8 +129,18 @@ async function getGoogleAccessToken() {
 /**
  * Kirim FCM Push Notification ke semua perangkat Siswa / Orang Tua yang terdaftar
  */
-export async function sendFCMPushNotification({ nisn, role, title, body, image, targetMenu = 'PRESENSI', data = {} }) {
+export async function sendFCMPushNotification({
+  nisn,
+  role,
+  title,
+  body,
+  message,
+  image,
+  targetMenu = 'PRESENSI',
+  data = {}
+}) {
   if (!nisn) return { success: false, message: 'NISN is required' };
+  const notifText = body || message || '';
 
   try {
     let query = supabase.from('push_device_tokens').select('token, role').eq('nisn', String(nisn));
@@ -140,6 +150,7 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
 
     const { data: deviceTokens, error } = await query;
     if (error || !deviceTokens || deviceTokens.length === 0) {
+      console.log(`[FCM Sender] Belum ada device token terdaftar untuk NISN: ${nisn} (role: ${role || 'all'})`);
       return { success: false, message: 'No registered device tokens' };
     }
 
@@ -148,28 +159,49 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
 
     for (const item of deviceTokens) {
       try {
+        const tokenRole = item.role || role || 'Siswa';
+        let roleTitle = title || 'eBudiMulia';
+        if (tokenRole === 'Orang Tua' && !roleTitle.includes('[Orang Tua]') && !roleTitle.includes('[Ortu]')) {
+          roleTitle = `[Orang Tua] ${roleTitle}`;
+        } else if (tokenRole === 'Siswa' && !roleTitle.includes('[Siswa]')) {
+          roleTitle = `[Siswa] ${roleTitle}`;
+        }
+
+        const notifObj = {
+          title: roleTitle,
+          body: notifText,
+        };
+        if (image) {
+          notifObj.image = image;
+        }
+
         const payload = {
           message: {
             token: item.token,
-            notification: {
-              title: title || 'eBudiMulia',
-              body: body || '',
-              image: image || undefined,
-            },
+            notification: notifObj,
             android: {
               priority: 'high',
               notification: {
                 channel_id: 'ebudimulia_presensi_v5',
-                icon: 'ic_launcher',
-                color: '#4F46E5',
+                icon: 'ic_stat_logo',
+                color: tokenRole === 'Guru' ? '#10B981' : '#4F46E5',
                 sound: 'default',
                 default_vibrate_timings: true,
                 notification_priority: 'PRIORITY_HIGH',
+                visibility: 'PUBLIC',
+                image: image || undefined,
               },
             },
             data: {
-              url: item.role === 'Orang Tua' ? '/dashboard-orang-tua' : '/dashboard',
+              title: roleTitle,
+              body: notifText,
+              role: tokenRole,
+              nisn: String(nisn),
+              imageUrl: image || '',
+              tag: data?.tag ? (data.tag.includes(tokenRole) ? data.tag : `${data.tag}-${tokenRole}`) : `presensi-${tokenRole}-${nisn}`,
+              url: data?.url || (tokenRole === 'Orang Tua' ? '/dashboard-orang-tua?menu=PRESENSI' : (tokenRole === 'Guru' ? '/dashboard-guru' : (targetMenu === 'AJUKAN_POIN' ? '/dashboard?menu=AJUKAN_POIN&tab=riwayat' : '/dashboard'))),
               targetMenu: targetMenu,
+              targetTab: data?.targetTab || (targetMenu === 'AJUKAN_POIN' ? 'riwayat' : undefined),
               ...data,
             },
           },
@@ -191,6 +223,7 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
           sentCount++;
         } else {
           const resJson = await res.json();
+          console.warn('[FCM Sender] Single send error:', res.status, resJson);
           if (res.status === 404 || resJson.error?.details?.some(d => d.errorCode === 'UNREGISTERED')) {
             await supabase.from('push_device_tokens').delete().eq('token', item.token);
           }
@@ -200,6 +233,7 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
       }
     }
 
+    console.log(`[FCM Sender] Sukses kirim notifikasi ke ${sentCount}/${deviceTokens.length} perangkat untuk NISN: ${nisn}`);
     return { success: true, sentCount };
   } catch (err) {
     console.warn('[FCM Sender] Error:', err);
@@ -209,19 +243,19 @@ export async function sendFCMPushNotification({ nisn, role, title, body, image, 
 
 /**
  * Kirim FCM Push Notification khusus ke Wali Kelas dari suatu kelas tertentu
- * 
- * @param {Object} params
- * @param {string} params.kelas - Nama kelas (contoh: '9A')
- * @param {number|string} [params.tahunAjaranId] - ID Tahun Ajaran aktif (opsional)
- * @param {string} params.title - Judul notifikasi
- * @param {string} params.body - Pesan notifikasi
- * @param {Object} [params.data] - Data payload tambahan
  */
-export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body, data = {} }) {
+export async function sendFCMPushToWaliKelas({
+  kelas,
+  tahunAjaranId,
+  title,
+  body,
+  message,
+  data = {}
+}) {
   if (!kelas) return { success: false, message: 'Kelas is required' };
+  const notifText = body || message || '';
 
   try {
-    // 1. Cari guru_id wali kelas dari tabel guru_kelas
     let queryWali = supabase.from('guru_kelas').select('guru_id').eq('kelas', kelas);
     if (tahunAjaranId) {
       queryWali = queryWali.eq('tahun_ajaran_id', tahunAjaranId);
@@ -236,7 +270,6 @@ export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body
     const guruIds = waliList.map(w => String(w.guru_id)).filter(Boolean);
     if (guruIds.length === 0) return { success: false, message: 'No valid guru ID' };
 
-    // 2. Ambil token FCM untuk Guru terkait dari push_device_tokens
     const { data: deviceTokens, error: errToken } = await supabase
       .from('push_device_tokens')
       .select('token, role')
@@ -258,7 +291,7 @@ export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body
             token: item.token,
             notification: {
               title: title || `Verifikasi Tabungan Siswa (${kelas})`,
-              body: body || '',
+              body: notifText,
             },
             android: {
               priority: 'high',
@@ -269,9 +302,12 @@ export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body
                 sound: 'default',
                 default_vibrate_timings: true,
                 notification_priority: 'PRIORITY_HIGH',
+                visibility: 'PUBLIC'
               },
             },
             data: {
+              title: title || `Verifikasi Tabungan Siswa (${kelas})`,
+              body: notifText,
               url: '/dashboard-guru',
               targetMenu: 'tabungan_siswa',
               kelas: kelas,
@@ -311,4 +347,3 @@ export async function sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body
     return { success: false, error: err.message };
   }
 }
-

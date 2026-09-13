@@ -1,41 +1,21 @@
--- ============================================================
--- PATCH: Fix admin_create_user agar idempotent
+-- ==============================================================================
+-- MIGRATION: Fix Unique Role Foreign ID in admin_create_user (Idempotent Safe)
 -- 
--- Masalah: Saat membuat akun siswa, jika email username@ebudimulia.local
--- sudah ada di auth.users (sisa dari pembuatan akun sebelumnya yang gagal,
--- atau akun yang pernah ada tapi tidak terhapus bersih),
--- INSERT langsung gagal dengan error duplicate key.
+-- Masalah:
+-- Saat menyimpan / membuat akun siswa atau orang tua, jika (role, foreign_id) 
+-- sudah ada di public.akun_pengguna (misal karena akun lama, form unlinked,
+-- atau sinkronisasi NISN), admin_create_user sebelumnya membuat UUID baru
+-- lalu melakukan INSERT ... ON CONFLICT (id) DO UPDATE.
+-- Karena ON CONFLICT hanya mengecek (id) dan bukan (role, foreign_id),
+-- PostgreSQL melempar error:
+-- "duplicate key value violates unique constraint 'unique_role_foreign_id'"
 --
--- Solusi: admin_create_user sekarang mengecek terlebih dahulu apakah
--- email sudah ada di auth.users. Jika ada, gunakan UUID yang sudah ada
--- (reuse) alih-alih membuat UUID baru.
--- ============================================================
+-- Solusi:
+-- admin_create_user sekarang mengecek apakah (role, foreign_id) sudah ada di
+-- public.akun_pengguna. Jika ada, gunakan UUID yang sudah ada (v_existing_akun_id)
+-- dan lakukan UPDATE langsung ke row tersebut alih-alih membuat akun baru.
+-- ==============================================================================
 
-
--- ================================================================
--- LANGKAH 1: Diagnosa - Cek auth.users yang "yatim" (tidak punya akun_pengguna)
--- Ini adalah akun-akun yang menyebabkan conflict
--- ================================================================
-SELECT 
-  au.id,
-  au.email,
-  au.created_at,
-  au.raw_user_meta_data->>'role'       AS meta_role,
-  au.raw_user_meta_data->>'foreign_id' AS meta_foreign_id,
-  ap.id IS NOT NULL                    AS punya_akun_pengguna
-FROM auth.users au
-LEFT JOIN public.akun_pengguna ap ON ap.id = au.id
-WHERE au.email LIKE '%@ebudimulia.local'
-  AND ap.id IS NULL  -- Tidak punya pasangan di akun_pengguna
-ORDER BY au.created_at DESC;
-
-
--- ================================================================
--- LANGKAH 2: Update admin_create_user menjadi idempotent
--- 1. Cek apakah (role, foreign_id) sudah ada di akun_pengguna -> reuse UUID tersebut
--- 2. Cek apakah email sudah ada di auth.users -> reuse UUID tersebut
--- 3. Jika belum ada -> buat baru seperti biasa
--- ================================================================
 CREATE OR REPLACE FUNCTION public.admin_create_user(
   p_username   TEXT,
   p_password   TEXT,
@@ -174,8 +154,8 @@ BEGIN
   ALTER TABLE public.akun_pengguna ENABLE TRIGGER ALL;
 
   RETURN json_build_object('ok', true, 'id', v_uuid, 'username', v_clean_username);
+
 EXCEPTION WHEN OTHERS THEN
-  -- Pastikan trigger diaktifkan kembali meski ada error
   BEGIN
     ALTER TABLE public.akun_pengguna ENABLE TRIGGER ALL;
   EXCEPTION WHEN OTHERS THEN NULL;

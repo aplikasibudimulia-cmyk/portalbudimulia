@@ -6,8 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Service Account Firebase eBudiMulia
-const SERVICE_ACCOUNT = {
+// Fallback Service Account Firebase eBudiMulia (digunakan jika env variable belum diset)
+const SERVICE_ACCOUNT_FALLBACK = {
   project_id: "ebudimulia-d1a16",
   client_email: "firebase-adminsdk-fbsvc@ebudimulia-d1a16.iam.gserviceaccount.com",
   private_key: `-----BEGIN PRIVATE KEY-----
@@ -39,6 +39,26 @@ oZMNeeUdWAyT+SVkwsJr8S7e7kZOubZc88OnlfJTkNQSCsfgjJ3uUVUxRZjU9HN5
 JflIBeU2B5XmmmBxHTdH/8iO
 -----END PRIVATE KEY-----`
 };
+
+function getServiceAccount() {
+  const envJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
+  if (envJson) {
+    try {
+      return JSON.parse(envJson);
+    } catch (e) {
+      console.warn("Failed to parse FIREBASE_SERVICE_ACCOUNT json:", e);
+    }
+  }
+
+  const project_id = Deno.env.get("FIREBASE_PROJECT_ID") || SERVICE_ACCOUNT_FALLBACK.project_id;
+  const client_email = Deno.env.get("FIREBASE_CLIENT_EMAIL") || SERVICE_ACCOUNT_FALLBACK.client_email;
+  let private_key = Deno.env.get("FIREBASE_PRIVATE_KEY") || SERVICE_ACCOUNT_FALLBACK.private_key;
+  if (private_key && private_key.includes("\\n")) {
+    private_key = private_key.replace(/\\n/g, "\n");
+  }
+
+  return { project_id, client_email, private_key };
+}
 
 function base64UrlEncode(str: string | Uint8Array): string {
   let binary = "";
@@ -76,7 +96,7 @@ function pemToBinary(pem: string): ArrayBuffer {
 // Generate Google OAuth2 Token from Service Account
 let cachedToken: { token: string; exp: number } | null = null;
 
-async function getGoogleAccessToken(): Promise<string> {
+async function getGoogleAccessToken(serviceAccount: { project_id: string; client_email: string; private_key: string }): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (cachedToken && cachedToken.exp > now + 60) {
     return cachedToken.token;
@@ -84,7 +104,7 @@ async function getGoogleAccessToken(): Promise<string> {
 
   const header = { alg: "RS256", typ: "JWT" };
   const payload = {
-    iss: SERVICE_ACCOUNT.client_email,
+    iss: serviceAccount.client_email,
     scope: "https://www.googleapis.com/auth/firebase.messaging",
     aud: "https://oauth2.googleapis.com/token",
     exp: now + 3600,
@@ -95,7 +115,7 @@ async function getGoogleAccessToken(): Promise<string> {
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
-  const keyBuffer = pemToBinary(SERVICE_ACCOUNT.private_key);
+  const keyBuffer = pemToBinary(serviceAccount.private_key);
   const cryptoKey = await crypto.subtle.importKey(
     "pkcs8",
     keyBuffer,
@@ -145,31 +165,75 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json();
-    const { nisn, role, title, message, image, targetMenu, data = {} } = body;
+    const {
+      nisn,
+      nisns,
+      role,
+      title,
+      message,
+      body: notifBody,
+      image,
+      targetMenu,
+      data = {},
+      waliKelas
+    } = body;
 
-    if (!nisn) {
-      return new Response(JSON.stringify({ error: "nisn required" }), {
+    const finalMessage = notifBody || message || "";
+
+    let tokens: { token: string; role?: string }[] = [];
+
+    // Kasus 1: Notifikasi khusus Wali Kelas
+    if (waliKelas && waliKelas.kelas) {
+      let queryWali = supabase.from("guru_kelas").select("guru_id").eq("kelas", waliKelas.kelas);
+      if (waliKelas.tahunAjaranId) {
+        queryWali = queryWali.eq("tahun_ajaran_id", waliKelas.tahunAjaranId);
+      }
+      const { data: waliList, error: errWali } = await queryWali;
+      if (errWali) throw errWali;
+
+      if (waliList && waliList.length > 0) {
+        const guruIds = waliList.map((w: any) => String(w.guru_id)).filter(Boolean);
+        if (guruIds.length > 0) {
+          const { data: dt, error: errDt } = await supabase
+            .from("push_device_tokens")
+            .select("token, role")
+            .in("nisn", guruIds)
+            .eq("role", "Guru");
+          if (errDt) throw errDt;
+          if (dt) tokens = dt;
+        }
+      }
+    }
+    // Kasus 2: Notifikasi daftar beberapa NISN
+    else if (nisns && Array.isArray(nisns) && nisns.length > 0) {
+      let query = supabase.from("push_device_tokens").select("token, role").in("nisn", nisns.map(String));
+      if (role) query = query.eq("role", role);
+      const { data: dt, error: dtErr } = await query;
+      if (dtErr) throw dtErr;
+      if (dt) tokens = dt;
+    }
+    // Kasus 3: Notifikasi perorangan (NISN tunggal)
+    else if (nisn) {
+      let query = supabase.from("push_device_tokens").select("token, role").eq("nisn", String(nisn));
+      if (role) query = query.eq("role", role);
+      const { data: dt, error: dtErr } = await query;
+      if (dtErr) throw dtErr;
+      if (dt) tokens = dt;
+    } else {
+      return new Response(JSON.stringify({ error: "nisn, nisns, atau waliKelas wajib diisi" }), {
         headers: { "Content-Type": "application/json", ...corsHeaders },
         status: 400,
       });
     }
 
-    // Cari FCM tokens dari tabel push_device_tokens
-    let query = supabase.from("push_device_tokens").select("token, role").eq("nisn", String(nisn));
-    if (role) {
-      query = query.eq("role", role);
-    }
-
-    const { data: tokens, error: tokenErr } = await query;
-    if (tokenErr) throw tokenErr;
-
     if (!tokens || tokens.length === 0) {
-      return new Response(JSON.stringify({ success: false, message: "No registered FCM device tokens found for this NISN" }), {
+      return new Response(JSON.stringify({ success: false, message: "Tidak ada token perangkat FCM yang terdaftar" }), {
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    const accessToken = await getGoogleAccessToken();
+    const serviceAccount = getServiceAccount();
+    const accessToken = await getGoogleAccessToken(serviceAccount);
     const results = [];
 
     for (const item of tokens) {
@@ -179,7 +243,7 @@ serve(async (req) => {
           token: fcmToken,
           notification: {
             title: title || "eBudiMulia",
-            body: message || "",
+            body: finalMessage,
             image: image || undefined,
           },
           android: {
@@ -187,22 +251,22 @@ serve(async (req) => {
             notification: {
               channel_id: "ebudimulia_presensi_v5",
               icon: "ic_launcher",
-              color: "#4F46E5",
+              color: item.role === "Guru" ? "#10B981" : "#4F46E5",
               sound: "default",
               default_vibrate_timings: true,
               notification_priority: "PRIORITY_HIGH",
             },
           },
           data: {
-            url: item.role === "Orang Tua" ? "/dashboard-orang-tua" : "/dashboard",
-            targetMenu: targetMenu || "PRESENSI",
+            url: item.role === "Orang Tua" ? "/dashboard-orang-tua" : (item.role === "Guru" ? "/dashboard-guru" : "/dashboard"),
+            targetMenu: targetMenu || (item.role === "Guru" ? "tabungan_siswa" : "PRESENSI"),
             ...data,
           },
         },
       };
 
       const fcmRes = await fetch(
-        `https://fcm.googleapis.com/v1/projects/${SERVICE_ACCOUNT.project_id}/messages:send`,
+        `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`,
         {
           method: "POST",
           headers: {

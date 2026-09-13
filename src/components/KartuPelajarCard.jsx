@@ -387,12 +387,16 @@ const KartuPelajarCard = forwardRef(({
                   backgroundColor: comp.bgColor || '#e0e7ff', 
                   color: comp.color || '#3730a3',
                   fontSize: `${comp.fontSize || 8.5}px`,
+                  lineHeight: '1',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   ...borderStyleObj
                 }}
-                className="px-2.5 py-0.5 rounded-full font-black uppercase tracking-wider shadow-2xs whitespace-nowrap flex items-center gap-1"
+                className="px-2.5 py-1 rounded-full font-black uppercase tracking-wider shadow-2xs whitespace-nowrap gap-1"
               >
-                {comp.icon ? <span>{comp.icon}</span> : null}
-                <span>{comp.text || 'BADGE KUSTOM'}</span>
+                {comp.icon ? <span style={{ lineHeight: '1' }}>{comp.icon}</span> : null}
+                <span style={{ lineHeight: '1', display: 'inline-block' }}>{comp.text || 'BADGE KUSTOM'}</span>
               </div>
             ) : (
               <div 
@@ -400,12 +404,13 @@ const KartuPelajarCard = forwardRef(({
                   color: comp.color || '#0f172a',
                   fontSize: `${comp.fontSize || 10}px`,
                   fontWeight: comp.isBold !== false ? 'bold' : 'normal',
+                  lineHeight: '1.2',
                   backgroundColor: comp.bgColor && comp.bgColor !== 'transparent' ? comp.bgColor : undefined,
                   ...borderStyleObj
                 }}
                 className="whitespace-nowrap px-1.5 py-0.5 rounded"
               >
-                {comp.text || 'Teks Tambahan'}
+                <span style={{ lineHeight: '1.2', display: 'inline-block' }}>{comp.text || 'Teks Tambahan'}</span>
               </div>
             )
           )
@@ -619,11 +624,14 @@ const KartuPelajarCard = forwardRef(({
       <div 
         ref={ref}
         data-card-side="front"
+        data-card-type="kartu-pelajar"
         style={{
           width: '510px',
           height: '322px',
           minWidth: '510px',
           minHeight: '322px',
+          maxWidth: '510px',
+          maxHeight: '322px',
           transform: scale !== 1 ? `scale(${scale})` : undefined,
           transformOrigin: 'top left',
           boxSizing: 'border-box',
@@ -695,10 +703,16 @@ const KartuPelajarCard = forwardRef(({
             className: 'absolute top-2 left-6 z-20 text-left pointer-events-auto',
             children: (
               <>
-                <h1 className="text-[14.5px] font-black tracking-widest text-white italic drop-shadow-sm uppercase leading-none">
+                <h1 
+                  className="text-[14.5px] font-black tracking-widest text-white italic drop-shadow-sm uppercase leading-none"
+                  style={{ lineHeight: '1', margin: 0 }}
+                >
                   {judulKartu}
                 </h1>
-                <span className="text-[7.5px] font-bold tracking-widest text-blue-200 uppercase block mt-1">
+                <span 
+                  className="text-[7.5px] font-bold tracking-widest text-blue-200 uppercase block mt-0.5"
+                  style={{ lineHeight: '1' }}
+                >
                   {subjudulKartu}
                 </span>
               </>
@@ -804,7 +818,7 @@ const KartuPelajarCard = forwardRef(({
               scaleVal: biodataScale,
               rotateVal: biodataRotate,
               origin: 'left top',
-              className: 'text-left space-y-1 w-full',
+              className: 'text-left space-y-0.5 w-full',
               style: {
                 width: biodataWidth || '100%',
                 minWidth: biodataWidth || undefined,
@@ -814,22 +828,22 @@ const KartuPelajarCard = forwardRef(({
               children: (
                 <>
                   {/* 1. Nama (Wrap ke bawah jika panjang, tidak di-truncate/hide) */}
-                  <div className="flex items-start py-0.5">
+                  <div className="flex items-start py-[1px] leading-[1.25]">
                     <span 
                       style={{ width: `${biodataLabelWidth}px`, fontSize: biodataFontSize }} 
-                      className="shrink-0 font-medium text-slate-700 leading-snug"
+                      className="shrink-0 font-medium text-slate-700 leading-tight"
                     >
                       Nama
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-snug"
+                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-tight"
                     >
                       :
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="flex-1 min-w-0 font-bold text-slate-900 uppercase break-words leading-snug" 
+                      className="flex-1 min-w-0 font-bold text-slate-900 uppercase break-words leading-tight" 
                       title={namaLengkap}
                     >
                       {namaLengkap}
@@ -837,44 +851,44 @@ const KartuPelajarCard = forwardRef(({
                   </div>
 
                   {/* 2. NISN / NIPD (Jika belum ada data tampilkan -) */}
-                  <div className="flex items-start py-0.5">
+                  <div className="flex items-start py-[1px] leading-[1.25]">
                     <span 
                       style={{ width: `${biodataLabelWidth}px`, fontSize: biodataFontSize }} 
-                      className="shrink-0 font-medium text-slate-700 leading-snug"
+                      className="shrink-0 font-medium text-slate-700 leading-tight"
                     >
                       NISN / NIPD
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-snug"
+                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-tight"
                     >
                       :
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="flex-1 min-w-0 font-mono font-bold text-slate-900 leading-snug whitespace-nowrap"
+                      className="flex-1 min-w-0 font-mono font-bold text-slate-900 leading-tight whitespace-nowrap"
                     >
                       {idDisplay}
                     </span>
                   </div>
 
                   {/* 3. Tempat & Tanggal Lahir (Wrap ke bawah jika panjang) */}
-                  <div className="flex items-start py-0.5">
+                  <div className="flex items-start py-[1px] leading-[1.25]">
                     <span 
                       style={{ width: `${biodataLabelWidth}px`, fontSize: biodataFontSize }} 
-                      className="shrink-0 font-medium text-slate-700 leading-snug"
+                      className="shrink-0 font-medium text-slate-700 leading-tight"
                     >
                       Tempat, Tgl Lahir
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-snug"
+                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-tight"
                     >
                       :
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="flex-1 min-w-0 font-bold text-slate-900 break-words leading-snug" 
+                      className="flex-1 min-w-0 font-bold text-slate-900 break-words leading-tight" 
                       title={ttl}
                     >
                       {ttl}
@@ -882,44 +896,44 @@ const KartuPelajarCard = forwardRef(({
                   </div>
 
                   {/* 4. Jenis Kelamin */}
-                  <div className="flex items-start py-0.5">
+                  <div className="flex items-start py-[1px] leading-[1.25]">
                     <span 
                       style={{ width: `${biodataLabelWidth}px`, fontSize: biodataFontSize }} 
-                      className="shrink-0 font-medium text-slate-700 leading-snug"
+                      className="shrink-0 font-medium text-slate-700 leading-tight"
                     >
                       Jenis Kelamin
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-snug"
+                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-tight"
                     >
                       :
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="flex-1 min-w-0 font-bold text-slate-900 leading-snug"
+                      className="flex-1 min-w-0 font-bold text-slate-900 leading-tight"
                     >
                       {jenisKelamin}
                     </span>
                   </div>
 
                   {/* 5. Alamat (Wrap ke bawah jika panjang, tidak di-hide) */}
-                  <div className="flex items-start py-0.5">
+                  <div className="flex items-start py-[1px] leading-[1.25]">
                     <span 
                       style={{ width: `${biodataLabelWidth}px`, fontSize: biodataFontSize }} 
-                      className="shrink-0 font-medium text-slate-700 leading-snug"
+                      className="shrink-0 font-medium text-slate-700 leading-tight"
                     >
                       Alamat
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-snug"
+                      className="shrink-0 font-bold text-slate-900 mx-1.5 leading-tight"
                     >
                       :
                     </span>
                     <span 
                       style={{ fontSize: biodataFontSize }} 
-                      className="flex-1 min-w-0 font-bold text-slate-900 leading-snug break-words" 
+                      className="flex-1 min-w-0 font-bold text-slate-900 leading-tight break-words" 
                       title={alamatLengkap}
                     >
                       {alamatLengkap}
@@ -976,8 +990,14 @@ const KartuPelajarCard = forwardRef(({
                 origin: 'center center',
                 className: 'mt-2 flex flex-col items-center select-none',
                 children: (
-                  <div className="-skew-x-12 bg-[#dc2626] px-2.5 py-0.5 rounded-xs shadow-2xs whitespace-nowrap">
-                    <span className="skew-x-12 block text-[7.5px] font-black text-white tracking-wider uppercase whitespace-nowrap">
+                  <div 
+                    className="-skew-x-12 bg-[#dc2626] px-2.5 rounded-xs shadow-2xs whitespace-nowrap flex items-center justify-center"
+                    style={{ paddingTop: '2px', paddingBottom: '2px', lineHeight: '1' }}
+                  >
+                    <span 
+                      className="skew-x-12 block text-[7.5px] font-black text-white tracking-wider uppercase whitespace-nowrap"
+                      style={{ lineHeight: '1' }}
+                    >
                       {badgeTeks}
                     </span>
                   </div>
@@ -986,7 +1006,7 @@ const KartuPelajarCard = forwardRef(({
             </div>
           </div>
 
-          {/* Pengesahan Kepala Sekolah (di pojok kanan bawah, rapi dan tidak tumpang tindih dengan alamat) */}
+          {/* Pengesahan Kepala Sekolah (di pojok kanan bawah, rapi dan tidak tumpang tindih dengan footer) */}
           {renderEditorBox({
             id: 'kepsek',
             label: 'Pengesahan Kepsek',
@@ -995,18 +1015,18 @@ const KartuPelajarCard = forwardRef(({
             scaleVal: kepsekScale,
             rotateVal: kepsekRotate,
             origin: 'bottom right',
-            className: 'absolute right-4 bottom-7 shrink-0 flex flex-col items-center text-center w-36 z-20 pointer-events-auto',
+            className: 'absolute right-4 bottom-10 shrink-0 flex flex-col items-center text-center w-36 z-20 pointer-events-auto',
             children: (
               <>
-                <p className="text-[7.5px] font-medium text-slate-600 leading-none">
+                <p className="text-[7.5px] font-medium text-slate-600 leading-none" style={{ lineHeight: '1' }}>
                   {tanggalTerbit}
                 </p>
-                <p className="text-[8.5px] font-bold text-[#081b3f] leading-none mt-0.5">
+                <p className="text-[8px] font-bold text-[#081b3f] leading-none mt-0.5" style={{ lineHeight: '1' }}>
                   Kepala Sekolah,
                 </p>
 
                 {/* Area TTD & Cap Stempel tumpang tindih */}
-                <div className="relative w-36 h-10 my-0.5 flex items-center justify-center">
+                <div className="relative w-36 h-9 my-0.5 flex items-center justify-center">
                   {/* Cap Stempel Basah */}
                   {renderEditorBox({
                     id: 'cap',
@@ -1034,7 +1054,7 @@ const KartuPelajarCard = forwardRef(({
                     y: ttdY,
                     scaleVal: ttdScale,
                     rotateVal: ttdRotate,
-                    className: 'relative z-10 w-28 h-10 flex items-center justify-center transition-transform pointer-events-auto',
+                    className: 'relative z-10 w-28 h-9 flex items-center justify-center transition-transform pointer-events-auto',
                     children: ttdUrl ? (
                       <img src={ttdUrl} alt="TTD" crossOrigin="anonymous" className="max-w-full max-h-full object-contain pointer-events-none" />
                     ) : (
@@ -1044,11 +1064,11 @@ const KartuPelajarCard = forwardRef(({
                 </div>
 
                 {/* Nama Lengkap Kepala Sekolah dengan Garis Bawah Tegas */}
-                <p className="text-[9.5px] font-bold text-[#081b3f] underline decoration-[#081b3f] decoration-1 underline-offset-2 truncate leading-tight" title={namaKepsek}>
+                <p className="text-[9px] font-bold text-[#081b3f] underline decoration-[#081b3f] decoration-1 underline-offset-2 truncate leading-tight" title={namaKepsek} style={{ lineHeight: '1.2' }}>
                   {namaKepsek}
                 </p>
                 {nipKepsek && nipKepsek !== '-' && nipKepsek.trim() !== '' && (
-                  <p className="text-[6.5px] font-mono text-slate-600 mt-0.5">
+                  <p className="text-[6.5px] font-mono text-slate-600 mt-0.5 leading-none" style={{ lineHeight: '1' }}>
                     NIP. {nipKepsek}
                   </p>
                 )}
@@ -1099,13 +1119,19 @@ const KartuPelajarCard = forwardRef(({
 
           {/* Pill Web Sekolah di Tengah Pita Navy (Persis Gambar Contoh) */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
-            <div className="flex items-center gap-1.5 bg-[#081b3f]/90 px-3 py-0.5 rounded-full border border-blue-400/30 shadow-xs">
-              <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+            <div 
+              className="flex items-center justify-center gap-1.5 bg-[#081b3f]/90 px-3 py-0.5 rounded-full border border-blue-400/30 shadow-xs"
+              style={{ height: '16px', lineHeight: '1' }}
+            >
+              <svg className="w-2.5 h-2.5 text-white shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="2" y1="12" x2="22" y2="12"/>
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
               </svg>
-              <span className="text-[7.8px] font-mono font-medium text-white tracking-wider">
+              <span 
+                className="text-[7.5px] font-mono font-medium text-white tracking-wider"
+                style={{ lineHeight: '1', display: 'inline-block' }}
+              >
                 {webSekolah}
               </span>
             </div>
@@ -1155,11 +1181,14 @@ const KartuPelajarCard = forwardRef(({
     <div 
       ref={ref}
       data-card-side="back"
+      data-card-type="kartu-pelajar"
       style={{
         width: '510px',
         height: '322px',
         minWidth: '510px',
         minHeight: '322px',
+        maxWidth: '510px',
+        maxHeight: '322px',
         transform: scale !== 1 ? `scale(${scale})` : undefined,
         transformOrigin: 'top left',
         boxSizing: 'border-box',
@@ -1254,7 +1283,7 @@ const KartuPelajarCard = forwardRef(({
 
 
       {/* 2. AREA TENGAH: 2 KOLOM RAPI (KIRI: VISI & MISI SEKOLAH, KANAN: KETENTUAN PEMEGANG KARTU) */}
-      <div className="relative z-10 px-5 py-2 flex-1 grid grid-cols-2 gap-3 text-left">
+      <div className="relative z-10 px-5 py-1.5 flex-1 grid grid-cols-2 gap-3 text-left">
         
         {/* Sisi Kiri: Visi & Misi Sekolah */}
         {renderEditorBox({
@@ -1280,10 +1309,10 @@ const KartuPelajarCard = forwardRef(({
               {/* Misi */}
               <div>
                 <span className="text-[6.8px] font-black text-[#081b3f] uppercase tracking-wider block mb-0.5">MISI:</span>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 leading-[1.25]">
                   {misiList.map((m, idx) => (
                     <div key={idx} className="flex items-start gap-1">
-                      <span className="font-bold text-[#dc2626] shrink-0 text-[7px]">{idx + 1}.</span>
+                      <span className="font-bold text-[#dc2626] shrink-0 text-[7px] leading-tight">{idx + 1}.</span>
                       <span className="text-[6.8px] text-slate-700 leading-tight">{m}</span>
                     </div>
                   ))}
@@ -1307,10 +1336,10 @@ const KartuPelajarCard = forwardRef(({
               <p className="font-black text-[#081b3f] text-[8px] uppercase tracking-wider mb-1">
                 KETENTUAN PEMEGANG KARTU
               </p>
-              <div className="space-y-1">
+              <div className="space-y-0.5 leading-[1.25]">
                 {ketentuanList.map((item, idx) => (
                   <div key={idx} className="flex items-start gap-1">
-                    <span className="font-bold text-[#081b3f] shrink-0 text-[7px]">{idx + 1}.</span>
+                    <span className="font-bold text-[#081b3f] shrink-0 text-[7px] leading-tight">{idx + 1}.</span>
                     <span className="text-[6.8px] text-slate-700 leading-tight">{item}</span>
                   </div>
                 ))}

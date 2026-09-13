@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import KartuPelajarCard, { formatAlamatLengkap, formatIndonesianDate } from './KartuPelajarCard'
 import { exportCardAsImage, exportCardAsPdf } from '../utils/kartuPelajarExporter'
+import { Capacitor } from '@capacitor/core'
 import { splitAlamatAndRtRw, combineAlamatAndRtRw } from '../utils/studentExcelHelper'
 
 // Helper format nomor telepon ke 62...
@@ -17,7 +19,7 @@ const formatPhoneNumber = (phone) => {
 }
 
 /**
- * Memeriksa kelengkapan 12 data wajib untuk kartu pelajar digital:
+ * Memeriksa kelengkapan 13 data wajib untuk kartu pelajar digital:
  * 1. Nama
  * 2. Tempat Lahir
  * 3. Tanggal Lahir
@@ -28,15 +30,16 @@ const formatPhoneNumber = (phone) => {
  * 8. Kelurahan
  * 9. Kecamatan
  * 10. Kota/Kabupaten
- * 11. Nomor Orang Tua (minimal 1 kontak orang tua/wali valid)
- * 12. Tinggal Bersama Siapa (Kedua Orang Tua, Ayah, Ibu, Wali, Lainnya)
+ * 11. Nomor HP / WhatsApp Siswa
+ * 12. Nomor Orang Tua (minimal 1 kontak orang tua/wali valid)
+ * 13. Tinggal Bersama Siapa (Kedua Orang Tua, Ayah, Ibu, Wali, Lainnya)
  */
 export const auditStudentCompleteness = (student) => {
   if (!student) {
     return {
       isComplete: false,
       completedCount: 0,
-      totalCount: 12,
+      totalCount: 13,
       percent: 0,
       checklist: [],
       missingList: [],
@@ -107,6 +110,12 @@ export const auditStudentCompleteness = (student) => {
   const hasKota = Boolean(kota && kota !== '-')
 
   // 11. Nomor Orang Tua
+  // 11. Nomor HP Siswa (Wajib diisi)
+  const studentPhone = String(student.no_whatsapp || student.no_hp || '').trim()
+  const cleanStudentDigits = studentPhone.replace(/\D/g, '')
+  const hasStudentPhone = Boolean(cleanStudentDigits.length >= 7)
+
+  // 12. Nomor Orang Tua
   let parentPhone = ''
   let parentTag = 'Ayah'
   let parentNama = ''
@@ -125,7 +134,7 @@ export const auditStudentCompleteness = (student) => {
   }
   const hasKontakOrtu = Boolean(parentPhone)
 
-  // 12. Tinggal Bersama
+  // 13. Tinggal Bersama
   const tinggalBersama = String(student.tinggal_bersama || '').trim()
   const hasTinggalBersama = Boolean(tinggalBersama && tinggalBersama !== '-')
 
@@ -140,6 +149,7 @@ export const auditStudentCompleteness = (student) => {
     { key: 'kelurahan', label: 'Kelurahan / Desa', isComplete: hasKelurahan, value: kelurahan },
     { key: 'kecamatan', label: 'Kecamatan', isComplete: hasKecamatan, value: kecamatan },
     { key: 'kota', label: 'Kota / Kabupaten', isComplete: hasKota, value: kota },
+    { key: 'no_whatsapp', label: 'Nomor HP / WA Siswa', isComplete: hasStudentPhone, value: studentPhone },
     { key: 'kontak_ortu', label: 'Nomor HP Orang Tua/Wali', isComplete: hasKontakOrtu, value: parentPhone },
     { key: 'tinggal_bersama', label: 'Tinggal Bersama Siapa', isComplete: hasTinggalBersama, value: tinggalBersama }
   ]
@@ -183,6 +193,7 @@ export const auditStudentCompleteness = (student) => {
       kelurahan: kelurahan,
       kecamatan: kecamatan,
       kota: kota,
+      no_whatsapp: studentPhone,
       parent_tag: parentTag,
       parent_nama: parentNama,
       parent_phone: parentPhone,
@@ -192,52 +203,106 @@ export const auditStudentCompleteness = (student) => {
   }
 }
 
-export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], onUpdateStudentData }) {
-  // Pengaturan Tampilan Kartu Pelajar dari Admin (dengan default lengkap)
-  const [settings, setSettings] = useState({
-    kartu_nama_sekolah: 'SMP BUDI MULIA',
-    kartu_npsn_sekolah: '20106353',
-    kartu_instansi_sekolah: 'DINAS PENDIDIKAN PROVINSI DKI JAKARTA',
-    kartu_akreditasi: 'TERAKREDITASI A',
-    kartu_judul: 'KARTU TANDA PELAJAR',
-    kartu_subjudul: 'SEKOLAH MENENGAH PERTAMA',
-    kartu_alamat_sekolah: 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730',
-    kartu_nama_kepsek: 'Septian Ruswadi, S.Pd',
-    kartu_nip_kepsek: '-',
-    kartu_tema_warna: 'budi_mulia_resmi',
-    kartu_logo_url: '/logo_budimulia.png',
-    kartu_tanggal_terbit: 'Jakarta, 1 Juli 2026',
-    kartu_web_sekolah: 'smpbudimuliajakarta.sch.id',
-    kartu_masa_berlaku: 'Selama Menjadi Siswa Aktif',
-    kartu_footer_teks: 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA',
-    kartu_visi_sekolah: 'Terwujudnya peserta didik yang beriman, berakhlak mulia, cerdas, berprestasi, berwawasan global, dan berakar pada budaya bangsa.',
-    kartu_misi_sekolah: 
-`1. Menanamkan keimanan, ketakwaan, dan budi pekerti luhur melalui pembiasaan dan pengamalan nilai-nilai keagamaan.
+export const CARD_SETTINGS_STORAGE_KEY = 'ebm_kartu_pelajar_settings_cache'
+
+export const DEFAULT_CARD_SETTINGS = {
+  kartu_nama_sekolah: 'SMP BUDI MULIA',
+  kartu_npsn_sekolah: '20106353',
+  kartu_instansi_sekolah: 'YAYASAN BUDI MULIA LOURDES',
+  kartu_akreditasi: 'TERAKREDITASI ',
+  kartu_judul: 'KARTU PELAJAR',
+  kartu_subjudul: 'SMP Budi Mulia Jakarta',
+  kartu_alamat_sekolah: 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730',
+  kartu_nama_kepsek: 'Septian Ruswadi, S.Pd',
+  kartu_nip_kepsek: '-',
+  kartu_jabatan_kepsek: 'Kepala Sekolah',
+  kartu_tema_warna: 'budi_mulia_resmi',
+  kartu_logo_url: '/logo_budimulia.png',
+  kartu_tanggal_terbit: 'Jakarta, 1 Juli 2026',
+  kartu_web_sekolah: 'smpbudimuliajakarta.sch.id',
+  kartu_masa_berlaku: '',
+  kartu_badge_teks: '#CERDAS BERKUALITAS!',
+  kartu_footer_teks: 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA',
+  kartu_visi_sekolah: 'Terwujudnya Murid yang Unggul, Memiliki Kecerdasan Holistik, Berkarakter Mandiri, Inovatif, serta Berwawasan Global yang Berpijak pada Nilai-Nilai Budi Mulia.',
+  kartu_misi_sekolah: `1. Menanamkan keimanan, ketakwaan, dan budi pekerti luhur melalui pembiasaan dan pengamalan nilai-nilai keagamaan.
 2. Menyelenggarakan proses pembelajaran yang aktif, inovatif, kreatif, efektif, menyenangkan, dan berbasis teknologi.
 3. Mengembangkan potensi bakat, minat, dan prestasi peserta didik secara optimal di bidang akademik maupun non-akademik.
 4. Menumbuhkan budaya disiplin, cinta tanah air, kepedulian sosial, serta kelestarian lingkungan hidup.`,
-    kartu_ttd_url: '',
-    kartu_ttd_size: 100,
-    kartu_ttd_x: 0,
-    kartu_ttd_y: 0,
-    kartu_ttd_rotate: 0,
-    kartu_cap_url: '',
-    kartu_cap_size: 100,
-    kartu_cap_x: 0,
-    kartu_cap_y: 0,
-    kartu_cap_rotate: -8,
-    kartu_cap_opacity: 90,
-    kartu_bg_logo_size: 100,
-    kartu_bg_logo_x: 0,
-    kartu_bg_logo_y: 0,
-    kartu_bg_logo_opacity: 8,
-    kartu_glossy_effect: false,
-    kartu_belakang_teks: 
-`1. Kartu ini adalah tanda pengenal sah siswa SMP Budi Mulia Jakarta.
+  kartu_ttd_url: '',
+  kartu_ttd_size: 114,
+  kartu_ttd_x: 18,
+  kartu_ttd_y: 1,
+  kartu_ttd_rotate: 0,
+  kartu_cap_url: '',
+  kartu_cap_size: 118,
+  kartu_cap_x: 22,
+  kartu_cap_y: 3,
+  kartu_cap_rotate: 0,
+  kartu_cap_opacity: 95,
+  kartu_bg_logo_size: 100,
+  kartu_bg_logo_x: -8,
+  kartu_bg_logo_y: 0,
+  kartu_bg_logo_opacity: 8,
+  kartu_glossy_effect: false,
+  kartu_foto_x: -11,
+  kartu_foto_y: 3,
+  kartu_foto_size: 100,
+  kartu_foto_rotate: 0,
+  kartu_qr_x: -1,
+  kartu_qr_y: 167,
+  kartu_qr_size: 146,
+  kartu_qr_rotate: 0,
+  kartu_barcode_x: -11,
+  kartu_barcode_y: -199,
+  kartu_barcode_size: 99,
+  kartu_barcode_rotate: 0,
+  kartu_barcode_width: 355,
+  kartu_biodata_x: -9,
+  kartu_biodata_y: -17,
+  kartu_biodata_size: 100,
+  kartu_biodata_width: 340,
+  kartu_biodata_label_width: 86,
+  kartu_biodata_font_size: 10.5,
+  kartu_badge_x: -12,
+  kartu_badge_y: 3,
+  kartu_badge_size: 100,
+  kartu_header_logo_x: 12,
+  kartu_header_logo_y: 4,
+  kartu_header_logo_size: 88,
+  kartu_header_title_x: 9,
+  kartu_header_title_y: -5,
+  kartu_header_title_size: 123,
+  kartu_kepsek_x: 8,
+  kartu_kepsek_y: 4,
+  kartu_kepsek_size: 108,
+  kartu_code_display: 'both',
+  kartu_custom_components: '[]',
+  kartu_belakang_teks: `1. Kartu ini adalah tanda pengenal sah siswa SMP Budi Mulia Jakarta.
 2. Wajib dibawa saat berada di lingkungan sekolah dan kegiatan resmi.
 3. Kartu ini tidak dapat dipindahtangankan kepada orang lain.
 4. Apabila kartu ini hilang atau rusak, segera lapor ke bagian Tata Usaha / Kesiswaan.
 5. Jika menemukan kartu ini, mohon kembalikan ke alamat sekolah di bawah ini.`
+}
+
+export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], onUpdateStudentData }) {
+  // Status apakah pengaturan sudah dimuat (dari cache lokal instan atau Supabase)
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(() => {
+    try {
+      const cached = localStorage.getItem(CARD_SETTINGS_STORAGE_KEY)
+      if (cached) return true
+    } catch {}
+    return false
+  })
+
+  // Pengaturan Tampilan Kartu Pelajar dari Admin (dengan cache lokal instan)
+  const [settings, setSettings] = useState(() => {
+    try {
+      const cached = localStorage.getItem(CARD_SETTINGS_STORAGE_KEY)
+      if (cached) {
+        return { ...DEFAULT_CARD_SETTINGS, ...JSON.parse(cached) }
+      }
+    } catch {}
+    return DEFAULT_CARD_SETTINGS
   })
 
   // Responsive scale untuk kartu preview agar pas sempurna di layar HP / Desktop
@@ -272,6 +337,62 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   const [isSavingForm, setIsSavingForm] = useState(false)
   const [formError, setFormError] = useState('')
   const [formSuccessMessage, setFormSuccessMessage] = useState('')
+  const [showConfirmLockModal, setShowConfirmLockModal] = useState(false)
+  const [showAdminContactModal, setShowAdminContactModal] = useState(false)
+  const [highlightedField, setHighlightedField] = useState(null)
+  const highlightTimeoutRef = useRef(null)
+
+  // Scroll otomatis dan highlight kolom form saat item checklist diklik
+  const scrollToField = useCallback((fieldKey) => {
+    const fieldIdMap = {
+      nama_lengkap: 'input-siswa-nama_lengkap',
+      tempat_lahir: 'input-siswa-tempat_lahir',
+      tanggal_lahir: 'input-siswa-tanggal_lahir',
+      jenis_kelamin: 'input-siswa-jenis_kelamin',
+      alamat: 'input-siswa-alamat',
+      rt: 'input-siswa-rt',
+      rw: 'input-siswa-rw',
+      kelurahan: 'input-siswa-kelurahan',
+      kecamatan: 'input-siswa-kecamatan',
+      kota: 'input-siswa-kota',
+      no_whatsapp: 'input-siswa-no_whatsapp',
+      kontak_ortu: 'input-siswa-parent_phone',
+      tinggal_bersama: 'input-siswa-tinggal_dropdown'
+    }
+
+    const targetId = fieldIdMap[fieldKey] || `input-siswa-${fieldKey}`
+    const el = document.getElementById(targetId)
+
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+      setTimeout(() => {
+        try {
+          if (typeof el.focus === 'function') {
+            el.focus({ preventScroll: true })
+          }
+        } catch (err) {
+          // ignore focus errors on container elements
+        }
+      }, 300)
+
+      setHighlightedField(fieldKey)
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedField(null)
+      }, 2500)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const frontCardRef = useRef(null)
   const backCardRef = useRef(null)
@@ -291,11 +412,43 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   // Hitung status kelengkapan data berdasarkan activeStudent terkini
   const audit = useMemo(() => auditStudentCompleteness(activeStudent), [activeStudent])
 
+  // Data biodata terkunci jika sudah lengkap tersimpan di sistem
+  const isLocked = audit.isComplete
+
+  // Helper styling untuk kolom form: jika locked maka abu-abu non-edit, jika belum terisi highlight merah, dan efek glow saat diklik dari checklist
+  const getFieldHighlightClass = (fieldKey, isEmpty) => {
+    if (isLocked) {
+      return 'border-slate-200 bg-slate-100/80 text-slate-700 cursor-not-allowed select-none'
+    }
+    if (highlightedField === fieldKey) {
+      return 'border-rose-500 ring-4 ring-rose-400/80 bg-rose-50/40 animate-pulse shadow-sm'
+    }
+    if (isEmpty) {
+      return 'border-rose-300 bg-rose-50/25 placeholder-rose-300 focus:border-rose-500 focus:ring-2 focus:ring-rose-200'
+    }
+    return 'border-slate-300 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+  }
+
   const isDirtyRef = useRef(false)
   const currentNisnRef = useRef(activeStudent?.nisn)
+  const modalScrollRef = useRef(null)
+
+  // Otomatis reset posisi scroll modal ke paling atas saat modal konfirmasi dibuka
+  useEffect(() => {
+    if (showConfirmLockModal) {
+      if (modalScrollRef.current) {
+        modalScrollRef.current.scrollTop = 0
+      }
+      const originalOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = originalOverflow
+      }
+    }
+  }, [showConfirmLockModal])
 
   // Ambil biodata siswa terbaru dari database secara live untuk memastikan kelengkapan data akurat
-  const fetchFreshStudent = useCallback(async () => {
+  const fetchFreshStudent = useCallback(async (forceUpdateParent = false) => {
     const nisn = studentData?.nisn
     if (!nisn) return
     try {
@@ -326,10 +479,25 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           kontak_ortu: fresh.kontak_ortu || [],
           no_hp_ortu: fresh.no_hp_ortu || '',
           nama_ortu: fresh.nama_ortu || '',
+          no_whatsapp: fresh.no_whatsapp || fresh.no_hp || '',
+          no_hp: fresh.no_hp || fresh.no_whatsapp || '',
           tinggal_bersama: fresh.tinggal_bersama || ''
         }
-        setLiveStudent(updated)
-        onUpdateStudentData?.(updated)
+        setLiveStudent(prev => {
+          if (!prev) return updated
+          if (JSON.stringify(prev) === JSON.stringify(updated)) return prev
+          return updated
+        })
+
+        // Bandingkan apakah data benar-benar berbeda dari studentData saat ini sebelum trigger update ke parent
+        const isDifferent = Object.keys(fresh).some(k => {
+          if (typeof fresh[k] === 'object') return JSON.stringify(fresh[k]) !== JSON.stringify(studentData?.[k])
+          return fresh[k] !== studentData?.[k]
+        })
+
+        if (isDifferent || forceUpdateParent) {
+          onUpdateStudentData?.(updated)
+        }
 
         // Jika data yang baru diambil belum lengkap, bersihkan draft lokal lama agar form menampilkan kolom kosong
         const freshAudit = auditStudentCompleteness(updated)
@@ -339,7 +507,10 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             sessionStorage.removeItem(getDraftKey(nisn))
           } catch {}
           if (freshAudit.initialValues) {
-            setFormData(freshAudit.initialValues)
+            setFormData(prev => {
+              const diff = Object.keys(freshAudit.initialValues).some(k => prev[k] !== freshAudit.initialValues[k])
+              return diff ? { ...prev, ...freshAudit.initialValues } : prev
+            })
           }
         }
       } else {
@@ -359,6 +530,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           kontak_ortu: [],
           no_hp_ortu: '',
           nama_ortu: '',
+          no_whatsapp: '',
+          no_hp: '',
           tinggal_bersama: ''
         }
         setLiveStudent(cleared)
@@ -378,7 +551,12 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   }, [studentData?.nisn])
 
   useEffect(() => {
-    fetchFreshStudent()
+    // Hanya fetch saat mount jika data siswa belum memiliki biodata
+    // Jika data sudah dimuat oleh Dashboard init, hindari query duplikat yang memperlambat reload
+    const hasExistingData = studentData?.alamat || (Array.isArray(studentData?.kontak_ortu) && studentData.kontak_ortu.length > 0)
+    if (!hasExistingData) {
+      fetchFreshStudent()
+    }
   }, [fetchFreshStudent])
 
   // Realtime subscription agar saat admin mengedit atau menghapus di Admin, HP siswa langsung terkunci otomatis!
@@ -395,7 +573,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         filter: `nisn=eq.${nisn}`
       }, (payload) => {
         console.log('[Realtime Siswa Kartu] Perubahan biodata terdeteksi:', payload.eventType)
-        fetchFreshStudent()
+        fetchFreshStudent(true)
       })
       .subscribe()
 
@@ -423,6 +601,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             kelurahan: '',
             kecamatan: '',
             kota: '',
+            no_whatsapp: '',
             parent_tag: 'Ayah',
             parent_nama: '',
             parent_phone: '',
@@ -445,6 +624,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       kelurahan: '',
       kecamatan: '',
       kota: '',
+      no_whatsapp: '',
       parent_tag: 'Ayah',
       parent_nama: '',
       parent_phone: '',
@@ -467,12 +647,16 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         setFormData(audit.initialValues)
       }
     } else if (!isDirtyRef.current && audit.initialValues) {
-      setFormData(prev => ({
-        ...audit.initialValues,
-        ...prev
-      }))
+      setFormData(prev => {
+        const needsUpdate = Object.keys(audit.initialValues).some(k => !prev[k] && audit.initialValues[k])
+        if (!needsUpdate) return prev
+        return {
+          ...audit.initialValues,
+          ...prev
+        }
+      })
     }
-  }, [activeStudent?.nisn, audit.initialValues])
+  }, [activeStudent?.nisn])
 
   const handleFieldChange = (key, value) => {
     isDirtyRef.current = true
@@ -487,12 +671,15 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
 
   // Fetch pengaturan kartu sekolah
   useEffect(() => {
+    let isMounted = true
     const fetchSettings = async () => {
       try {
         const { data } = await supabase
           .from('pengaturan_sekolah')
           .select('setting_key, setting_value')
           .like('setting_key', 'kartu_%')
+
+        if (!isMounted) return
 
         if (data && data.length > 0) {
           setSettings(prev => {
@@ -518,14 +705,24 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             if (!next.kartu_npsn_sekolah || next.kartu_npsn_sekolah === '20100223') {
               next.kartu_npsn_sekolah = '20106353'
             }
+            try {
+              localStorage.setItem(CARD_SETTINGS_STORAGE_KEY, JSON.stringify(next))
+            } catch {}
             return next
           })
+          setIsSettingsLoaded(true)
+        } else {
+          setIsSettingsLoaded(true)
         }
       } catch (err) {
         console.warn('Gagal memuat pengaturan kartu pelajar:', err)
+        if (isMounted) setIsSettingsLoaded(true)
       }
     }
     fetchSettings()
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const handleFlip = () => {
@@ -574,79 +771,148 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     }
   }
 
-  // Cetak Langsung
-  const handlePrint = () => {
-    window.print()
+  // Cetak Langsung (Web: window.print(), Android/iOS: export PDF & buka dialog Cetak/Share sistem)
+  const handlePrint = async () => {
+    if (Capacitor.isNativePlatform()) {
+      setIsDownloading(true)
+      setDownloadMessage('Menyiapkan kartu pelajar untuk dicetak...')
+      try {
+        const fileName = `cetak_kartu_pelajar_${activeStudent?.nisn || 'siswa'}.pdf`
+        await exportCardAsPdf(frontCardRef.current, backCardRef.current, fileName)
+      } catch (err) {
+        console.error(err)
+        setDownloadMessage('Gagal menyiapkan cetak kartu. Silakan coba lagi.')
+      } finally {
+        setIsDownloading(false)
+        setTimeout(() => setDownloadMessage(null), 3000)
+      }
+    } else {
+      window.print()
+    }
   }
 
-  // Submit Handler: Simpan data siswa yang telah dilengkapi
-  const handleSaveCompletenessForm = async (e) => {
-    e.preventDefault()
+  // Validasi form data sebelum membuka modal konfirmasi penguncian
+  const validateFormBeforeConfirm = () => {
     setFormError('')
     setFormSuccessMessage('')
 
-    // Validasi Kolom Wajib
     if (!formData.nama_lengkap || !formData.nama_lengkap.trim()) {
       setFormError('Nama Lengkap wajib diisi.')
-      return
+      scrollToField('nama_lengkap')
+      return false
     }
     if (!formData.tempat_lahir || !formData.tempat_lahir.trim()) {
       setFormError('Tempat Lahir wajib diisi.')
-      return
+      scrollToField('tempat_lahir')
+      return false
     }
     if (!formData.tanggal_lahir) {
       setFormError('Tanggal Lahir wajib dipilih.')
-      return
+      scrollToField('tanggal_lahir')
+      return false
     }
     if (!formData.jenis_kelamin) {
       setFormError('Jenis Kelamin (Laki-laki / Perempuan) wajib dipilih.')
-      return
+      scrollToField('jenis_kelamin')
+      return false
     }
     if (!formData.alamat || !formData.alamat.trim()) {
       setFormError('Alamat (Nama Jalan / Rumah) wajib diisi.')
-      return
+      scrollToField('alamat')
+      return false
     }
     if (!formData.rt || !String(formData.rt).trim()) {
       setFormError('RT wajib diisi.')
-      return
+      scrollToField('rt')
+      return false
     }
     if (!formData.rw || !String(formData.rw).trim()) {
       setFormError('RW wajib diisi.')
-      return
+      scrollToField('rw')
+      return false
     }
     if (!formData.kelurahan || !formData.kelurahan.trim()) {
       setFormError('Kelurahan / Desa wajib diisi.')
-      return
+      scrollToField('kelurahan')
+      return false
     }
     if (!formData.kecamatan || !formData.kecamatan.trim()) {
       setFormError('Kecamatan wajib diisi.')
-      return
+      scrollToField('kecamatan')
+      return false
     }
     if (!formData.kota || !formData.kota.trim()) {
       setFormError('Kota / Kabupaten wajib diisi.')
-      return
+      scrollToField('kota')
+      return false
+    }
+    if (!formData.no_whatsapp || !formData.no_whatsapp.trim()) {
+      setFormError('Nomor WhatsApp / HP Siswa wajib diisi.')
+      scrollToField('no_whatsapp')
+      return false
+    }
+    const cleanStudentPhone = formatPhoneNumber(formData.no_whatsapp)
+    if (cleanStudentPhone.length < 8) {
+      setFormError('Nomor WhatsApp / HP Siswa tidak valid (minimal 8 angka).')
+      scrollToField('no_whatsapp')
+      return false
     }
     if (!formData.parent_phone || !formData.parent_phone.trim()) {
       setFormError('Nomor WhatsApp / HP Orang Tua wajib diisi.')
-      return
+      scrollToField('kontak_ortu')
+      return false
     }
     const cleanParentPhone = formatPhoneNumber(formData.parent_phone)
     if (cleanParentPhone.length < 8) {
       setFormError('Nomor WhatsApp / HP Orang Tua tidak valid (minimal 8 angka).')
-      return
+      scrollToField('kontak_ortu')
+      return false
     }
 
-    let finalTinggalBersama = formData.tinggal_dropdown
     if (formData.tinggal_dropdown === 'Lainnya') {
       if (!formData.tinggal_custom || !formData.tinggal_custom.trim()) {
         setFormError('Mohon sebutkan tinggal bersama siapa jika memilih "Lainnya".')
-        return
+        scrollToField('tinggal_bersama')
+        return false
       }
-      finalTinggalBersama = `Lainnya: ${formData.tinggal_custom.trim()}`
     }
 
+    return true
+  }
+
+  // Submit Handler: Validasi lalu buka modal peringatan penguncian data
+  const handleSaveCompletenessForm = (e) => {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault()
+    }
+    if (isLocked) {
+      setShowAdminContactModal(true)
+      return
+    }
+    if (validateFormBeforeConfirm()) {
+      setShowConfirmLockModal(true)
+      setTimeout(() => {
+        if (modalScrollRef.current) {
+          modalScrollRef.current.scrollTop = 0
+        }
+      }, 20)
+    }
+  }
+
+  // Eksekusi penyimpanan ke Supabase setelah siswa setuju di modal konfirmasi
+  const executeSaveBiodata = async () => {
     setIsSavingForm(true)
+    setFormError('')
+    setFormSuccessMessage('')
+
     try {
+      const cleanStudentPhone = formatPhoneNumber(formData.no_whatsapp)
+      const cleanParentPhone = formatPhoneNumber(formData.parent_phone)
+      let finalTinggalBersama = formData.tinggal_dropdown
+      if (formData.tinggal_dropdown === 'Lainnya') {
+        finalTinggalBersama = `Lainnya: ${formData.tinggal_custom.trim()}`
+      }
+
       // 1. Rangkai Alamat + RT/RW
       const cleanRt = String(formData.rt).trim().padStart(3, '0')
       const cleanRw = String(formData.rw).trim().padStart(3, '0')
@@ -672,6 +938,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         kecamatan: formData.kecamatan.trim(),
         kota: formData.kota.trim(),
         tinggal_bersama: finalTinggalBersama,
+        no_whatsapp: cleanStudentPhone,
+        no_hp: cleanStudentPhone,
         kontak_ortu: cleanKontakList,
         no_hp_ortu: cleanParentPhone,
         nama_ortu: formData.parent_nama ? formData.parent_nama.trim() : null
@@ -701,6 +969,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       const updatedStudent = {
         ...activeStudent,
         ...payload,
+        no_whatsapp: cleanStudentPhone,
+        no_hp: cleanStudentPhone,
         rt: cleanRt,
         rw: cleanRw,
         rt_rw: rtRwCombined
@@ -719,7 +989,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       } catch {}
       isDirtyRef.current = false
 
-      setFormSuccessMessage('Biodata berhasil disimpan! Membuka Kartu Pelajar Digital...')
+      setShowConfirmLockModal(false)
+      setFormSuccessMessage('Biodata berhasil disimpan & dikunci! Membuka Kartu Pelajar Digital...')
       setTimeout(() => {
         setIsEditingData(false)
         setFormSuccessMessage('')
@@ -733,6 +1004,299 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     }
   }
 
+  // Komponen Modal Peringatan Kunci & Hubungi Admin (Menggunakan React Portal ke document.body)
+  const renderModals = () => {
+    if (typeof document === 'undefined') return null
+
+    return createPortal(
+      <>
+        {/* Modal Peringatan & Konfirmasi Penguncian Biodata (Full Screen 100vw 100vh) */}
+        {showConfirmLockModal && (
+          <div className="fixed inset-0 z-[99999] bg-slate-900/70 backdrop-blur-sm flex flex-col overflow-hidden animate-fade-in">
+            <div className="w-full h-full bg-slate-50 flex flex-col overflow-hidden">
+              {/* Top Bar Header */}
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 md:px-8 py-3.5 sm:py-4 flex items-center justify-between shadow-xs shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-amber-500/15 border border-amber-300 text-amber-700 flex items-center justify-center text-xl sm:text-2xl shrink-0 shadow-xs">
+                    ⚠️
+                  </div>
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wide">
+                      <span>🔒</span> Perhatian: Penguncian Biodata Siswa
+                    </div>
+                    <h3 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-tight">
+                      Simpan & Kunci Data Permanen?
+                    </h3>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSavingForm}
+                  onClick={() => setShowConfirmLockModal(false)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  <span className="hidden sm:inline">Periksa Kembali</span>
+                </button>
+              </div>
+
+              {/* Main Scrollable Body */}
+              <div ref={modalScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-slate-100/60">
+                <div className="max-w-4xl w-full mx-auto space-y-6 pb-6">
+                  {/* Warning Card */}
+                  <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-rose-50 via-rose-50/80 to-amber-50 border-2 border-rose-200/90 text-rose-900 shadow-sm space-y-2">
+                    <div className="flex items-center gap-2 text-rose-700 font-black text-xs sm:text-sm">
+                      <div className="w-6 h-6 rounded-lg bg-rose-200/60 flex items-center justify-center shrink-0">
+                        <svg className="w-4 h-4 text-rose-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                      <span>PERINGATAN PENTING PENGUNCIAN DATA:</span>
+                    </div>
+                    <p className="text-xs sm:text-sm text-rose-900 leading-relaxed font-medium">
+                      Ketika Anda menekan tombol <b>Simpan & Kunci Data</b>, seluruh data biodata siswa di bawah ini akan <b>terkunci secara permanen dan hanya bisa dilihat</b>. Jika di kemudian hari Anda ingin mengubah data, Anda <b>harus menghubungi Admin / Tata Usaha Sekolah</b>.
+                    </p>
+                    <p className="text-[11px] sm:text-xs text-rose-700 italic">
+                      *Mohon teliti dan pastikan seluruh ejaan nama, tanggal lahir, dan kontak di bawah ini sudah sesuai dokumen resmi (Akta Kelahiran / KK).
+                    </p>
+                  </div>
+
+                  {/* Comprehensive Data Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    {/* Card 1: Identitas Pribadi Siswa */}
+                    <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm font-bold">
+                          1
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800">Identitas Pribadi Siswa</h4>
+                          <p className="text-[11px] text-slate-400">Data resmi siswa sesuai akta / ijazah</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">NISN Siswa</span>
+                          <span className="font-mono font-bold text-slate-800 text-sm">{activeStudent?.nisn || formData.nisn || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Jenis Kelamin</span>
+                          <span className="font-bold text-slate-800">
+                            {formData.jenis_kelamin === 'L' ? '👦 Laki-laki (L)' : formData.jenis_kelamin === 'P' ? '👧 Perempuan (P)' : '-'}
+                          </span>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Nama Lengkap</span>
+                          <span className="font-black text-slate-900 text-sm sm:text-base leading-snug">{formData.nama_lengkap || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Tempat Lahir</span>
+                          <span className="font-semibold text-slate-800">{formData.tempat_lahir || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Tanggal Lahir</span>
+                          <span className="font-semibold text-slate-800">{formData.tanggal_lahir || '-'}</span>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Nomor WhatsApp Siswa</span>
+                          <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 inline-block mt-0.5">
+                            {formData.no_whatsapp ? `+${formData.no_whatsapp}` : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Status Tempat Tinggal & Domisili */}
+                    <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm font-bold">
+                          2
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800">Status Tempat Tinggal & Domisili</h4>
+                          <p className="text-[11px] text-slate-400">Informasi alamat tempat tinggal saat ini</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                        <div className="sm:col-span-2">
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Tinggal Bersama</span>
+                          <span className="font-bold text-indigo-800 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100 inline-block mt-0.5">
+                            {formData.tinggal_dropdown === 'Lainnya' ? (formData.tinggal_custom || 'Lainnya') : (formData.tinggal_dropdown || '-')}
+                          </span>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Nama Jalan / Rumah</span>
+                          <span className="font-bold text-slate-800 leading-snug">{formData.alamat || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">RT / RW</span>
+                          <span className="font-semibold text-slate-800">RT {formData.rt || '-'} / RW {formData.rw || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Kelurahan / Desa</span>
+                          <span className="font-semibold text-slate-800">{formData.kelurahan || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Kecamatan</span>
+                          <span className="font-semibold text-slate-800">{formData.kecamatan || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Kota / Kabupaten</span>
+                          <span className="font-semibold text-slate-800">{formData.kota || '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Kontak Orang Tua / Wali */}
+                    <div className="md:col-span-2 bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm font-bold">
+                          3
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800">Kontak Orang Tua / Wali</h4>
+                          <p className="text-[11px] text-slate-400">Kontak resmi orang tua untuk komunikasi sekolah</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Peran Kontak</span>
+                          <span className="font-bold text-slate-800">{formData.parent_tag || 'Orang Tua'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Nama Orang Tua / Wali</span>
+                          <span className="font-bold text-slate-800">{formData.parent_nama || '-'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">No. WhatsApp / Telepon Ortu</span>
+                          <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 inline-block mt-0.5">
+                            {formData.parent_phone ? `+${formData.parent_phone}` : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Checklist Box */}
+                  <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-3">
+                    <span className="text-lg">ℹ️</span>
+                    <div className="text-xs text-indigo-900 space-y-1 leading-relaxed">
+                      <p className="font-bold">Pastikan sebelum menekan tombol "Ya, Simpan & Kunci Data":</p>
+                      <ul className="list-disc list-inside space-y-0.5 text-indigo-800 text-[11px]">
+                        <li>Nama lengkap dan tanggal lahir sudah sesuai dengan Akta Kelahiran atau Kartu Keluarga.</li>
+                        <li>Nomor WhatsApp siswa dan orang tua aktif agar tidak tertinggal informasi penting dari sekolah.</li>
+                        <li>Setelah tersimpan, kartu pelajar digital Anda akan langsung terbit dan dapat diunduh.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sticky Bottom Action Bar */}
+              <div className="sticky bottom-0 z-20 bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-4 sm:px-6 md:px-8 py-3.5 sm:py-4 shadow-lg shrink-0">
+                <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <p className="text-[11px] sm:text-xs text-slate-500 text-center sm:text-left leading-tight">
+                    🔒 Data akan tersimpan aman dan terkunci permanen di server sekolah.
+                  </p>
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      disabled={isSavingForm}
+                      onClick={() => setShowConfirmLockModal(false)}
+                      className="flex-1 sm:flex-initial px-5 py-2.5 rounded-2xl border border-slate-300 bg-white text-slate-700 font-bold text-xs hover:bg-slate-50 active:scale-95 transition-all disabled:opacity-50 cursor-pointer text-center"
+                    >
+                      Periksa Kembali
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSavingForm}
+                      onClick={executeSaveBiodata}
+                      className="flex-1 sm:flex-initial px-6 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-md shadow-indigo-600/30 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSavingForm ? (
+                        <>
+                          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span>Menyimpan & Mengunci...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>🔒</span>
+                          <span>Ya, Simpan & Kunci Data</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Kontak Admin (Jika Siswa Ingin Mengubah Biodata yang Terkunci) */}
+        {showAdminContactModal && (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+            <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-scale-up">
+              <div className="p-6 space-y-5 text-center sm:text-left">
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center text-2xl shrink-0">
+                    🔒
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-800">
+                      Biodata Siswa Terkunci
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Perubahan data hanya dapat dilakukan oleh Admin
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 space-y-2.5 leading-relaxed">
+                  <p>
+                    Data identitas dan domisili Anda telah disimpan dan <b>terkunci secara resmi</b> demi keabsahan kartu pelajar dan administrasi sekolah.
+                  </p>
+                  <p>
+                    Jika Anda ingin memperbarui data (seperti perbaikan nama, tempat/tanggal lahir, alamat domisili, atau nomor kontak), silakan:
+                  </p>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2 text-slate-700 font-medium">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🏫</span>
+                      <span>Hubungi <b>Petugas Tata Usaha (TU)</b> Sekolah</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">👨‍🏫</span>
+                      <span>Atau beritahukan kepada <b>Wali Kelas</b> Anda</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminContactModal(false)}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition-all shadow-sm cursor-pointer"
+                  >
+                    Saya Mengerti
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>,
+      document.body
+    )
+  }
+
   const alamatTeks = formatAlamatLengkap(activeStudent)
 
   // =========================================================================
@@ -741,83 +1305,129 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   // =========================================================================
   if (!audit.isComplete || isEditingData) {
     return (
-      <div className="animate-slide-up space-y-6 max-w-4xl mx-auto pb-12">
-        {/* Banner Status Kelengkapan Data */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-7 relative overflow-hidden">
-          <div className="absolute -right-8 -top-8 w-44 h-44 bg-amber-50 rounded-full blur-2xl pointer-events-none" />
+      <div className="animate-slide-up space-y-6 w-full pb-12">
+        {/* Banner Status Kelengkapan Data / Terkunci */}
+        {isLocked ? (
+          <div className="bg-gradient-to-r from-amber-50/90 via-orange-50/60 to-amber-50/90 rounded-2xl shadow-sm border border-amber-200 p-6 md:p-7 relative overflow-hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold shadow-2xs">
+                  <span>🔒</span>
+                  <span>Data Terkunci (Mode Hanya Dilihat)</span>
+                </div>
+                <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
+                  Biodata Siswa Resmi
+                </h1>
+                <p className="text-sm text-slate-600 max-w-2xl leading-relaxed">
+                  Data biodata ini telah tersimpan dan <b>terkunci secara resmi</b> demi keabsahan kartu pelajar dan dokumen sekolah. Anda hanya dapat melihat data. Apabila terdapat perubahan data, Anda <b>harus menghubungi Admin / Tata Usaha Sekolah</b>.
+                </p>
+              </div>
 
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold mb-3 shadow-2xs">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                {audit.isComplete ? 'Mode Pembaruan Biodata' : 'Perhatian: Data Identitas Belum Lengkap'}
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminContactModal(true)}
+                  className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  <span>Hubungi Admin</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingData(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-700 border border-slate-300 font-bold text-xs flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                >
+                  <span>Kembali ke Kartu Pelajar</span>
+                </button>
               </div>
-              <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
-                {audit.isComplete ? 'Perbarui Data Kartu Pelajar' : 'Lengkapi Biodata untuk Menampilkan Kartu'}
-              </h1>
-              <p className="text-sm text-slate-600 mt-2 max-w-2xl leading-relaxed">
-                {audit.isComplete
-                  ? 'Anda dapat memperbarui alamat domisili, kontak orang tua, atau data identitas diri Anda di bawah ini.'
-                  : 'Sesuai dengan ketentuan resmi sekolah, Kartu Pelajar Digital hanya dapat diterbitkan dan diunduh setelah biodata diri, alamat domisili lengkap, kontak orang tua, dan status tempat tinggal telah terisi 100%.'}
-              </p>
-            </div>
-
-            {/* Progress Bar Widget */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4.5 min-w-[240px] shrink-0 shadow-xs">
-              <div className="flex items-center justify-between text-xs font-bold mb-2">
-                <span className="text-slate-500 uppercase tracking-wider text-[11px]">Kelengkapan Data</span>
-                <span className={`text-sm ${audit.isComplete ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {audit.completedCount} / {audit.totalCount} ({audit.percent}%)
-                </span>
-              </div>
-              <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-500 rounded-full ${
-                    audit.isComplete ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-orange-500'
-                  }`}
-                  style={{ width: `${audit.percent}%` }}
-                />
-              </div>
-              <p className="text-[11px] text-slate-400 mt-2">
-                {audit.isComplete 
-                  ? 'Seluruh data telah lengkap' 
-                  : `${audit.missingList.length} data masih perlu dilengkapi`}
-              </p>
             </div>
           </div>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-7 relative overflow-hidden">
+            <div className="absolute -right-8 -top-8 w-44 h-44 bg-amber-50 rounded-full blur-2xl pointer-events-none" />
 
-          {/* Checklist Tag List */}
-          {!audit.isComplete && (
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold mb-3 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  Perhatian: Data Identitas Belum Lengkap
+                </div>
+                <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
+                  Lengkapi Biodata untuk Menampilkan Kartu
+                </h1>
+                <p className="text-sm text-slate-600 mt-2 max-w-2xl leading-relaxed">
+                  Sesuai dengan ketentuan resmi sekolah, Kartu Pelajar Digital hanya dapat diterbitkan dan diunduh setelah biodata diri, alamat domisili lengkap, kontak orang tua, dan status tempat tinggal telah terisi 100%.
+                </p>
+              </div>
+
+              {/* Progress Bar Widget */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4.5 min-w-[240px] shrink-0 shadow-xs">
+                <div className="flex items-center justify-between text-xs font-bold mb-2">
+                  <span className="text-slate-500 uppercase tracking-wider text-[11px]">Kelengkapan Data</span>
+                  <span className="text-sm text-amber-600">
+                    {audit.completedCount} / {audit.totalCount} ({audit.percent}%)
+                  </span>
+                </div>
+                <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full transition-all duration-500 rounded-full bg-gradient-to-r from-amber-500 to-orange-500"
+                    style={{ width: `${audit.percent}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  {audit.missingList.length} data masih perlu dilengkapi
+                </p>
+              </div>
+            </div>
+
+            {/* Checklist Tag List */}
             <div className="mt-6 pt-6 border-t border-slate-100">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-3">
-                Daftar Pengecekan Data Wajib:
-              </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3">
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Daftar Pengecekan Data Wajib:
+                </span>
+                <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1">
+                  <span>💡</span> Klik item merah untuk langsung menuju kolom pengisian
+                </span>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                 {audit.checklist.map((item) => (
-                  <div
+                  <button
+                    type="button"
                     key={item.key}
-                    className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs transition-all ${
+                    onClick={() => scrollToField(item.key)}
+                    title={`Klik untuk menuju ke pengisian ${item.label}`}
+                    className={`group flex items-center justify-between gap-2 p-2.5 rounded-xl border text-xs text-left transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.02] active:scale-[0.98] ${
                       item.isComplete
-                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
-                        : 'bg-rose-50/70 border-rose-200 text-rose-800 font-semibold'
+                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800 hover:bg-emerald-100/70 hover:border-emerald-300'
+                        : 'bg-rose-50 border-rose-300 text-rose-800 font-semibold hover:bg-rose-100 hover:border-rose-400 shadow-xs ring-1 ring-rose-200/60'
                     }`}
                   >
-                    {item.isComplete ? (
-                      <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4 text-rose-500 shrink-0 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <div className="flex items-center gap-2 min-w-0">
+                      {item.isComplete ? (
+                        <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-rose-500 shrink-0 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      )}
+                      <span className="truncate">{item.label}</span>
+                    </div>
+                    {!item.isComplete && (
+                      <svg className="w-3.5 h-3.5 text-rose-400 group-hover:translate-x-0.5 group-hover:text-rose-600 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
                     )}
-                    <span className="truncate">{item.label}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Form Lengkapi Biodata */}
         <form onSubmit={handleSaveCompletenessForm} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8 space-y-8">
@@ -871,12 +1481,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   Nama Lengkap Siswa <span className="text-rose-500">*</span>
                 </label>
                 <input
+                  id="input-siswa-nama_lengkap"
                   type="text"
                   required
+                  disabled={isLocked}
                   placeholder="Contoh: Muhammad Budi Santoso"
                   value={formData.nama_lengkap}
                   onChange={(e) => handleFieldChange('nama_lengkap', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                  className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                    'nama_lengkap',
+                    !formData.nama_lengkap?.trim()
+                  )}`}
                 />
               </div>
 
@@ -886,12 +1501,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   Tempat Lahir <span className="text-rose-500">*</span>
                 </label>
                 <input
+                  id="input-siswa-tempat_lahir"
                   type="text"
                   required
+                  disabled={isLocked}
                   placeholder="Contoh: Jakarta"
                   value={formData.tempat_lahir}
                   onChange={(e) => handleFieldChange('tempat_lahir', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                  className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                    'tempat_lahir',
+                    !formData.tempat_lahir?.trim()
+                  )}`}
                 />
               </div>
 
@@ -901,11 +1521,16 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   Tanggal Lahir <span className="text-rose-500">*</span>
                 </label>
                 <input
+                  id="input-siswa-tanggal_lahir"
                   type="date"
                   required
+                  disabled={isLocked}
                   value={formData.tanggal_lahir}
                   onChange={(e) => handleFieldChange('tanggal_lahir', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                  className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                    'tanggal_lahir',
+                    !formData.tanggal_lahir
+                  )}`}
                 />
               </div>
 
@@ -914,9 +1539,19 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                 <label className="block text-xs font-bold text-slate-700 mb-2">
                   Jenis Kelamin <span className="text-rose-500">*</span>
                 </label>
-                <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                <div 
+                  id="input-siswa-jenis_kelamin"
+                  tabIndex={-1}
+                  className={`grid grid-cols-2 gap-3 sm:max-w-md p-1.5 rounded-2xl transition-all ${
+                    highlightedField === 'jenis_kelamin'
+                      ? 'ring-4 ring-rose-300/70 bg-rose-50/30'
+                      : (!formData.jenis_kelamin ? 'border-2 border-dashed border-rose-300 bg-rose-50/20' : '')
+                  }`}
+                >
                   <label
-                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border transition-all ${
+                      isLocked ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'
+                    } ${
                       formData.jenis_kelamin === 'L'
                         ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold shadow-xs'
                         : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
@@ -926,8 +1561,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                       type="radio"
                       name="jenis_kelamin"
                       value="L"
+                      disabled={isLocked}
                       checked={formData.jenis_kelamin === 'L'}
-                      onChange={() => handleFieldChange('jenis_kelamin', 'L')}
+                      onChange={() => !isLocked && handleFieldChange('jenis_kelamin', 'L')}
                       className="sr-only"
                     />
                     <span className="text-base">👦</span>
@@ -935,7 +1571,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   </label>
 
                   <label
-                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border transition-all ${
+                      isLocked ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'
+                    } ${
                       formData.jenis_kelamin === 'P'
                         ? 'bg-rose-50 border-rose-500 text-rose-900 font-bold shadow-xs'
                         : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
@@ -945,8 +1583,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                       type="radio"
                       name="jenis_kelamin"
                       value="P"
+                      disabled={isLocked}
                       checked={formData.jenis_kelamin === 'P'}
-                      onChange={() => handleFieldChange('jenis_kelamin', 'P')}
+                      onChange={() => !isLocked && handleFieldChange('jenis_kelamin', 'P')}
                       className="sr-only"
                     />
                     <span className="text-base">👧</span>
@@ -971,7 +1610,16 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
 
             <div className="space-y-5">
               {/* Dropdown Tinggal Bersama Siapa */}
-              <div className="p-4.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+              <div 
+                id="input-siswa-tinggal_bersama"
+                className={`p-4.5 rounded-2xl border transition-all ${
+                  highlightedField === 'tinggal_bersama'
+                    ? 'bg-rose-50/30 border-rose-400 ring-4 ring-rose-300/70'
+                    : (formData.tinggal_dropdown === 'Lainnya' && !formData.tinggal_custom?.trim()
+                        ? 'bg-rose-50/15 border-rose-300'
+                        : 'bg-slate-50 border-slate-200/80')
+                }`}
+              >
                 <label className="block text-xs font-bold text-slate-800 mb-1.5">
                   Tinggal Bersama Siapa? <span className="text-rose-500">*</span>
                 </label>
@@ -982,9 +1630,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <select
+                      id="input-siswa-tinggal_dropdown"
+                      disabled={isLocked}
                       value={formData.tinggal_dropdown}
                       onChange={(e) => handleFieldChange('tinggal_dropdown', e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                      className={`w-full px-4 py-2.5 border rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden ${
+                        isLocked
+                          ? 'bg-slate-100/90 text-slate-700 border-slate-200 cursor-not-allowed'
+                          : highlightedField === 'tinggal_bersama'
+                          ? 'bg-white border-rose-500 ring-2 ring-rose-300/60'
+                          : 'bg-white border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                      }`}
                     >
                       <option value="Kedua Orang Tua">Kedua Orang Tua</option>
                       <option value="Ayah">Ayah</option>
@@ -999,10 +1655,14 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                       <input
                         type="text"
                         required
+                        disabled={isLocked}
                         placeholder="Contoh: Kakek dan Nenek / Paman / Asrama"
                         value={formData.tinggal_custom}
                         onChange={(e) => handleFieldChange('tinggal_custom', e.target.value)}
-                        className="w-full px-4 py-2.5 bg-white border border-indigo-400 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                        className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                          'tinggal_bersama',
+                          !formData.tinggal_custom?.trim()
+                        )}`}
                       />
                     </div>
                   )}
@@ -1015,12 +1675,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                   Nama Jalan / Gang / Nomor Rumah <span className="text-rose-500">*</span>
                 </label>
                 <input
+                  id="input-siswa-alamat"
                   type="text"
                   required
+                  disabled={isLocked}
                   placeholder="Contoh: Jl. Mangga Besar II No. 15 Blok C"
                   value={formData.alamat}
                   onChange={(e) => handleFieldChange('alamat', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                  className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                    'alamat',
+                    !formData.alamat?.trim()
+                  )}`}
                 />
               </div>
 
@@ -1032,13 +1697,18 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                     RT <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="input-siswa-rt"
                     type="text"
                     required
+                    disabled={isLocked}
                     placeholder="Contoh: 002"
                     maxLength={4}
                     value={formData.rt}
                     onChange={(e) => handleFieldChange('rt', e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'rt',
+                      !formData.rt?.trim()
+                    )}`}
                   />
                 </div>
 
@@ -1048,13 +1718,18 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                     RW <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="input-siswa-rw"
                     type="text"
                     required
+                    disabled={isLocked}
                     placeholder="Contoh: 005"
                     maxLength={4}
                     value={formData.rw}
                     onChange={(e) => handleFieldChange('rw', e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'rw',
+                      !formData.rw?.trim()
+                    )}`}
                   />
                 </div>
 
@@ -1064,12 +1739,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                     Kelurahan / Desa <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="input-siswa-kelurahan"
                     type="text"
                     required
+                    disabled={isLocked}
                     placeholder="Contoh: Maphar"
                     value={formData.kelurahan}
                     onChange={(e) => handleFieldChange('kelurahan', e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'kelurahan',
+                      !formData.kelurahan?.trim()
+                    )}`}
                   />
                 </div>
 
@@ -1079,12 +1759,17 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                     Kecamatan <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="input-siswa-kecamatan"
                     type="text"
                     required
+                    disabled={isLocked}
                     placeholder="Contoh: Taman Sari"
                     value={formData.kecamatan}
                     onChange={(e) => handleFieldChange('kecamatan', e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'kecamatan',
+                      !formData.kecamatan?.trim()
+                    )}`}
                   />
                 </div>
 
@@ -1094,119 +1779,197 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                     Kota / Kabupaten <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="input-siswa-kota"
                     type="text"
                     required
+                    disabled={isLocked}
                     placeholder="Contoh: Jakarta Barat"
                     value={formData.kota}
                     onChange={(e) => handleFieldChange('kota', e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'kota',
+                      !formData.kota?.trim()
+                    )}`}
                   />
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Bagian 3: Kontak Orang Tua / Wali */}
+          {/* Bagian 3: Kontak Siswa & Orang Tua / Wali */}
           <div>
             <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100 mb-5">
               <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black text-sm">
                 3
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-800">Kontak Orang Tua / Wali</h3>
-                <p className="text-xs text-slate-400">Minimal 1 nomor HP / WhatsApp orang tua atau wali untuk komunikasi darurat dan pelaporan sekolah.</p>
+                <h3 className="text-base font-bold text-slate-800">Kontak Siswa & Orang Tua / Wali</h3>
+                <p className="text-xs text-slate-400">Nomor kontak aktif siswa dan minimal 1 kontak orang tua/wali untuk komunikasi darurat dan informasi sekolah.</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* Hubungan / Tag */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Hubungan <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={formData.parent_tag}
-                  onChange={(e) => handleFieldChange('parent_tag', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
-                >
-                  <option value="Ayah">Ayah</option>
-                  <option value="Ibu">Ibu</option>
-                  <option value="Wali">Wali</option>
-                  <option value="Orang Tua">Orang Tua</option>
-                </select>
+            <div className="space-y-5">
+              {/* Kontak Siswa */}
+              <div className="p-4.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-800">
+                    Nomor WhatsApp / HP Siswa <span className="text-rose-500">*</span>
+                  </label>
+                  {(!formData.no_whatsapp || formData.no_whatsapp.replace(/\D/g, '').length < 7) ? (
+                    <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 animate-pulse">
+                      Belum Diisi
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      Terisi
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mb-2.5">
+                  Nomor handphone aktif siswa untuk pengiriman notifikasi akademik, absensi harian, dan koordinasi sekolah.
+                </p>
+                <div className="max-w-md">
+                  <input
+                    id="input-siswa-no_whatsapp"
+                    type="tel"
+                    required
+                    disabled={isLocked}
+                    placeholder="Contoh: 081234567890"
+                    value={formData.no_whatsapp}
+                    onChange={(e) => handleFieldChange('no_whatsapp', e.target.value)}
+                    className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                      'no_whatsapp',
+                      !formData.no_whatsapp?.trim() || formData.no_whatsapp.replace(/\D/g, '').length < 7
+                    )}`}
+                  />
+                </div>
               </div>
 
-              {/* Nama Orang Tua (Opsional) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Nama Orang Tua / Wali <span className="text-slate-400 font-normal">(opsional)</span>
+              {/* Kontak Orang Tua / Wali */}
+              <div className="p-4.5 rounded-2xl bg-white border border-slate-200/80">
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">
+                  Kontak Orang Tua / Wali <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="Contoh: Hendro Pratama"
-                  value={formData.parent_nama}
-                  onChange={(e) => handleFieldChange('parent_nama', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
-                />
-              </div>
+                <p className="text-[11px] text-slate-500 mb-3">
+                  Minimal 1 nomor HP / WhatsApp orang tua atau wali untuk komunikasi darurat dan pelaporan sekolah.
+                </p>
 
-              {/* Nomor WhatsApp / HP Orang Tua */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Nomor WhatsApp / HP <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="tel"
-                  required
-                  placeholder="Contoh: 081234567890"
-                  value={formData.parent_phone}
-                  onChange={(e) => handleFieldChange('parent_phone', e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Hubungan / Tag */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Hubungan <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      disabled={isLocked}
+                      value={formData.parent_tag}
+                      onChange={(e) => handleFieldChange('parent_tag', e.target.value)}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden ${
+                        isLocked
+                          ? 'bg-slate-100/90 text-slate-700 border-slate-200 cursor-not-allowed'
+                          : 'bg-white border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                      }`}
+                    >
+                      <option value="Ayah">Ayah</option>
+                      <option value="Ibu">Ibu</option>
+                      <option value="Wali">Wali</option>
+                      <option value="Orang Tua">Orang Tua</option>
+                    </select>
+                  </div>
+
+                  {/* Nama Orang Tua (Opsional) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Nama Orang Tua / Wali <span className="text-slate-400 font-normal">(opsional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      disabled={isLocked}
+                      placeholder="Contoh: Hendro Pratama"
+                      value={formData.parent_nama}
+                      onChange={(e) => handleFieldChange('parent_nama', e.target.value)}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden ${
+                        isLocked
+                          ? 'bg-slate-100/90 text-slate-700 border-slate-200 cursor-not-allowed'
+                          : 'bg-white border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Nomor WhatsApp / HP Orang Tua */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Nomor WhatsApp / HP Ortu <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      id="input-siswa-parent_phone"
+                      type="tel"
+                      required
+                      disabled={isLocked}
+                      placeholder="Contoh: 081234567890"
+                      value={formData.parent_phone}
+                      onChange={(e) => handleFieldChange('parent_phone', e.target.value)}
+                      className={`w-full px-4 py-2.5 rounded-xl text-slate-800 text-xs font-semibold transition-all outline-hidden border ${getFieldHighlightClass(
+                        'kontak_ortu',
+                        !formData.parent_phone?.trim() || formData.parent_phone.replace(/\D/g, '').length < 7
+                      )}`}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="pt-6 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            {isEditingData && audit.isComplete ? (
-              <button
-                type="button"
-                onClick={() => setIsEditingData(false)}
-                className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-50 active:scale-95 transition-all"
-              >
-                Batal & Kembali ke Kartu
-              </button>
-            ) : (
-              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <span className="text-rose-500 font-bold">*</span> Wajib diisi lengkap untuk mengaktifkan kartu pelajar.
+            {isLocked ? (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full">
+                <div className="flex items-center gap-2 text-xs text-amber-800 font-semibold bg-amber-50 px-4 py-2.5 rounded-xl border border-amber-200">
+                  <span>🔒</span>
+                  <span>Data Terkunci — Siswa hanya dapat melihat data. Untuk perubahan, hubungi Admin Sekolah.</span>
+                </div>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminContactModal(true)}
+                    className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <span>Hubungi Admin untuk Ubah Data</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingData(false)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 active:scale-95 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                  >
+                    Kembali ke Kartu Pelajar
+                  </button>
+                </div>
               </div>
-            )}
+            ) : (
+              <>
+                <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                  <span className="text-rose-500 font-bold">*</span> Wajib diisi lengkap untuk mengaktifkan kartu pelajar.
+                </div>
 
-            <button
-              type="submit"
-              disabled={isSavingForm}
-              className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50"
-            >
-              {isSavingForm ? (
-                <>
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  <span>Menyimpan Biodata...</span>
-                </>
-              ) : (
-                <>
+                <button
+                  type="submit"
+                  disabled={isSavingForm}
+                  className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 cursor-pointer"
+                >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                   <span>Simpan & Tampilkan Kartu Pelajar</span>
-                </>
-              )}
-            </button>
+                </button>
+              </>
+            )}
           </div>
         </form>
+
+        {renderModals()}
       </div>
     )
   }
@@ -1215,7 +1978,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   // VIEW B: DATA LENGKAP -> MENAMPILKAN KARTU PELAJAR DIGITAL INTERAKTIF
   // =========================================================================
   return (
-    <div className="animate-slide-up space-y-6 max-w-4xl mx-auto pb-12">
+    <div className="animate-slide-up space-y-6 w-full pb-12">
       {/* Container Utama Kartu Pelajar (Sesuai Tema Aplikasi) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7 space-y-6">
         {/* Bar Status Aktif & Tombol Ubah Biodata */}
@@ -1229,6 +1992,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   Status: Aktif Berlaku
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold">
+                  🔒 Data Terkunci
                 </span>
                 <span className="text-xs font-bold text-slate-500">
                   • Kelas {activeStudent?.kelas || '-'} ({activeStudent?.tahun_ajaran || '-'})
@@ -1244,10 +2010,23 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             <button
               type="button"
               onClick={() => setIsEditingData(true)}
-              className="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-600 hover:text-slate-900 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition-all"
+              className="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 hover:text-slate-900 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
             >
-              <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              <span>Lihat Biodata</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowAdminContactModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-800 border border-amber-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+              title="Biodata terkunci. Hubungi admin untuk perubahan data"
+            >
+              <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
               <span>Ubah Biodata</span>
             </button>
@@ -1293,25 +2072,38 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           </div>
 
           {/* Kartu Pelajar Render */}
-          <div className="w-full bg-slate-50/80 border border-slate-200/70 rounded-2xl p-2 sm:p-8 flex items-center justify-center overflow-x-auto shadow-inner">
-            <div 
-              className={`transition-all duration-300 transform ${
-                isFlipping ? 'scale-95 opacity-50 rotate-y-90' : 'scale-100 opacity-100 rotate-y-0'
-              }`}
-              style={{
-                width: cardScale < 1 ? `${Math.round(510 * cardScale)}px` : '510px',
-                height: cardScale < 1 ? `${Math.round(322 * cardScale)}px` : '322px',
-                position: 'relative'
-              }}
-            >
-              <KartuPelajarCard
-                student={activeStudent}
-                photoUrl={photoUrl}
-                settings={settings}
-                side={currentSide}
-                scale={cardScale}
-              />
-            </div>
+          <div className="w-full bg-slate-50/80 border border-slate-200/70 rounded-2xl p-2 sm:p-8 flex items-center justify-center overflow-x-auto shadow-inner min-h-[220px]">
+            {!isSettingsLoaded ? (
+              <div 
+                className="rounded-2xl border border-slate-200/80 bg-white shadow-xs flex flex-col items-center justify-center p-6 animate-pulse"
+                style={{
+                  width: cardScale < 1 ? `${Math.round(510 * cardScale)}px` : '510px',
+                  height: cardScale < 1 ? `${Math.round(322 * cardScale)}px` : '322px'
+                }}
+              >
+                <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+                <span className="text-xs font-semibold text-slate-500">Memuat Kartu Pelajar Digital...</span>
+              </div>
+            ) : (
+              <div 
+                className={`transition-all duration-300 transform ${
+                  isFlipping ? 'scale-95 opacity-50 rotate-y-90' : 'scale-100 opacity-100 rotate-y-0'
+                }`}
+                style={{
+                  width: cardScale < 1 ? `${Math.round(510 * cardScale)}px` : '510px',
+                  height: cardScale < 1 ? `${Math.round(322 * cardScale)}px` : '322px',
+                  position: 'relative'
+                }}
+              >
+                <KartuPelajarCard
+                  student={activeStudent}
+                  photoUrl={photoUrl}
+                  settings={settings}
+                  side={currentSide}
+                  scale={cardScale}
+                />
+              </div>
+            )}
           </div>
 
           {/* Toast Notification jika sedang unduh */}
@@ -1326,7 +2118,7 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             <button
               type="button"
               onClick={handleDownloadPdf}
-              disabled={isDownloading}
+              disabled={!isSettingsLoaded || isDownloading}
               className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -1338,7 +2130,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             <button
               type="button"
               onClick={handlePrint}
-              className="px-5 py-2.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-700 border border-slate-200 font-bold text-xs flex items-center gap-2 shadow-2xs transition-all"
+              disabled={!isSettingsLoaded}
+              className="px-5 py-2.5 rounded-xl bg-white hover:bg-slate-50 active:scale-95 text-slate-700 border border-slate-200 font-bold text-xs flex items-center gap-2 shadow-2xs transition-all disabled:opacity-50"
             >
               <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
@@ -1350,7 +2143,11 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
       </div>
 
       {/* Hidden high-res DOM elements for full PDF/PNG capture */}
-      <div id="student-card-printable" className="fixed -left-[9999px] -top-[9999px] pointer-events-none">
+      <div 
+        id="student-card-printable" 
+        className="fixed top-0 left-0 -z-50 opacity-0 pointer-events-none"
+        style={{ position: 'fixed', top: 0, left: 0, overflow: 'visible' }}
+      >
         <KartuPelajarCard
           ref={frontCardRef}
           student={activeStudent}
@@ -1383,13 +2180,20 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             top: 0 !important;
             width: 100% !important;
             height: auto !important;
+            max-height: none !important;
+            min-height: auto !important;
+            max-width: none !important;
+            overflow: visible !important;
+            opacity: 1 !important;
+            z-index: 999999 !important;
             padding: 10mm !important;
             background: white !important;
             display: flex !important;
             flex-wrap: wrap !important;
             gap: 10mm !important;
             justify-content: center !important;
-            z-index: 999999 !important;
+            align-items: flex-start !important;
+            pointer-events: auto !important;
           }
           * {
             -webkit-print-color-adjust: exact !important;
@@ -1405,6 +2209,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           margin: 10mm;
         }
       `}</style>
+
+      {renderModals()}
     </div>
   )
 }

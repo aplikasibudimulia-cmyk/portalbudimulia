@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient'
 import KartuPelajarCard, { CARD_THEMES, formatAlamatLengkap, parseKetentuanList, serializeKetentuanList, parseMisiList, serializeMisiList } from './KartuPelajarCard'
 import { exportCardAsPdf, exportCardAsImage, exportBulkCardsAsPdf } from '../utils/kartuPelajarExporter'
 import { downloadWorkbook } from '../utils/fileDownloader'
+import { Capacitor } from '@capacitor/core'
 import { downloadStudentTemplateExcel, combineAlamatAndRtRw, cleanPhone, toTitleCase, parseDateToIso, formatAlamatJalan, extractRtRwFromRow } from '../utils/studentExcelHelper'
 
 const CARD_COMPONENTS_META = [
@@ -210,144 +211,162 @@ const CARD_COMPONENTS_META = [
   }
 ]
 
-export default function AdminKartuPelajarSection({ students = [], activeTa = null, allFotos = [], tahunAjarans = [], onRefresh }) {
-  const [activeTab, setActiveTab] = useState('desain') // 'desain' | 'import_excel' | 'cetak_massal'
-  const [loading, setLoading] = useState(false)
-  const [savingSettings, setSavingSettings] = useState(false)
-  const [message, setMessage] = useState(null)
-  const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState(null)
-  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(true)
-  const [autoSaveStatus, setAutoSaveStatus] = useState(null) // null | 'saving' | 'saved'
-  const autoSaveTimerRef = useRef(null)
-
-  // Settings State
-  const [settings, setSettings] = useState({
-    kartu_nama_sekolah: 'SMP BUDI MULIA',
-    kartu_npsn_sekolah: '20106353',
-    kartu_instansi_sekolah: 'DINAS PENDIDIKAN PROVINSI DKI JAKARTA',
-    kartu_akreditasi: 'TERAKREDITASI A',
-    kartu_judul: 'KARTU TANDA PELAJAR',
-    kartu_subjudul: 'SEKOLAH MENENGAH PERTAMA',
-    kartu_alamat_sekolah: 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730',
-    kartu_nama_kepsek: 'Septian Ruswadi, S.Pd',
-    kartu_nip_kepsek: '-',
-    kartu_tema_warna: 'budi_mulia_resmi',
-    kartu_logo_url: '/logo_budimulia.png',
-    kartu_tanggal_terbit: 'Jakarta, 1 Juli 2026',
-    kartu_web_sekolah: 'smpbudimuliajakarta.sch.id',
-    kartu_masa_berlaku: 'Selama Menjadi Siswa Aktif',
-    kartu_footer_teks: 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA',
-    kartu_visi_sekolah: 'Terwujudnya peserta didik yang beriman, berakhlak mulia, cerdas, berprestasi, berwawasan global, dan berakar pada budaya bangsa.',
-    kartu_misi_sekolah: 
+const INITIAL_DEFAULT_ADMIN_SETTINGS = {
+  kartu_nama_sekolah: 'SMP BUDI MULIA',
+  kartu_npsn_sekolah: '20106353',
+  kartu_instansi_sekolah: 'DINAS PENDIDIKAN PROVINSI DKI JAKARTA',
+  kartu_akreditasi: 'TERAKREDITASI A',
+  kartu_judul: 'KARTU TANDA PELAJAR',
+  kartu_subjudul: 'SEKOLAH MENENGAH PERTAMA',
+  kartu_alamat_sekolah: 'Jl. Mangga Besar Raya No. 135, RT.3/RW.1, Mangga Dua Selatan, Kecamatan Sawah Besar, Kota Jakarta Pusat, DKI Jakarta 10730',
+  kartu_nama_kepsek: 'Septian Ruswadi, S.Pd',
+  kartu_nip_kepsek: '-',
+  kartu_tema_warna: 'budi_mulia_resmi',
+  kartu_logo_url: '/logo_budimulia.png',
+  kartu_tanggal_terbit: 'Jakarta, 1 Juli 2026',
+  kartu_web_sekolah: 'smpbudimuliajakarta.sch.id',
+  kartu_masa_berlaku: 'Selama Menjadi Siswa Aktif',
+  kartu_footer_teks: 'KARTU IDENTITAS RESMI SISWA • SMP BUDI MULIA JAKARTA',
+  kartu_visi_sekolah: 'Terwujudnya peserta didik yang beriman, berakhlak mulia, cerdas, berprestasi, berwawasan global, dan berakar pada budaya bangsa.',
+  kartu_misi_sekolah: 
 `1. Menanamkan keimanan, ketakwaan, dan budi pekerti luhur melalui pembiasaan dan pengamalan nilai-nilai keagamaan.
 2. Menyelenggarakan proses pembelajaran yang aktif, inovatif, kreatif, efektif, menyenangkan, dan berbasis teknologi.
 3. Mengembangkan potensi bakat, minat, dan prestasi peserta didik secara optimal di bidang akademik maupun non-akademik.
 4. Menumbuhkan budaya disiplin, cinta tanah air, kepedulian sosial, serta kelestarian lingkungan hidup.`,
-    kartu_ttd_url: '',
-    kartu_ttd_size: 100,
-    kartu_ttd_x: 0,
-    kartu_ttd_y: 0,
-    kartu_ttd_rotate: 0,
-    kartu_cap_url: '',
-    kartu_cap_size: 100,
-    kartu_cap_x: 0,
-    kartu_cap_y: 0,
-    kartu_cap_rotate: -8,
-    kartu_cap_opacity: 90,
-    kartu_bg_logo_size: 100,
-    kartu_bg_logo_x: 0,
-    kartu_bg_logo_y: 0,
-    kartu_bg_logo_opacity: 8,
-    kartu_glossy_effect: true,
-    kartu_belakang_teks: 
+  kartu_ttd_url: '',
+  kartu_ttd_size: 100,
+  kartu_ttd_x: 0,
+  kartu_ttd_y: 0,
+  kartu_ttd_rotate: 0,
+  kartu_cap_url: '',
+  kartu_cap_size: 100,
+  kartu_cap_x: 0,
+  kartu_cap_y: 0,
+  kartu_cap_rotate: -8,
+  kartu_cap_opacity: 90,
+  kartu_bg_logo_size: 100,
+  kartu_bg_logo_x: 0,
+  kartu_bg_logo_y: 0,
+  kartu_bg_logo_opacity: 8,
+  kartu_glossy_effect: true,
+  kartu_belakang_teks: 
 `1. Kartu ini adalah tanda pengenal sah siswa SMP Budi Mulia Jakarta.
 2. Wajib dibawa saat berada di lingkungan sekolah dan kegiatan resmi.
 3. Kartu ini tidak dapat dipindahtangankan kepada orang lain.
 4. Apabila kartu ini hilang atau rusak, segera lapor ke bagian Tata Usaha / Kesiswaan.
 5. Jika menemukan kartu ini, mohon kembalikan ke alamat sekolah di bawah ini.`,
 
-    // Posisi & Ukuran Baru untuk Fitur Visual Drag & Resize
-    kartu_foto_x: 0,
-    kartu_foto_y: 0,
-    kartu_foto_size: 100,
-    kartu_foto_rotate: 0,
+  // Posisi & Ukuran Baru untuk Fitur Visual Drag & Resize
+  kartu_foto_x: 0,
+  kartu_foto_y: 0,
+  kartu_foto_size: 100,
+  kartu_foto_rotate: 0,
 
-    kartu_qr_x: 0,
-    kartu_qr_y: 0,
-    kartu_qr_size: 100,
-    kartu_qr_rotate: 0,
+  kartu_qr_x: 0,
+  kartu_qr_y: 0,
+  kartu_qr_size: 100,
+  kartu_qr_rotate: 0,
 
-    kartu_barcode_x: 0,
-    kartu_barcode_y: 0,
-    kartu_barcode_size: 100,
-    kartu_barcode_rotate: 0,
-    kartu_barcode_width: 355,
+  kartu_barcode_x: 0,
+  kartu_barcode_y: 0,
+  kartu_barcode_size: 100,
+  kartu_barcode_rotate: 0,
+  kartu_barcode_width: 355,
 
-    kartu_biodata_x: 0,
-    kartu_biodata_y: 0,
-    kartu_biodata_size: 100,
-    kartu_biodata_rotate: 0,
+  kartu_biodata_x: 0,
+  kartu_biodata_y: 0,
+  kartu_biodata_size: 100,
+  kartu_biodata_rotate: 0,
 
-    kartu_badge_x: 0,
-    kartu_badge_y: 0,
-    kartu_badge_size: 100,
-    kartu_badge_rotate: 0,
-    kartu_badge_teks: 'SMP BUDI MULIA',
+  kartu_badge_x: 0,
+  kartu_badge_y: 0,
+  kartu_badge_size: 100,
+  kartu_badge_rotate: 0,
+  kartu_badge_teks: 'SMP BUDI MULIA',
 
-    kartu_header_title_x: 0,
-    kartu_header_title_y: 0,
-    kartu_header_title_size: 100,
-    kartu_header_title_rotate: 0,
+  kartu_header_title_x: 0,
+  kartu_header_title_y: 0,
+  kartu_header_title_size: 100,
+  kartu_header_title_rotate: 0,
 
-    kartu_header_logo_x: 0,
-    kartu_header_logo_y: 0,
-    kartu_header_logo_size: 100,
-    kartu_header_logo_rotate: 0,
+  kartu_header_logo_x: 0,
+  kartu_header_logo_y: 0,
+  kartu_header_logo_size: 100,
+  kartu_header_logo_rotate: 0,
 
-    kartu_kepsek_x: 0,
-    kartu_kepsek_y: 0,
-    kartu_kepsek_size: 100,
-    kartu_kepsek_rotate: 0,
+  kartu_kepsek_x: 0,
+  kartu_kepsek_y: 0,
+  kartu_kepsek_size: 100,
+  kartu_kepsek_rotate: 0,
 
-    kartu_back_header_x: 0,
-    kartu_back_header_y: 0,
-    kartu_back_header_size: 100,
+  kartu_back_header_x: 0,
+  kartu_back_header_y: 0,
+  kartu_back_header_size: 100,
 
-    kartu_back_visi_x: 0,
-    kartu_back_visi_y: 0,
-    kartu_back_visi_size: 100,
+  kartu_back_visi_x: 0,
+  kartu_back_visi_y: 0,
+  kartu_back_visi_size: 100,
 
-    kartu_back_rules_x: 0,
-    kartu_back_rules_y: 0,
-    kartu_back_rules_size: 100,
+  kartu_back_rules_x: 0,
+  kartu_back_rules_y: 0,
+  kartu_back_rules_size: 100,
 
-    kartu_back_footer_x: 0,
-    kartu_back_footer_y: 0,
-    kartu_back_footer_size: 100,
+  kartu_back_footer_x: 0,
+  kartu_back_footer_y: 0,
+  kartu_back_footer_size: 100,
 
-    kartu_biodata_width: '',
-    kartu_biodata_label_width: 85,
-    kartu_biodata_font_size: '10.5',
-    kartu_code_display: 'both',
-    kartu_custom_components: JSON.stringify([
-      {
-        id: 'custom_npsn',
-        side: 'front',
-        label: 'NPSN Sekolah',
-        type: 'text',
-        text: 'NPSN: 20106353',
-        initialX: 305,
-        initialY: 34,
-        x: 0,
-        y: 0,
-        size: 85,
-        rotate: 0,
-        color: '#dc2626',
-        bgColor: 'transparent',
-        fontSize: 8,
-        isBold: true
+  kartu_biodata_width: '',
+  kartu_biodata_label_width: 85,
+  kartu_biodata_font_size: '10.5',
+  kartu_code_display: 'both',
+  kartu_custom_components: JSON.stringify([
+    {
+      id: 'custom_npsn',
+      side: 'front',
+      label: 'NPSN Sekolah',
+      type: 'text',
+      text: 'NPSN: 20106353',
+      initialX: 305,
+      initialY: 34,
+      x: 0,
+      y: 0,
+      size: 85,
+      rotate: 0,
+      color: '#dc2626',
+      bgColor: 'transparent',
+      fontSize: 8,
+      isBold: true
+    }
+  ])
+}
+
+export default function AdminKartuPelajarSection({ students = [], activeTa = null, allFotos = [], tahunAjarans = [], onRefresh }) {
+  const [activeTab, setActiveTab] = useState('desain') // 'desain' | 'import_excel' | 'cetak_massal'
+  const [loading, setLoading] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_kartu_pelajar_settings_cache')
+      if (cached) {
+        return { ...INITIAL_DEFAULT_ADMIN_SETTINGS, ...JSON.parse(cached) }
       }
-    ])
+    } catch {}
+    return null
+  })
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(true)
+  const [autoSaveStatus, setAutoSaveStatus] = useState(null) // null | 'saving' | 'saved'
+  const autoSaveTimerRef = useRef(null)
+
+  // Settings State
+  const [settings, setSettings] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_kartu_pelajar_settings_cache')
+      if (cached) {
+        return { ...INITIAL_DEFAULT_ADMIN_SETTINGS, ...JSON.parse(cached) }
+      }
+    } catch {}
+    return { ...INITIAL_DEFAULT_ADMIN_SETTINGS }
   })
 
   // Live preview state
@@ -865,6 +884,9 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
               next.kartu_kepsek_x = 0
             }
             setSavedSettingsSnapshot(next)
+            try {
+              localStorage.setItem('ebm_kartu_pelajar_settings_cache', JSON.stringify(next))
+            } catch {}
             return next
           })
         } else {
@@ -906,6 +928,9 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
       }
 
       setSavedSettingsSnapshot({ ...targetSettings })
+      try {
+        localStorage.setItem('ebm_kartu_pelajar_settings_cache', JSON.stringify(targetSettings))
+      } catch {}
       if (!silent) {
         setMessage({ type: 'success', text: 'Pengaturan dan desain kartu pelajar berhasil disimpan!' })
       } else {
@@ -3365,7 +3390,11 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
       )}
 
       {/* Hidden high-res DOM elements for full PDF/PNG capture of Tab 1 Preview */}
-      <div className="fixed -left-[9999px] -top-[9999px] pointer-events-none">
+      <div 
+        id="student-card-printable-admin"
+        className="fixed top-0 left-0 -z-50 opacity-0 pointer-events-none"
+        style={{ position: 'fixed', top: 0, left: 0, overflow: 'visible' }}
+      >
         <KartuPelajarCard
           ref={previewFrontRef}
           student={selectedStudentForPreview}
@@ -3842,7 +3871,7 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
 
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => Capacitor.isNativePlatform() ? handleDownloadBulkPdf() : window.print()}
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-2 transition-all cursor-pointer"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -3868,6 +3897,7 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
                   top: 0 !important;
                   width: 100% !important;
                   height: auto !important;
+                  max-height: none !important;
                   margin: 0 !important;
                   padding: 8mm !important;
                   background: white !important;
@@ -3877,6 +3907,8 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
                   justify-content: center !important;
                   z-index: 9999999 !important;
                   overflow: visible !important;
+                  opacity: 1 !important;
+                  pointer-events: auto !important;
                 }
                 .print-student-group {
                   page-break-inside: avoid !important;

@@ -91,7 +91,7 @@ function buildArticleGroups(items) {
   return groups
 }
 
-export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
+export default function SiswaPengajuanPoinSection({ studentData, activeTa, initialTab = 'katalog' }) {
   const nisn = studentData?.nisn
 
   // ─── State ───
@@ -106,9 +106,25 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
   const [semester, setSemester]         = useState(1)
 
   // Riwayat
-  const [activeTab, setActiveTab]       = useState('katalog') // 'katalog' | 'riwayat'
+  const [activeTab, setActiveTab]       = useState(initialTab || 'katalog') // 'katalog' | 'riwayat'
   const [riwayat, setRiwayat]           = useState([])
   const [riwayatLoading, setRiwayatLoading] = useState(false)
+
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab)
+    }
+  }, [initialTab])
+
+  useEffect(() => {
+    const handleSwitchTab = (e) => {
+      if (e.detail?.tab) {
+        setActiveTab(e.detail.tab)
+      }
+    }
+    window.addEventListener('switch-pengajuan-tab', handleSwitchTab)
+    return () => window.removeEventListener('switch-pengajuan-tab', handleSwitchTab)
+  }, [])
 
   // Modal pengajuan
   const [modal, setModal]               = useState(null) // katalog item yang dipilih
@@ -330,11 +346,11 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
       setResubmitItem(null)
       setSuccessMsg('Revisi pengajuan berhasil dikirim ulang! Menunggu review guru BK.')
       showLocalNotif(
-        'Revisi Pengajuan Poin Terkirim',
+        '[Siswa] Revisi Pengajuan Poin Terkirim',
         `Revisi pengajuan "${resubmitItem.jenis}" berhasil dikirim ulang dan menunggu review guru BK.`,
         {
           tag: `pengajuan-resubmit-${resubmitItem.id}-${Date.now()}`,
-          data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+          data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa' }
         }
       )
       setTimeout(() => setSuccessMsg(''), 7000)
@@ -411,11 +427,11 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa }) {
       setModal(null)
       setSuccessMsg(`Pengajuan "${modalJenis}" berhasil dikirim! Menunggu review guru BK.`)
       showLocalNotif(
-        'Pengajuan Poin Berhasil Dikirim',
+        '[Siswa] Pengajuan Poin Berhasil Dikirim',
         `Pengajuan "${modalJenis}" (+${modalPoin} Poin) telah dikirim dan menunggu review guru BK.`,
         {
           tag: `pengajuan-send-${pengajuanId}`,
-          data: { url: '/dashboard?menu=AJUKAN_POIN', targetMenu: 'AJUKAN_POIN', role: 'Siswa' }
+          data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa' }
         }
       )
       setTimeout(() => setSuccessMsg(''), 7000)

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { updateServerTimeOffset } from './utils/dateUtils'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -46,6 +47,11 @@ const fetchWithRetry = (url, options = {}) => {
         } catch (_) {
           // body bukan JSON, skip retry
         }
+      }
+
+      const dateHeader = response.headers?.get ? response.headers.get('date') : null
+      if (dateHeader) {
+        updateServerTimeOffset(dateHeader)
       }
 
       return response

@@ -74,12 +74,12 @@ export async function downloadFile(data, filename, mimeType = 'application/octet
       // Documents write may fail on some Android versions if permission is restricted, ignore
     }
 
-    // Open Native Share / Save / Open dialog
+    // Open Native Share / Save / Open / Print dialog
     await Share.share({
       title: filename,
-      text: `Unduhan file ${filename}`,
+      files: [writeResult.uri],
       url: writeResult.uri,
-      dialogTitle: `Buka atau Simpan ${filename}`
+      dialogTitle: `Buka, Cetak, atau Simpan ${filename}`
     })
   } catch (err) {
     console.error('[fileDownloader] Native share/save error, fallback to saveAs:', err)
