@@ -56,8 +56,7 @@ AddDefaultCharset UTF-8
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteCond %{REQUEST_FILENAME} !-l
-  RewriteRule ^ /index.html [L]
+  RewriteRule . /index.html [L]
 </IfModule>
 
 <IfModule !mod_rewrite.c>

@@ -635,6 +635,62 @@ export default function AdminKartuUjianSection({
     })
   }, [allRankedStudents, selectedKelas, searchQuery])
 
+  // =========================================================================
+  // SELEKSI SISWA UNTUK CETAK KARTU (CHECKLIST / ANTREAN CETAK SPESIFIK)
+  // =========================================================================
+  const [selectedStudentIds, setSelectedStudentIds] = useState([])
+
+  // Helper toggle checklist 1 siswa
+  const handleToggleSelectStudent = (studentId) => {
+    if (!studentId) return
+    setSelectedStudentIds(prev => {
+      if (prev.includes(studentId)) {
+        return prev.filter(id => id !== studentId)
+      } else {
+        return [...prev, studentId]
+      }
+    })
+  }
+
+  // Apakah semua siswa pada filter/pencarian saat ini sudah terpilih?
+  const isAllFilteredSelected = useMemo(() => {
+    if (filteredStudents.length === 0) return false
+    return filteredStudents.every(s => selectedStudentIds.includes(s.nisn || s.id))
+  }, [filteredStudents, selectedStudentIds])
+
+  // Helper toggle pilih semua / batalkan semua yang saat ini tampil
+  const handleToggleSelectAllFiltered = () => {
+    if (isAllFilteredSelected) {
+      const filteredKeys = new Set(filteredStudents.map(s => s.nisn || s.id))
+      setSelectedStudentIds(prev => prev.filter(id => !filteredKeys.has(id)))
+    } else {
+      const newKeys = new Set(selectedStudentIds)
+      filteredStudents.forEach(s => newKeys.add(s.nisn || s.id))
+      setSelectedStudentIds(Array.from(newKeys))
+    }
+  }
+
+  // Helper kosongkan seluruh pilihan
+  const handleClearSelectedStudents = () => {
+    setSelectedStudentIds([])
+  }
+
+  // Objek siswa yang terpilih (urut sesuai peringkat/absen/kelas di allRankedStudents)
+  const selectedStudents = useMemo(() => {
+    if (selectedStudentIds.length === 0) return []
+    return allRankedStudents.filter(s => selectedStudentIds.includes(s.nisn || s.id))
+  }, [allRankedStudents, selectedStudentIds])
+
+  // Siswa target untuk cetak/ekspor massal:
+  // JIKA ADA YANG DICEKLIST -> Gunakan siswa yang diceklist
+  // JIKA KOSONG -> Gunakan filteredStudents (perilaku lama 100% terjaga)
+  const targetStudentsForBulkPrint = useMemo(() => {
+    if (selectedStudentIds.length > 0) {
+      return selectedStudents
+    }
+    return filteredStudents
+  }, [selectedStudentIds, selectedStudents, filteredStudents])
+
   // Siswa yang sedang dipilih untuk preview
   const activePreviewStudent = useMemo(() => {
     if (previewStudentId) {
@@ -2742,9 +2798,9 @@ export default function AdminKartuUjianSection({
   }
 
   const handleExportBulkPdf = async () => {
-    if (filteredStudents.length === 0) return
+    if (targetStudentsForBulkPrint.length === 0) return
     setIsExportingBulk(true)
-    setExportProgress({ current: 0, total: filteredStudents.length, percent: 0 })
+    setExportProgress({ current: 0, total: targetStudentsForBulkPrint.length, percent: 0 })
 
     try {
       await new Promise(r => setTimeout(r, 600))
@@ -2752,7 +2808,9 @@ export default function AdminKartuUjianSection({
       const cardElements = Array.from(cardNodes)
 
       const taClean = (activeTa?.nama || '2026_2027').replace(/\//g, '_')
-      const kelasClean = selectedKelas !== 'all' ? `Kelas_${selectedKelas}` : 'Semua_Kelas'
+      const kelasClean = selectedStudentIds.length > 0
+        ? `${selectedStudentIds.length}_Siswa_Terpilih`
+        : (selectedKelas !== 'all' ? `Kelas_${selectedKelas}` : 'Semua_Kelas')
       const fileName = `Kartu_Ujian_Massal_A4_${kelasClean}_${taClean}.pdf`
 
       await exportBulkExamCardsA4Pdf(cardElements, fileName, (curr, tot) => {
@@ -2939,8 +2997,8 @@ export default function AdminKartuUjianSection({
     if (printModalMode === 'single') {
       return activePreviewStudent ? [activePreviewStudent] : []
     }
-    return filteredStudents
-  }, [printModalMode, activePreviewStudent, filteredStudents])
+    return targetStudentsForBulkPrint
+  }, [printModalMode, activePreviewStudent, targetStudentsForBulkPrint])
 
   // Pengelompokan siswa ke lembar A4 berdasarkan preset kartu terpilih
   const bulkPages = useMemo(() => {
@@ -3006,7 +3064,7 @@ export default function AdminKartuUjianSection({
   const triggerDirectPdfPrint = async () => {
     setIsPrinting(true)
     setIsPreparingPrint(true)
-    setPrintProgress({ current: 0, total: printModalMode === 'single' ? 1 : filteredStudents.length, percent: 0 })
+    setPrintProgress({ current: 0, total: printModalMode === 'single' ? 1 : studentsToPrint.length, percent: 0 })
 
     try {
       if (printModalMode === 'single') {
@@ -3037,11 +3095,13 @@ export default function AdminKartuUjianSection({
   }
 
   const handleExportExcel = async () => {
-    if (filteredStudents.length === 0) return
+    if (targetStudentsForBulkPrint.length === 0) return
     const taClean = (activeTa?.nama || '2026_2027').replace(/\//g, '_')
-    const kelasClean = selectedKelas !== 'all' ? `Kelas_${selectedKelas}` : 'Semua_Kelas'
+    const kelasClean = selectedStudentIds.length > 0
+      ? `${selectedStudentIds.length}_Siswa_Terpilih`
+      : (selectedKelas !== 'all' ? `Kelas_${selectedKelas}` : 'Semua_Kelas')
     const fileName = `Rekap_Peserta_Ujian_${kelasClean}_${taClean}.xlsx`
-    await exportExamStudentsToExcel(filteredStudents, fileName)
+    await exportExamStudentsToExcel(targetStudentsForBulkPrint, fileName)
   }
 
   // Unduh template Excel untuk diisi Ruang, Username, dan Password
@@ -3121,34 +3181,50 @@ export default function AdminKartuUjianSection({
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
             onClick={handleExportExcel}
-            disabled={filteredStudents.length === 0}
+            disabled={targetStudentsForBulkPrint.length === 0}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-colors disabled:opacity-50"
             title="Download Excel Rekap Peserta & Akun Login"
           >
             <span>📊</span>
-            <span>Export Excel</span>
+            <span>{selectedStudentIds.length > 0 ? `Export Excel (${selectedStudentIds.length})` : 'Export Excel'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => handleOpenPrintModal('bulk')}
-            disabled={filteredStudents.length === 0}
-            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+            disabled={targetStudentsForBulkPrint.length === 0}
+            className={`px-4 py-2 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer ${
+              selectedStudentIds.length > 0
+                ? 'bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 hover:from-violet-700 hover:to-blue-700 ring-2 ring-indigo-300 ring-offset-1'
+                : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700'
+            }`}
             title="Cetak Langsung dari Aplikasi ke Printer Anda (Format 4 Kartu / Lembar A4)"
           >
             <span>🖨️</span>
-            <span>Cetak Langsung A4 ({filteredStudents.length})</span>
+            <span>
+              {selectedStudentIds.length > 0
+                ? `Cetak Terpilih (${selectedStudentIds.length})`
+                : `Cetak Langsung A4 (${filteredStudents.length})`}
+            </span>
           </button>
 
           <button
             type="button"
             onClick={handleExportBulkPdf}
-            disabled={filteredStudents.length === 0 || isExportingBulk}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+            disabled={targetStudentsForBulkPrint.length === 0 || isExportingBulk}
+            className={`px-4 py-2 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer ${
+              selectedStudentIds.length > 0
+                ? 'bg-slate-900 hover:bg-black ring-1 ring-slate-400'
+                : 'bg-slate-800 hover:bg-slate-900'
+            }`}
             title="Unduh file dokumen PDF A4 (4 Kartu / Lembar) untuk percetakan luar"
           >
             <span>📄</span>
-            <span>{isExportingBulk ? `Memproses ${exportProgress.percent}%...` : `Unduh PDF Massal`}</span>
+            <span>
+              {isExportingBulk
+                ? `Memproses ${exportProgress.percent}%...`
+                : (selectedStudentIds.length > 0 ? `Unduh PDF Terpilih (${selectedStudentIds.length})` : 'Unduh PDF Massal')}
+            </span>
           </button>
 
           <button
@@ -3456,6 +3532,99 @@ export default function AdminKartuUjianSection({
         {/* PANEL KANAN: TABEL PESERTA UJIAN & FILTER (7 KOLOM) */}
         <div className="lg:col-span-7 bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm space-y-4">
           
+          {/* TRAY ANTREAN SISWA TERPILIH UNTUK DICETAK */}
+          {selectedStudentIds.length > 0 && (
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-50/90 via-violet-50/70 to-blue-50/90 border border-indigo-200/90 shadow-sm space-y-3 animate-fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm font-bold shadow-xs shrink-0">
+                    ✓
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-extrabold text-slate-900 text-xs tracking-tight">
+                        Antrean Cetak: {selectedStudentIds.length} Siswa Terpilih
+                      </span>
+                      <span className="px-2 py-0.2 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold border border-indigo-200">
+                        Siap Cetak / PDF
+                      </span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-500">
+                      Hanya siswa yang diceklist yang akan dicetak / diunduh ke PDF.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Aksi Cepat Antrean */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenPrintModal('bulk')}
+                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                    title="Buka dialog cetak langsung untuk siswa terpilih"
+                  >
+                    <span>🖨️</span>
+                    <span>Cetak Terpilih ({selectedStudentIds.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportBulkPdf}
+                    disabled={isExportingBulk}
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                    title="Unduh file PDF untuk siswa terpilih"
+                  >
+                    <span>📄</span>
+                    <span>{isExportingBulk ? `${exportProgress.percent}%` : 'Unduh PDF'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClearSelectedStudents}
+                    className="px-2.5 py-1.5 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                    title="Kosongkan semua siswa terpilih"
+                  >
+                    ✕ Kosongkan
+                  </button>
+                </div>
+              </div>
+
+              {/* Chips Siswa Terpilih (Scrollable Horizontal) */}
+              <div className="flex items-center gap-1.5 flex-wrap max-h-24 overflow-y-auto pr-1">
+                {selectedStudents.map(st => {
+                  const id = st.nisn || st.id
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-white border border-indigo-200/80 text-slate-800 text-[11px] font-bold shadow-2xs group hover:border-indigo-400 transition-colors"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setPreviewStudentId(id)}
+                        className="hover:text-indigo-600 cursor-pointer text-left flex items-center gap-1"
+                        title="Klik untuk pratinjau kartu siswa ini"
+                      >
+                        <span>{st.nama}</span>
+                        <span className="text-[9.5px] px-1 py-0.2 bg-slate-100 rounded text-slate-500 font-semibold">{st.kelas}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleToggleSelectStudent(id)
+                        }}
+                        className="w-4 h-4 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center font-black text-xs cursor-pointer transition-colors"
+                        title="Hapus dari antrean cetak"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Controls Bar: Filter Kelas & Search */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -3494,8 +3663,15 @@ export default function AdminKartuUjianSection({
           </div>
 
           {/* Info Jumlah */}
-          <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-            <span>Menampilkan <strong>{filteredStudents.length}</strong> siswa</span>
+          <div className="flex items-center justify-between text-xs text-slate-500 px-1 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span>Menampilkan <strong>{filteredStudents.length}</strong> siswa</span>
+              {selectedStudentIds.length > 0 && (
+                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-[11px] flex items-center gap-1">
+                  <span>✓ {selectedStudentIds.length} terpilih</span>
+                </span>
+              )}
+            </div>
             {selectedKelas !== 'all' && (
               <span className="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 text-[11px]">
                 Kelas {selectedKelas}
@@ -3508,6 +3684,15 @@ export default function AdminKartuUjianSection({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider sticky top-0 border-b border-slate-200">
                 <tr>
+                  <th className="p-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={isAllFilteredSelected}
+                      onChange={handleToggleSelectAllFiltered}
+                      title={isAllFilteredSelected ? "Batal pilih semua siswa di tampilan ini" : "Pilih semua siswa di tampilan ini"}
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                    />
+                  </th>
                   <th className="p-3 text-center w-10">No</th>
                   <th className="p-3 w-14 text-center">Absen</th>
                   <th className="p-3 w-14 text-center">Urut</th>
@@ -3529,27 +3714,40 @@ export default function AdminKartuUjianSection({
                       </button>
                     </div>
                   </th>
-                  <th className="p-3 text-center w-16">Pilih</th>
+                  <th className="p-3 text-center w-28 whitespace-nowrap">Pilih & Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-sans">
                 {filteredStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-slate-400">
+                    <td colSpan={11} className="p-8 text-center text-slate-400">
                       Tidak ada siswa di kelas ini yang cocok dengan filter pencarian.
                     </td>
                   </tr>
                 ) : (
                   filteredStudents.map((s, idx) => {
-                    const isSelected = activePreviewStudent && (activePreviewStudent.nisn || activePreviewStudent.id) === (s.nisn || s.id)
+                    const studentKey = s.nisn || s.id
+                    const isPreviewActive = activePreviewStudent && (activePreviewStudent.nisn || activePreviewStudent.id) === studentKey
+                    const isStudentChecked = selectedStudentIds.includes(studentKey)
+
                     return (
                       <tr
-                        key={s.nisn || s.id || idx}
-                        onClick={() => setPreviewStudentId(s.nisn || s.id)}
+                        key={studentKey || idx}
+                        onClick={() => setPreviewStudentId(studentKey)}
                         className={`cursor-pointer transition-colors ${
-                          isSelected ? 'bg-indigo-50/80 font-semibold' : 'hover:bg-slate-50'
+                          isStudentChecked
+                            ? (isPreviewActive ? 'bg-indigo-100/80 font-semibold' : 'bg-indigo-50/60')
+                            : (isPreviewActive ? 'bg-indigo-50/80 font-semibold' : 'hover:bg-slate-50')
                         }`}
                       >
+                        <td className="p-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isStudentChecked}
+                            onChange={() => handleToggleSelectStudent(studentKey)}
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                          />
+                        </td>
                         <td className="p-2.5 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
                         <td className="p-2.5 text-center font-mono font-bold text-slate-700">{s.noAbsen}</td>
                         <td className="p-2.5 text-center font-mono text-slate-500 text-[11px]">#{s.noUrutSekolah}</td>
@@ -3584,20 +3782,40 @@ export default function AdminKartuUjianSection({
                             : (s.portalPassword || s.password ? '••••••' : '-')}
                         </td>
                         <td className="p-2.5 text-center whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setPreviewStudentId(s.nisn || s.id)
-                            }}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
-                              isSelected
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                            }`}
-                          >
-                            {isSelected ? 'Aktif' : 'Lihat'}
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleToggleSelectStudent(studentKey)
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                isStudentChecked
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              }`}
+                              title={isStudentChecked ? "Keluarkan siswa ini dari antrean cetak" : "Tambahkan siswa ini ke antrean cetak"}
+                            >
+                              <span>{isStudentChecked ? '✓' : '+'}</span>
+                              <span>{isStudentChecked ? 'Terpilih' : 'Pilih'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setPreviewStudentId(studentKey)
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                                isPreviewActive
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                              }`}
+                              title="Lihat preview kartu di panel kiri"
+                            >
+                              {isPreviewActive ? 'Aktif' : 'Lihat'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -4091,7 +4309,7 @@ export default function AdminKartuUjianSection({
           pointerEvents: 'none'
         }}
       >
-        {(isExportingBulk || isPreparingPrint) && filteredStudents.map((st, idx) => (
+        {(isExportingBulk || isPreparingPrint) && targetStudentsForBulkPrint.map((st, idx) => (
           <div key={st.nisn || st.id || idx} style={{ width: '510px', height: '322px', marginBottom: '20px' }}>
             <KartuUjianCard
               student={st}
@@ -4711,11 +4929,15 @@ export default function AdminKartuUjianSection({
                 </span>
                 <div>
                   <h3 className="text-base font-black text-slate-900">
-                    {printModalMode === 'bulk' ? 'Cetak Kartu Massal' : 'Cetak 1 Kartu'}
+                    {printModalMode === 'bulk'
+                      ? (selectedStudentIds.length > 0 ? `Cetak ${selectedStudentIds.length} Siswa Terpilih` : 'Cetak Kartu Massal')
+                      : 'Cetak 1 Kartu'}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {printModalMode === 'bulk'
-                      ? `${filteredStudents.length} Siswa • ${effectiveLayoutPreset.label} • Total ${totalPrintSheets} Lembar`
+                      ? (selectedStudentIds.length > 0
+                          ? `${selectedStudentIds.length} Siswa Terpilih (Sesuai Ceklist) • ${effectiveLayoutPreset.label} • Total ${totalPrintSheets} Lembar`
+                          : `${filteredStudents.length} Siswa • ${effectiveLayoutPreset.label} • Total ${totalPrintSheets} Lembar`)
                       : `${activePreviewStudent?.nama || 'Siswa'} (${activePreviewStudent?.kelas || '-'}) • ${effectiveLayoutPreset.label}`}
                   </p>
                 </div>
@@ -5044,7 +5266,13 @@ export default function AdminKartuUjianSection({
                   className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-600/30 flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
                 >
                   <span>🖨️</span>
-                  <span>{isPrinting ? 'Menyiapkan Printer...' : 'Buka Dialog Printer (Cetak Sekarang)'}</span>
+                  <span>
+                    {isPrinting
+                      ? 'Menyiapkan Printer...'
+                      : (printModalMode === 'bulk' && selectedStudentIds.length > 0
+                          ? `Cetak ${selectedStudentIds.length} Siswa Terpilih`
+                          : 'Buka Dialog Printer (Cetak Sekarang)')}
+                  </span>
                 </button>
               </div>
             </div>

@@ -85,7 +85,7 @@ function App() {
         localStorage.removeItem('orangtua_session')
         const path = window.location.pathname
         if (path !== '/' && path !== '/login' && path !== '/login-admin' && path !== '/presensi-tv' && path !== '/showcase-rekap-poin' && !path.startsWith('/validasi-kartu')) {
-          window.location.href = '/login'
+          window.location.href = '/'
         }
       }
     })

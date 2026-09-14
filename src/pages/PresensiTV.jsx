@@ -197,11 +197,18 @@ export default function PresensiTV() {
     }
   }, [])
 
+  // Cache total siswa aktif agar tidak query siswa_lengkap berulang-ulang
+  const totalSiswaRef = useRef(null)
+
   // Fetch stats presensi hari ini
   const fetchStats = useCallback(async () => {
     const today = getTodayWIB()
-    const { data: siswaAll } = await supabase.from('siswa_lengkap').select('nisn').eq('is_aktif', true)
-    const total = siswaAll?.length ?? 0
+    let total = totalSiswaRef.current
+    if (total === null) {
+      const { data: siswaAll } = await supabase.from('siswa_lengkap').select('nisn').eq('is_aktif', true)
+      total = siswaAll?.length ?? 0
+      totalSiswaRef.current = total
+    }
 
     const { data: presensi } = await supabase.from('presensi_harian').select('status, tipe').eq('tanggal', today)
     const filteredPresensi = presensi?.filter(p => !p.tipe || p.tipe !== 'pulang') || []
@@ -284,14 +291,12 @@ export default function PresensiTV() {
     init()
   }, [fetchPengaturan])
 
-  // Start Token Cycles
+  // Start Token Cycles (Hanya rotasi QR, tidak membombardir query statistik)
   useEffect(() => {
     if (loading) return
 
     const startCycle = async () => {
       const iv = await generateNewToken(interval)
-      fetchStats()
-      fetchLatestCheckins()
 
       let remaining = iv
       setCountdown(remaining)
@@ -314,7 +319,7 @@ export default function PresensiTV() {
       clearInterval(intervalRef.current)
       clearInterval(countdownRef.current)
     }
-  }, [loading, interval, generateNewToken, fetchStats, fetchLatestCheckins])
+  }, [loading, interval, generateNewToken])
 
   // Cache NISN → student info to avoid repeated lookups
   const siswaCache = useRef({})
@@ -414,13 +419,16 @@ export default function PresensiTV() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
         fetchStats()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, () => {
+        fetchPengaturan()
+      })
       .subscribe()
 
     fetchStats()
     fetchLatestCheckins()
 
     return () => supabase.removeChannel(channel)
-  }, [fetchStats, fetchLatestCheckins, getSiswaInfo])
+  }, [fetchStats, fetchLatestCheckins, getSiswaInfo, fetchPengaturan])
 
   // Backup heartbeat poll (60s) — jaring pengaman pasif jika websocket sempat disconnect
   useEffect(() => {
