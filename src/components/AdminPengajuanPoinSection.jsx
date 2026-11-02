@@ -10,6 +10,7 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState('all') // Default: 'all' (Semua Status)
   const [filterKelas, setFilterKelas] = useState('all')
+  const [filterKategori, setFilterKategori] = useState('all')
   const [allKelas, setAllKelas] = useState([])
   const [search, setSearch] = useState('')
   const [allPengajuan, setAllPengajuan] = useState([])
@@ -39,6 +40,8 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
 
   const reviewerName = session?.nama_guru || session?.email || 'Admin'
 
+  const allKategori = [...new Set(allPengajuan.map(p => p.kategori).filter(Boolean))].sort()
+
   useEffect(() => {
     fetchSettings()
     fetchKelas()
@@ -51,15 +54,18 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
   useEffect(() => {
     setSelectedIds([])
     if (allPengajuan.length > 0) {
-      if (filterStatus === 'all') {
-        setPengajuanList(allPengajuan)
-      } else {
-        setPengajuanList(allPengajuan.filter(p => p.status === filterStatus))
+      let filtered = allPengajuan
+      if (filterStatus !== 'all') {
+        filtered = filtered.filter(p => p.status === filterStatus)
       }
+      if (filterKategori !== 'all') {
+        filtered = filtered.filter(p => p.kategori === filterKategori)
+      }
+      setPengajuanList(filtered)
     } else {
       setPengajuanList([])
     }
-  }, [filterStatus, allPengajuan])
+  }, [filterStatus, filterKategori, allPengajuan])
 
   useEffect(() => {
     if (activeTab === 'ban') fetchBanList()
@@ -210,9 +216,26 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
     if (previousStatus !== 'disetujui' && targetStatus === 'disetujui') {
       const tanggalHariIni = new Date().toISOString().slice(0, 10)
 
+      // Resolve active NISN dari siswa_permanent jika ada pembaharuan NISN di sekolah
+      let targetNisn = pengajuan.nisn
+      if (pengajuan.nama_siswa) {
+        try {
+          const { data: stdBio } = await supabase.from('siswa_permanent')
+            .select('nisn')
+            .ilike('nama_lengkap', pengajuan.nama_siswa.trim())
+            .maybeSingle()
+          if (stdBio?.nisn && stdBio.nisn !== pengajuan.nisn) {
+            targetNisn = stdBio.nisn
+            await supabase.from('pengajuan_poin_positif').update({ nisn: targetNisn }).eq('id', pengajuan.id)
+          }
+        } catch (e) {
+          console.warn('Resolve active NISN warning:', e)
+        }
+      }
+
       // Insert point_records
       const { error: recErr } = await supabase.from('point_records').insert({
-        nisn: pengajuan.nisn,
+        nisn: targetNisn,
         nama_siswa: pengajuan.nama_siswa,
         kelas: pengajuan.kelas,
         tahun_ajaran_id: pengajuan.tahun_ajaran_id,
@@ -229,7 +252,7 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
 
       // Update student_points
       const { data: spData } = await supabase.from('student_points').select('*')
-        .eq('nisn', pengajuan.nisn).eq('tahun_ajaran_id', pengajuan.tahun_ajaran_id)
+        .eq('nisn', targetNisn).eq('tahun_ajaran_id', pengajuan.tahun_ajaran_id)
         .eq('semester', pengajuan.semester).maybeSingle()
 
       const defaultPoin = spData?.poin_default ?? 100
@@ -237,7 +260,7 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
       const newPoin = currentPoin + pengajuan.poin_diajukan
 
       await supabase.from('student_points').upsert({
-        nisn: pengajuan.nisn,
+        nisn: targetNisn,
         tahun_ajaran_id: pengajuan.tahun_ajaran_id,
         semester: pengajuan.semester,
         total_poin: newPoin,
@@ -460,9 +483,26 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
         continue
       }
 
+      // Resolve active NISN dari siswa_permanent jika ada pembaharuan NISN di sekolah
+      let targetNisn = item.nisn
+      if (item.nama_siswa) {
+        try {
+          const { data: stdBio } = await supabase.from('siswa_permanent')
+            .select('nisn')
+            .ilike('nama_lengkap', item.nama_siswa.trim())
+            .maybeSingle()
+          if (stdBio?.nisn && stdBio.nisn !== item.nisn) {
+            targetNisn = stdBio.nisn
+            await supabase.from('pengajuan_poin_positif').update({ nisn: targetNisn }).eq('id', item.id)
+          }
+        } catch (e) {
+          console.warn('Resolve active NISN warning in batch:', e)
+        }
+      }
+
       // Insert point_records
       await supabase.from('point_records').insert({
-        nisn: item.nisn,
+        nisn: targetNisn,
         nama_siswa: item.nama_siswa,
         kelas: item.kelas,
         tahun_ajaran_id: item.tahun_ajaran_id,
@@ -478,7 +518,7 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
 
       // Update student_points
       const { data: spData } = await supabase.from('student_points').select('*')
-        .eq('nisn', item.nisn).eq('tahun_ajaran_id', item.tahun_ajaran_id)
+        .eq('nisn', targetNisn).eq('tahun_ajaran_id', item.tahun_ajaran_id)
         .eq('semester', item.semester).maybeSingle()
 
       const defaultPoin = spData?.poin_default ?? 100
@@ -486,7 +526,7 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
       const newPoin = currentPoin + item.poin_diajukan
 
       await supabase.from('student_points').upsert({
-        nisn: item.nisn,
+        nisn: targetNisn,
         tahun_ajaran_id: item.tahun_ajaran_id,
         semester: item.semester,
         total_poin: newPoin,
@@ -756,6 +796,14 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
               <option value="all">Semua Kelas</option>
               {allKelas.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
+            {allKategori.length > 0 && (
+              <select value={filterKategori} onChange={e => setFilterKategori(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white font-medium text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none max-w-[200px] truncate"
+                title="Filter berdasarkan Kategori Poin">
+                <option value="all">Semua Kategori ({allKategori.length})</option>
+                {allKategori.map(kat => <option key={kat} value={kat}>{kat}</option>)}
+              </select>
+            )}
             <button onClick={fetchPengajuan}
               className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors font-medium flex items-center gap-1.5">
               🔄 Refresh
@@ -845,38 +893,43 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
                             />
                           </div>
                         )}
-                        <button type="button" onClick={() => setExpandedId(isExpanded ? null : p.id)}
-                          className={`w-full px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors ${isExpanded ? 'bg-indigo-50/40' : ''} ${isSelected ? 'bg-indigo-50/20' : ''}`}>
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            {/* Waktu */}
-                            <span className="text-[11px] font-mono text-slate-400 shrink-0 w-24 hidden sm:inline">{dateFormatted}</span>
-
-                            {/* Siswa & Kelas */}
-                            <div className="w-36 sm:w-44 shrink-0 truncate">
-                              <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">{p.nama_siswa}</p>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.2 rounded-full">{p.kelas}</span>
-                                {p.is_spam && <span className="text-[9px] font-bold bg-orange-100 text-orange-700 border border-orange-200 px-1 rounded">Spam</span>}
-                              </div>
-                            </div>
-
-                            {/* Kategori */}
-                            <span className="text-xs text-slate-500 shrink-0 w-32 hidden md:inline truncate">{p.kategori}</span>
-
-                            {/* Jenis Poin */}
-                            <div className="flex-1 min-w-0 flex items-center gap-2">
-                              <span className="font-mono text-[9px] font-bold text-slate-400 bg-slate-100 px-1 py-0.5 rounded shrink-0 hidden lg:inline">{p.kode_katalog}</span>
-                              <span className="text-xs font-semibold text-slate-700 truncate">{p.jenis}</span>
-                              <span className="text-xs font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full shrink-0">+{p.poin_diajukan}</span>
-                            </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                          className={`w-full px-3.5 sm:px-4 py-2.5 sm:py-3 text-left transition-colors flex items-center justify-between gap-3 ${
+                            isExpanded ? 'bg-indigo-50/50' : 'hover:bg-slate-50/80'
+                          } ${isSelected ? 'bg-indigo-50/20' : ''}`}
+                        >
+                          {/* Kiri: Nama Siswa & Kelas (dan Waktu di desktop) */}
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-[11px] font-mono text-slate-400 shrink-0 w-24 hidden sm:inline">
+                              {dateFormatted}
+                            </span>
+                            <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">
+                              {p.nama_siswa}
+                            </p>
+                            <span className="text-[9px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.2 rounded-full shrink-0">
+                              {p.kelas}
+                            </span>
+                            {p.is_spam && (
+                              <span className="text-[9px] font-bold bg-orange-100 text-orange-700 border border-orange-200 px-1 rounded shrink-0">
+                                Spam
+                              </span>
+                            )}
                           </div>
 
-                          {/* Status + Indikator Panah */}
+                          {/* Kanan: Hanya Status & Panah Chevron */}
                           <div className="flex items-center gap-2 shrink-0">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusColor(p.status)}`}>
                               {statusLabel(p.status)}
                             </span>
-                            <svg className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-indigo-600' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                            <svg
+                              className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-indigo-600' : ''}`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                             </svg>
                           </div>
@@ -886,6 +939,35 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
                       {/* Detail Terbuka (Expanded Area) */}
                       {isExpanded && (
                         <div className="px-4 py-4 bg-slate-50/90 border-t border-slate-100 space-y-3 animate-fade-in text-xs">
+                          {/* Rincian Kategori, Butir Kegiatan & Poin */}
+                          <div className="bg-gradient-to-r from-indigo-50/90 via-blue-50/40 to-emerald-50/30 border border-indigo-100 rounded-xl p-3 sm:p-3.5 space-y-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-indigo-700 bg-indigo-100/90 border border-indigo-200 px-2.5 py-0.5 rounded-lg inline-flex items-center gap-1.5 shadow-2xs">
+                                  <span>🏷️</span>
+                                  <span>Kategori: <strong className="text-indigo-900">{p.kategori || 'Umum'}</strong></span>
+                                </span>
+                                {p.kode_katalog && (
+                                  <span className="font-mono text-[10px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                                    Kode: {p.kode_katalog}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="inline-flex items-center gap-1.5 bg-emerald-600 text-white px-2.5 py-1 rounded-xl shadow-xs shrink-0">
+                                <span className="text-xs">⭐</span>
+                                <span className="text-xs sm:text-sm font-black tracking-tight">+{p.poin_diajukan} Poin</span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">Nama Kegiatan / Butir Poin Diajukan:</p>
+                              <p className="text-sm sm:text-base font-extrabold text-slate-800 leading-snug">
+                                {p.jenis}
+                              </p>
+                            </div>
+                          </div>
+
                           <div className="flex items-center justify-between text-slate-500 text-[11px] flex-wrap gap-2 pb-1 border-b border-slate-200/60">
                             <span>NISN: <strong className="font-mono text-slate-700">{p.nisn}</strong></span>
                             <span>Tgl Pelaksanaan Kegiatan: <strong className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">{p.tanggal_kegiatan ? new Date(p.tanggal_kegiatan).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : new Date(p.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</strong></span>
@@ -1072,6 +1154,22 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
             </div>
 
             <div className="p-5 space-y-4">
+              {/* Highlight Kategori & Poin di Modal Review */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3 text-xs space-y-1.5 shadow-2xs">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                    <span>🏷️</span>
+                    <span>Kategori: <strong>{reviewModal.pengajuan.kategori || 'Umum'}</strong></span>
+                  </span>
+                  <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                    +{reviewModal.pengajuan.poin_diajukan} Poin
+                  </span>
+                </div>
+                <p className="font-bold text-slate-800 text-xs sm:text-sm">
+                  {reviewModal.pengajuan.jenis}
+                </p>
+              </div>
+
               {reviewModal.mode === 'setujui' && (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
                   <p className="text-emerald-800 font-bold text-sm mb-1">Konfirmasi Persetujuan</p>

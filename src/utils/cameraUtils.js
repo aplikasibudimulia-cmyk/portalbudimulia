@@ -1,5 +1,7 @@
+import { Capacitor } from '@capacitor/core'
+
 /**
- * Safe camera utility helper for mobile & desktop browsers (Chrome, Safari, iOS WebKit).
+ * Safe camera utility helper for mobile & desktop browsers (Chrome, Safari, iOS WebKit) and Capacitor Apps.
  */
 
 /**
@@ -12,7 +14,7 @@
 export async function getCameraStream(facingMode = 'user') {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const error = new Error('HARDWARE_UNSUPPORTED')
-    error.userMessage = 'Akses kamera browser tidak didukung atau memerlukan koneksi aman (HTTPS).'
+    error.userMessage = 'Akses kamera tidak didukung atau memerlukan koneksi aman (HTTPS).'
     throw error
   }
 
@@ -32,13 +34,20 @@ export async function getCameraStream(facingMode = 'user') {
       try {
         return await navigator.mediaDevices.getUserMedia({ video: true })
       } catch (err) {
-        let userMessage = 'Tidak dapat mengakses kamera browser.'
+        let userMessage = 'Tidak dapat mengakses kamera perangkat.'
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          userMessage = 'Izin kamera ditolak oleh browser/HP. Silakan izinkan akses kamera di pengaturan browser.'
+          if (Capacitor.isNativePlatform()) {
+            const isIos = Capacitor.getPlatform() === 'ios'
+            userMessage = isIos
+              ? 'Izin kamera ditolak di HP Anda. Silakan buka Pengaturan iPhone/iPad > eBudimulia > aktifkan izin Kamera.'
+              : 'Izin kamera ditolak di HP Anda. Silakan buka Pengaturan HP Android > Aplikasi > eBudimulia > Izin > aktifkan Kamera.'
+          } else {
+            userMessage = 'Izin kamera ditolak oleh browser. Silakan klik ikon gembok/kamera di bilah alamat browser lalu pilih Izinkan.'
+          }
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
           userMessage = 'Kamera tidak ditemukan pada perangkat ini.'
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-          userMessage = 'Kamera sedang digunakan oleh aplikasi lain.'
+          userMessage = 'Kamera sedang digunakan oleh aplikasi lain. Tutup aplikasi kamera lain dan coba lagi.'
         } else if (err.name === 'OverconstrainedError') {
           userMessage = 'Resolusi kamera tidak didukung oleh perangkat.'
         }
@@ -59,7 +68,7 @@ export async function getCameraStream(facingMode = 'user') {
  * @param {number} quality 
  * @returns {Promise<{ dataUrl: string, blob: Blob }>}
  */
-export function processFileToSelfie(file, maxDimension = 640, quality = 0.8) {
+export function processFileToSelfie(file, maxDimension = 480, quality = 0.55) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type.startsWith('image/')) {
       reject(new Error('File yang dipilih bukan gambar'))

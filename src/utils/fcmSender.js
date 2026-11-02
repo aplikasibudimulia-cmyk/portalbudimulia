@@ -127,6 +127,46 @@ async function getGoogleAccessToken() {
 }
 
 /**
+ * Otomatis konversi token APNs (hex 64 karakter dari iOS native) menjadi FCM token
+ */
+async function resolveFcmToken(rawToken, accessToken) {
+  if (!rawToken) return null;
+  // Jika sudah merupakan token FCM (format Google: ada separator/karakter khas dan bukan sekadar 64 char hex murni)
+  if (!/^[0-9a-fA-F]{64}$/.test(rawToken)) {
+    return rawToken;
+  }
+
+  // Jika token berupa hex 64 char (APNs token native iOS), konversi via Google batchImport
+  try {
+    for (const sandbox of [false, true]) {
+      const res = await fetch("https://iid.googleapis.com/iid/v1:batchImport", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "access_token_auth": "true",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          application: "com.ebudimulia.portal",
+          sandbox: sandbox,
+          apns_tokens: [rawToken]
+        })
+      });
+      const data = await res.json();
+      if (data?.results?.[0]?.registration_token) {
+        const fcmToken = data.results[0].registration_token;
+        // Update di database Supabase agar permanen dan cepat ke depannya
+        supabase.from('push_device_tokens').update({ token: fcmToken }).eq('token', rawToken).catch(() => {});
+        return fcmToken;
+      }
+    }
+  } catch (err) {
+    console.warn('[FCM Sender] Error converting APNs to FCM token:', err);
+  }
+  return rawToken;
+}
+
+/**
  * Kirim FCM Push Notification ke semua perangkat Siswa / Orang Tua yang terdaftar
  */
 export async function sendFCMPushNotification({
@@ -159,6 +199,9 @@ export async function sendFCMPushNotification({
 
     for (const item of deviceTokens) {
       try {
+        const targetToken = await resolveFcmToken(item.token, accessToken);
+        if (!targetToken) continue;
+
         const tokenRole = item.role || role || 'Siswa';
         let roleTitle = title || 'eBudiMulia';
         if (tokenRole === 'Orang Tua' && !roleTitle.includes('[Orang Tua]') && !roleTitle.includes('[Ortu]')) {
@@ -177,7 +220,7 @@ export async function sendFCMPushNotification({
 
         const payload = {
           message: {
-            token: item.token,
+            token: targetToken,
             notification: notifObj,
             android: {
               priority: 'high',
@@ -191,6 +234,15 @@ export async function sendFCMPushNotification({
                 visibility: 'PUBLIC',
                 image: image || undefined,
               },
+            },
+            apns: {
+              payload: {
+                aps: {
+                  sound: 'default',
+                  badge: 1,
+                  'content-available': 1
+                }
+              }
             },
             data: {
               title: roleTitle,
@@ -286,9 +338,12 @@ export async function sendFCMPushToWaliKelas({
 
     for (const item of deviceTokens) {
       try {
+        const targetToken = await resolveFcmToken(item.token, accessToken);
+        if (!targetToken) continue;
+
         const payload = {
           message: {
-            token: item.token,
+            token: targetToken,
             notification: {
               title: title || `Verifikasi Tabungan Siswa (${kelas})`,
               body: notifText,
@@ -304,6 +359,15 @@ export async function sendFCMPushToWaliKelas({
                 notification_priority: 'PRIORITY_HIGH',
                 visibility: 'PUBLIC'
               },
+            },
+            apns: {
+              payload: {
+                aps: {
+                  sound: 'default',
+                  badge: 1,
+                  'content-available': 1
+                }
+              }
             },
             data: {
               title: title || `Verifikasi Tabungan Siswa (${kelas})`,

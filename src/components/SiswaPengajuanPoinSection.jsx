@@ -826,7 +826,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
                     {files.map((f, i) => (
                       <div key={i} className="relative group">
                         {f.preview
-                          ? <img src={f.preview} alt={f.name} className="w-full aspect-square object-cover rounded-xl border border-slate-200 cursor-pointer" onClick={() => setLightboxUrl(f.preview)}/>
+                          ? <img src={f.preview} alt={f.name} className="w-full aspect-square object-cover rounded-xl border border-slate-200 cursor-pointer" onClick={() => setPreviewModal({ url: f.preview, type: f.type || 'image/jpeg', name: f.name })}/>
                           : <div className="w-full aspect-square rounded-xl border border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-1 p-1">
                               <span className="text-lg">📄</span>
                               <span className="text-[9px] text-slate-400 text-center truncate w-full px-1">{f.name}</span>

@@ -45,6 +45,17 @@ export default function AdminDashboardSection({ onNavigate }) {
       bgColor: 'bg-blue-50/50 border-blue-100 hover:bg-blue-50 hover:border-blue-200 text-blue-900',
     },
     {
+      id: 'leger_nilai',
+      title: 'Leger Nilai (Kurikulum)',
+      desc: 'Master rekapitulasi nilai rapor seluruh kelas & progres guru realtime.',
+      icon: (
+        <svg className="w-5 h-5 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+      bgColor: 'bg-indigo-50/50 border-indigo-100 hover:bg-indigo-50 hover:border-indigo-200 text-indigo-900',
+    },
+    {
       id: 'notifikasi',
       title: 'Notifikasi Siswa',
       desc: 'Kirim pengumuman langsung/notifikasi siaran ke murid.',
@@ -138,7 +149,7 @@ export default function AdminDashboardSection({ onNavigate }) {
         { data: presensiData }
       ] = await Promise.all([
         supabase.from('siswa_lengkap').select('kelas', { count: 'exact' }).eq('is_aktif', true),
-        supabase.from('guru').select('*', { count: 'exact', head: true }),
+        supabase.from('guru').select('id', { count: 'exact', head: true }),
         supabase.from('roles').select('*', { count: 'exact', head: true }),
         supabase.from('jenis_pengumuman').select('*', { count: 'exact', head: true }),
         supabase.from('berkas_pengumuman').select('kode_jenis', { count: 'exact' }),

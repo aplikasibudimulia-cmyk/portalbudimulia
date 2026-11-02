@@ -1,6 +1,9 @@
-import html2canvas from 'html2canvas'
-import jsPDF from 'jspdf'
-import * as XLSX from 'xlsx'
+// Heavy libs di-lazy-load saat dibutuhkan (hemat ~600KB+ dari initial load)
+// Cache setelah pertama kali load agar panggilan berikutnya instan
+let _html2canvas, _jsPDF, _XLSX
+const getHtml2Canvas = async () => _html2canvas || (_html2canvas = (await import('html2canvas')).default)
+const getJsPDF = async () => _jsPDF || (_jsPDF = (await import('jspdf')).default)
+const getXLSX = async () => _XLSX || (_XLSX = await import('xlsx'))
 import { downloadWorkbook } from './fileDownloader'
 
 const defaultHtml2CanvasOptions = {
@@ -89,6 +92,7 @@ export const exportExamCardAsImage = async (cardElement, fileName = 'kartu_ujian
   if (!target) return false
   try {
     await ensureFontsReady()
+    const html2canvas = await getHtml2Canvas()
     const canvas = await html2canvas(target, defaultHtml2CanvasOptions)
     const dataUrl = canvas.toDataURL('image/png')
     const link = document.createElement('a')
@@ -112,6 +116,8 @@ export const exportExamCardAsPdf = async (cardElement, fileName = 'kartu_ujian.p
   if (!target) return false
   try {
     await ensureFontsReady()
+    const html2canvas = await getHtml2Canvas()
+    const jsPDF = await getJsPDF()
     const canvas = await html2canvas(target, defaultHtml2CanvasOptions)
     const imgData = canvas.toDataURL('image/png')
 
@@ -145,6 +151,8 @@ export const buildBulkExamCardsA4PdfDoc = async (
   if (!cardElements || cardElements.length === 0) return null
 
   await ensureFontsReady()
+  const jsPDF = await getJsPDF()
+  const html2canvas = await getHtml2Canvas()
 
   const preset = layoutOption
     ? resolveBulkPdfPreset(layoutOption)
@@ -983,6 +991,7 @@ export const renderCardElementToDataUrl = async (cardElement) => {
   const target = getActualCardElement(cardElement)
   if (!target) return null
   await ensureFontsReady()
+  const html2canvas = await getHtml2Canvas()
   const canvas = await html2canvas(target, defaultHtml2CanvasOptions)
   return canvas.toDataURL('image/png')
 }
@@ -993,6 +1002,7 @@ export const renderCardElementToDataUrl = async (cardElement) => {
 export const renderCardElementsToDataUrls = async (cardElements = [], onProgress = null) => {
   if (!cardElements || cardElements.length === 0) return []
   await ensureFontsReady()
+  const html2canvas = await getHtml2Canvas()
   const results = []
   const total = cardElements.length
   for (let i = 0; i < total; i++) {
@@ -1013,6 +1023,7 @@ export const exportExamStudentsToExcel = async (
   options = {}
 ) => {
   if (!Array.isArray(students) || students.length === 0) return false
+  const XLSX = await getXLSX()
 
   const rows = students.map((s, idx) => ({
     'No': idx + 1,
@@ -1059,6 +1070,7 @@ export const downloadExamAccountTemplateExcel = async (
   fileName = 'Template_Ruang_dan_Akun_Ujian.xlsx'
 ) => {
   if (!Array.isArray(students) || students.length === 0) return false
+  const XLSX = await getXLSX()
 
   const rows = students.map((s, idx) => ({
     'No': idx + 1,
@@ -1094,6 +1106,7 @@ export const downloadExamAccountTemplateExcel = async (
  * Mendukung deteksi fleksibel berbagai variasi header kolom.
  */
 export const parseExamAccountExcel = async (file) => {
+  const XLSX = await getXLSX()
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
 

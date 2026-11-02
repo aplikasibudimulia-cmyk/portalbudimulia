@@ -37,24 +37,42 @@ function ConfirmModal({
     return () => { document.body.style.overflow = '' }
   }, [isOpen])
 
+  // Handle ESC key to close
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && onCancel) {
+        onCancel()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onCancel])
+
   if (!isOpen) return null
 
   const colorMap = {
     red: 'bg-red-600 hover:bg-red-700 focus:ring-red-500',
     indigo: 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500',
     green: 'bg-green-600 hover:bg-green-700 focus:ring-green-500',
+    emerald: 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500',
+    blue: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+    amber: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500',
+    slate: 'bg-slate-700 hover:bg-slate-800 focus:ring-slate-500',
   }
 
   const iconBgMap = {
     warning: 'bg-amber-100',
     danger: 'bg-red-100',
     info: 'bg-blue-100',
+    success: 'bg-emerald-100',
   }
 
   const iconColorMap = {
     warning: 'text-amber-600',
     danger: 'text-red-600',
     info: 'text-blue-600',
+    success: 'text-emerald-600',
   }
 
   const btnColor = colorMap[confirmColor] || colorMap.red
@@ -77,6 +95,13 @@ function ConfirmModal({
           <circle cx="12" cy="12" r="10" />
           <line x1="12" y1="16" x2="12" y2="12" />
           <line x1="12" y1="8" x2="12.01" y2="8" />
+        </svg>
+      )
+    }
+    if (icon === 'success') {
+      return (
+        <svg className={`w-6 h-6 ${iconColor}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
         </svg>
       )
     }
@@ -153,17 +178,19 @@ function ConfirmModal({
 
         {/* Footer Buttons */}
         <div className="px-6 pb-6 flex gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-slate-300"
-          >
-            {cancelLabel}
-          </button>
+          {cancelLabel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 cursor-pointer"
+            >
+              {cancelLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onConfirm}
-            className={`flex-1 py-2.5 px-4 rounded-xl text-white font-bold text-sm transition-all shadow-sm focus:outline-none focus:ring-2 active:scale-95 ${btnColor}`}
+            className={`flex-1 py-2.5 px-4 rounded-xl text-white font-bold text-sm transition-all shadow-sm focus:outline-none focus:ring-2 active:scale-95 cursor-pointer ${btnColor}`}
           >
             {confirmLabel}
           </button>

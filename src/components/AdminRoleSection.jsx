@@ -19,6 +19,7 @@ const FITUR_CATEGORIES = [
       { id: 'upload_csv', label: 'Upload CSV', desc: 'Upload CSV data siswa' },
       { id: 'upload_foto', label: 'Upload Foto', desc: 'Upload foto siswa secara massal' },
       { id: 'input_nilai', label: 'Input Nilai Pelajaran', desc: 'Mengisi nilai mata pelajaran dan nilai rapor siswa' },
+      { id: 'kelola_ekskul', label: 'Kelola Nilai Ekstrakurikuler', desc: 'Akses input, predikat, dan export/import nilai ekskul (Koordinator Ekskul)' },
       { id: 'kelola_kalender_akademik', label: 'Kelola Kalender & Rencana', desc: 'Mengatur kalender akademik dan agenda sekolah' }
     ]
   },

@@ -47,8 +47,17 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   }
   const [tanggal, setTanggal] = useState(new Date().toISOString().slice(0, 10))
   const [jam, setJam] = useState(getInitialTime())
-  const [guruList, setGuruList] = useState([])
+  const [guruList, setGuruList] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebudimulia_guru_list')
+      return cached ? JSON.parse(cached) : []
+    } catch (_) {
+      return []
+    }
+  })
   const [selectedPetugas, setSelectedPetugas] = useState('')
+  const [isManualPetugas, setIsManualPetugas] = useState(false)
+  const [customPetugas, setCustomPetugas] = useState('')
   const [studentSearch, setStudentSearch] = useState('')
   const [studentResults, setStudentResults] = useState([])
   const [selectedStudent, setSelectedStudent] = useState(null)
@@ -137,15 +146,50 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
 
   const fetchGuruList = async () => {
     try {
+      // 1. Coba via RPC jika tersedia di database
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('fn_get_guru_list')
+        if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+          setGuruList(rpcData)
+          localStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
+          return
+        }
+      } catch (_) {}
+
+      // 2. Query langsung tabel guru
       const { data, error } = await supabase
         .from('guru')
         .select('id, nama_guru, kode')
         .order('nama_guru', { ascending: true })
 
-      if (error) {
-        console.error('Error fetching guru list:', error)
-      } else if (data) {
+      if (!error && Array.isArray(data) && data.length > 0) {
         setGuruList(data)
+        localStorage.setItem('ebudimulia_guru_list', JSON.stringify(data))
+        return
+      }
+
+      // 3. Resilient Fallback: Jika tabel guru kosong/terhalang RLS, ekstrak dari riwayat dicatat_oleh di point_records
+      const { data: recData } = await supabase
+        .from('point_records')
+        .select('dicatat_oleh')
+        .not('dicatat_oleh', 'is', null)
+        .order('id', { ascending: false })
+        .limit(1000)
+
+      const names = [...new Set((recData || []).map(r => r.dicatat_oleh?.trim()).filter(Boolean))]
+      if (session?.nama_guru && !names.includes(session.nama_guru)) {
+        names.push(session.nama_guru)
+      }
+      names.sort()
+
+      if (names.length > 0) {
+        const fallbackList = names.map((name, idx) => ({
+          id: `guru-rec-${idx}`,
+          nama_guru: name,
+          kode: ''
+        }))
+        setGuruList(fallbackList)
+        localStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
       }
     } catch (err) {
       console.error('Exception fetching guru list:', err)
@@ -286,8 +330,12 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     if (!selectedStudent) { alert('Pilih siswa terlebih dahulu.'); return }
     if (!activeTa?.id) { alert('Tahun Ajaran aktif tidak ditemukan.'); return }
     
-    if (isPiket && !selectedPetugas) {
-      alert('Sebagai Petugas Piket, Anda wajib memilih nama guru/staff yang bertugas mengisi.')
+    const activePetugas = isPiket
+      ? (isManualPetugas ? customPetugas.trim() : selectedPetugas.trim())
+      : (session?.nama_guru || session?.email || 'Guru BK')
+
+    if (isPiket && !activePetugas) {
+      alert('Sebagai Petugas Piket, Anda wajib memilih atau mengetik nama guru/staff yang bertugas mengisi.')
       return
     }
 
@@ -313,7 +361,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     setSaving(true)
     setAlert(null)
 
-    const finalPetugas = isPiket ? selectedPetugas : (session?.nama_guru || session?.email || 'Guru BK')
+    const finalPetugas = activePetugas
     const nowIso = new Date().toISOString()
 
     if (catatMode === 'pemulihan_bk') {
@@ -503,6 +551,11 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     setSelectedKatalogs([])
     setPoinDiberikan('')
     setKeterangan('')
+    if (isPiket) {
+      setSelectedPetugas('')
+      setCustomPetugas('')
+      setIsManualPetugas(false)
+    }
     setSaving(false)
     fetchRecords()
   }
@@ -1020,19 +1073,53 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
                   )}
                 </label>
                 {isPiket ? (
-                  <select
-                    value={selectedPetugas}
-                    onChange={e => setSelectedPetugas(e.target.value)}
-                    required
-                    className="w-full px-2.5 py-1.5 border border-indigo-300 rounded-xl text-xs font-bold bg-indigo-50/30 text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">-- Pilih Guru / Staff Pengisi --</option>
-                    {guruList.map(g => (
-                      <option key={g.id} value={g.nama_guru}>
-                        {g.nama_guru} {g.kode ? `(${g.kode})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  isManualPetugas ? (
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={customPetugas}
+                        onChange={e => setCustomPetugas(e.target.value)}
+                        placeholder="Ketik nama guru / staf pengisi..."
+                        required
+                        autoFocus
+                        className="w-full px-2.5 py-1.5 border border-indigo-400 rounded-xl text-xs font-bold bg-white text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsManualPetugas(false)
+                          setCustomPetugas('')
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[10px] font-bold shrink-0 border border-slate-200 transition-colors"
+                        title="Kembali ke daftar pilihan guru"
+                      >
+                        Pilih List
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedPetugas}
+                      onChange={e => {
+                        if (e.target.value === '__manual__') {
+                          setIsManualPetugas(true)
+                          setSelectedPetugas('')
+                          setCustomPetugas('')
+                        } else {
+                          setSelectedPetugas(e.target.value)
+                        }
+                      }}
+                      required
+                      className="w-full px-2.5 py-1.5 border border-indigo-300 rounded-xl text-xs font-bold bg-indigo-50/30 text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      <option value="">-- Pilih Guru / Staff Pengisi --</option>
+                      {guruList.map(g => (
+                        <option key={g.id} value={g.nama_guru}>
+                          {g.nama_guru} {g.kode ? `(${g.kode})` : ''}
+                        </option>
+                      ))}
+                      <option value="__manual__">✏️ + Ketik Nama Guru Lainnya...</option>
+                    </select>
+                  )
                 ) : (
                   <input value={session?.nama_guru || session?.email || 'Admin'} readOnly className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-semibold bg-slate-50 text-slate-600 cursor-not-allowed" />
                 )}

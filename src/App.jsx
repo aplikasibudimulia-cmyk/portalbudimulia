@@ -1,8 +1,88 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { useEffect, Component, lazy, Suspense } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useEffect, useRef, Component, lazy, Suspense } from 'react'
+import { registerPlugin, Capacitor } from '@capacitor/core'
 import { supabase } from './supabaseClient'
 import { showLocalNotif, isNotifGranted, initNativePushNotifications, requestNotifPermission } from './utils/pushNotif'
 import { loadAccounts } from './utils/credentialStore'
+import AppUpdateModal from './components/AppUpdateModal'
+import SecurityInterventionModal from './components/SecurityInterventionModal'
+import { AdminRoute, GuruRoute, StudentRoute, ParentRoute } from './components/ProtectedRoute'
+
+const CbtLockTask = Capacitor.Plugins?.CbtLockTask || registerPlugin('CbtLockTask')
+
+/**
+ * Pengawas Keamanan Lock Task / AAC Global:
+ * Memastikan mode terkunci (iOS AAC & Android Pin) HANYA aktif saat berada di halaman /cbt/ujian/:sesiId.
+ * Jika pengguna berpindah ke Dashboard, Beranda, Login, dll, AAC langsung dimatikan seketika.
+ * Juga menyediakan Emergency 5-Tap Release di pojok kiri atas layar di seluruh menu aplikasi.
+ */
+function CbtLockSafetyWatcher() {
+  const location = useLocation()
+  const tapHistoryRef = useRef([])
+
+  // 1. Matikan AAC / Lock Task setiap kali pengguna berada di luar rute ujian
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    const isExamRoute = location.pathname.startsWith('/cbt/ujian')
+    if (!isExamRoute) {
+      CbtLockTask.stopLock().catch(() => {})
+    }
+  }, [location.pathname])
+
+  // 2. Listener jika ada event lock aktif di luar rute ujian, langsung matikan seketika
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    let handler = null
+    try {
+      if (CbtLockTask.addListener) {
+        handler = CbtLockTask.addListener('cbtLockStateChange', (data) => {
+          const isExamRoute = window.location.pathname.startsWith('/cbt/ujian')
+          if (data?.locked && !isExamRoute) {
+            console.warn('[SafetyWatcher] Terdeteksi AAC/LockTask aktif di luar ujian, mematikan paksa...')
+            CbtLockTask.stopLock().catch(() => {})
+          }
+        })
+      }
+    } catch {}
+
+    return () => {
+      if (handler && handler.remove) handler.remove()
+    }
+  }, [])
+
+  // 3. Emergency Unlock Hotspot (HANYA dirender saat ujian CBT /cbt/ujian di native)
+  const isExamRoute = location.pathname.startsWith('/cbt/ujian')
+  if (!isExamRoute || !Capacitor.isNativePlatform()) {
+    return null
+  }
+
+  const handleGlobalSecretTap = () => {
+    const now = Date.now()
+    const recentTaps = [...tapHistoryRef.current.filter(t => now - t < 2500), now]
+    tapHistoryRef.current = recentTaps
+    if (recentTaps.length >= 5) {
+      tapHistoryRef.current = []
+      if (Capacitor.isNativePlatform()) {
+        CbtLockTask.stopLock()
+          .then(() => {
+            alert('🔓 Mode Terkunci Dibatalkan (Global Emergency Release).\nPerangkat telah kembali normal.')
+          })
+          .catch(() => {})
+      }
+    }
+  }
+
+  return (
+    <div
+      onClick={handleGlobalSecretTap}
+      className="fixed top-0 left-0 w-16 h-16 z-[999999] opacity-0 cursor-default select-none pointer-events-auto"
+      title=""
+      aria-hidden="true"
+    />
+  )
+}
 
 // Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)
 const Login = lazy(() => import('./pages/Login'))
@@ -17,8 +97,43 @@ const LaporanPengumuman = lazy(() => import('./pages/LaporanPengumuman'))
 const PresensiManualSiswa = lazy(() => import('./pages/PresensiManualSiswa'))
 const ShowcaseRekapPoin = lazy(() => import('./pages/ShowcaseRekapPoin'))
 const ValidasiKartuPelajar = lazy(() => import('./pages/ValidasiKartuPelajar'))
+const CbtUjianSiswaPage = lazy(() => import('./pages/CbtUjianSiswaPage'))
+const RaporDeskripsiTpPage = lazy(() => import('./pages/RaporDeskripsiTpPage'))
 
-// Error Boundary untuk menangkap error dan menampilkan pesan, bukan layar putih
+/**
+ * Root Router Cerdas:
+ * Mengeliminasi lag/delay saat buka aplikasi.
+ * Jika pengguna sudah login, langsung alihkan ke Dashboard tanpa perlu
+ * mendownload & merender halaman Login terlebih dahulu.
+ */
+function RootRouter() {
+  try {
+    const urlParams = new URLSearchParams(window.location.search)
+    // Jika ada parameter login khusus (misal link WhatsApp ?u=...&p=... atau tambah akun)
+    if (
+      urlParams.get('u') ||
+      urlParams.get('p') ||
+      urlParams.get('add_account') === 'true' ||
+      urlParams.get('switch') === 'true'
+    ) {
+      return <Login />
+    }
+
+    if (localStorage.getItem('siswa_session')) {
+      return <Navigate to="/dashboard" replace />
+    }
+    if (localStorage.getItem('guru_session')) {
+      return <Navigate to="/dashboard-guru" replace />
+    }
+    if (localStorage.getItem('orangtua_session')) {
+      return <Navigate to="/dashboard-orang-tua" replace />
+    }
+  } catch {}
+
+  return <Login />
+}
+
+// Error Boundary untuk menangkap error dan memulihkan aplikasi secara anggun
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -31,20 +146,49 @@ class ErrorBoundary extends Component {
     this.setState({ errorInfo })
     console.error('[ErrorBoundary]', error, errorInfo)
   }
+  handleResetAndReload = () => {
+    try {
+      sessionStorage.clear()
+    } catch {}
+    this.setState({ hasError: false, error: null })
+    window.location.reload()
+  }
   render() {
     if (this.state.hasError) {
+      const errStr = this.state.error?.toString() || ''
+      const isTranslateError = errStr.includes('removeChild') || errStr.includes('not a child') || errStr.includes('NotFoundError')
+
       return (
-        <div style={{ padding: 24, fontFamily: 'monospace', background: '#fee2e2', minHeight: '100vh' }}>
-          <h2 style={{ color: '#dc2626' }}>⚠️ Terjadi Error</h2>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, color: '#991b1b', background: '#fff', padding: 12, borderRadius: 8 }}>
-            {this.state.error?.toString()}
-            {'\n\n'}
-            {this.state.errorInfo?.componentStack}
-          </pre>
-          <button onClick={() => { this.setState({ hasError: false }); window.location.reload() }}
-            style={{ marginTop: 12, padding: '8px 16px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-            Reload Aplikasi
-          </button>
+        <div style={{ padding: 24, fontFamily: 'sans-serif', background: '#fef2f2', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 32, maxWidth: 640, width: '100%', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', border: '1px solid #fecaca' }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>⚠️</div>
+            <h2 style={{ color: '#b91c1c', margin: '0 0 8px 0', fontSize: 20, fontWeight: 800 }}>
+              {isTranslateError ? 'Deteksi Penerjemah Otomatis Peramban' : 'Terjadi Gangguan pada Tampilan'}
+            </h2>
+            <p style={{ color: '#4b5563', fontSize: 14, margin: '0 0 16px 0', lineHeight: 1.5 }}>
+              {isTranslateError
+                ? 'Fitur Google Translate di peramban sempat memodifikasi elemen tampilan sistem. Anda TIDAK PERLU clear history/cache manual, cukup klik tombol di bawah untuk langsung masuk kembali.'
+                : 'Aplikasi mendeteksi gangguan sementara pada sesi ini. Silakan muat ulang untuk memulihkan.'}
+            </p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={this.handleResetAndReload}
+                style={{ padding: '10px 20px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+              >
+                Muat Ulang &amp; Masuk Kembali
+              </button>
+            </div>
+            {errStr && (
+              <details style={{ marginTop: 16, textAlign: 'left' }}>
+                <summary style={{ fontSize: 11, color: '#991b1b', cursor: 'pointer', fontWeight: 600 }}>
+                  Lihat Detail Teknis Gangguan
+                </summary>
+                <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 10, color: '#991b1b', background: '#fef2f2', padding: 10, borderRadius: 8, maxHeight: 150, overflow: 'auto' }}>
+                  {errStr}
+                </pre>
+              </details>
+            )}
+          </div>
         </div>
       )
     }
@@ -61,12 +205,21 @@ function App() {
       return
     }
 
-    // 1. Fetch Tema Warna
+    // 1. Fetch & Cache Tema Warna (Instan dari localStorage, sinkronisasi background)
+    const cachedTheme = localStorage.getItem('ebm_tema_warna')
+    if (cachedTheme) {
+      document.documentElement.setAttribute('data-theme', cachedTheme)
+    }
     const fetchTheme = async () => {
-      const { data } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'tema_warna').maybeSingle()
-      if (data && data.setting_value) {
-        document.documentElement.setAttribute('data-theme', data.setting_value)
-      }
+      try {
+        const { data } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'tema_warna').maybeSingle()
+        if (data && data.setting_value) {
+          if (data.setting_value !== cachedTheme) {
+            document.documentElement.setAttribute('data-theme', data.setting_value)
+            localStorage.setItem('ebm_tema_warna', data.setting_value)
+          }
+        }
+      } catch {}
     }
     fetchTheme()
 
@@ -84,7 +237,7 @@ function App() {
         localStorage.removeItem('guru_session')
         localStorage.removeItem('orangtua_session')
         const path = window.location.pathname
-        if (path !== '/' && path !== '/login' && path !== '/login-admin' && path !== '/presensi-tv' && path !== '/showcase-rekap-poin' && !path.startsWith('/validasi-kartu')) {
+        if (path !== '/' && path !== '/login' && path !== '/login-admin' && path !== '/presensi-tv' && path !== '/showcase-rekap-poin' && !path.startsWith('/validasi-kartu') && !path.startsWith('/cbt/ujian')) {
           window.location.href = '/'
         }
       }
@@ -308,6 +461,9 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <CbtLockSafetyWatcher />
+        <AppUpdateModal />
+        <SecurityInterventionModal />
         <Suspense fallback={
           <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', gap: 12 }}>
             <div style={{ width: '36px', height: '36px', border: '3px solid #e2e8f0', borderTopColor: '#059669', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -316,13 +472,13 @@ function App() {
           </div>
         }>
           <Routes>
-            <Route path="/" element={<Login />} />
+            <Route path="/" element={<RootRouter />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/dashboard-orang-tua" element={<DashboardOrangTua />} />
-            <Route path="/admin" element={<Admin />} />
+            <Route path="/dashboard" element={<StudentRoute><Dashboard /></StudentRoute>} />
+            <Route path="/dashboard-orang-tua" element={<ParentRoute><DashboardOrangTua /></ParentRoute>} />
+            <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
             <Route path="/login-admin" element={<LoginAdmin />} />
-            <Route path="/dashboard-guru" element={<DashboardGuru />} />
+            <Route path="/dashboard-guru" element={<GuruRoute><DashboardGuru /></GuruRoute>} />
             <Route path="/impersonate" element={<Impersonate />} />
             <Route path="/presensi-tv" element={<PresensiTV />} />
             <Route path="/laporan-pengumuman/:typeId" element={<LaporanPengumuman />} />
@@ -331,6 +487,8 @@ function App() {
             <Route path="/showcase-rekap-poin" element={<ShowcaseRekapPoin />} />
             <Route path="/validasi-kartu" element={<ValidasiKartuPelajar />} />
             <Route path="/validasi-kartu/:nisn" element={<ValidasiKartuPelajar />} />
+            <Route path="/rapor/deskripsi-tp/:nisn" element={<RaporDeskripsiTpPage />} />
+            <Route path="/cbt/ujian/:sesiId" element={<CbtUjianSiswaPage />} />
           </Routes>
         </Suspense>
       </BrowserRouter>

@@ -11,11 +11,27 @@ export default function OrangTuaTagihanSection({ studentData }) {
   const [nomorVa, setNomorVa] = useState('')
   const [copiedVa, setCopiedVa] = useState(false)
 
+  const [accessAllowed, setAccessAllowed] = useState(false)
+
   const loadStudentTagihan = async () => {
     if (!studentData?.nisn) return
     setLoading(true)
     try {
       const nisn = String(studentData.nisn).trim()
+
+      // 0. Verifikasi izin visibilitas dari pengaturan sekolah
+      const { data: settingData } = await supabase
+        .from('pengaturan_sekolah')
+        .select('setting_value')
+        .eq('setting_key', 'show_tagihan_ortu')
+        .maybeSingle()
+
+      const isAllowed = settingData?.setting_value === 'true'
+      setAccessAllowed(isAllowed)
+      if (!isAllowed) {
+        setLoading(false)
+        return
+      }
 
       // 1. Ambil tarif khusus & VA jika ada
       const { data: tarifData } = await supabase
@@ -108,6 +124,20 @@ export default function OrangTuaTagihanSection({ studentData }) {
       isFuture
     })
   })
+
+  if (!loading && !accessAllowed) {
+    return (
+      <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm text-center py-16">
+        <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-rose-100 shadow-xs">
+          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        </div>
+        <h3 className="text-lg font-extrabold text-slate-800 mb-1">Akses Tagihan Ditutup</h3>
+        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+          Informasi status pembayaran dan tagihan SPP saat ini dinonaktifkan oleh pihak sekolah untuk akun orang tua. Silakan hubungi bagian Tata Usaha jika ada pertanyaan.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 font-sans">

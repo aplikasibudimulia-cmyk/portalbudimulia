@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import SiswaNilaiSection from '../components/SiswaNilaiSection'
+import SiswaCbtPortalSection from '../components/cbt/SiswaCbtPortalSection'
 import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
 import SiswaProfilSection from '../components/SiswaProfilSection'
@@ -16,6 +17,7 @@ import TabunganSiswaSection from '../components/TabunganSiswaSection'
 import BendaharaInputTabunganSection from '../components/BendaharaInputTabunganSection'
 import SiswaKartuPelajarSection from '../components/SiswaKartuPelajarSection'
 import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
+import BeritaPengumumanSiswaSection from '../components/BeritaPengumumanSiswaSection'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, requestAllInitialPermissions, initNativePushNotifications } from '../utils/pushNotif'
 import { getTodayWIB, getDayIndexWIB, getCurrentTimeWIB } from '../utils/dateUtils'
 
@@ -36,6 +38,28 @@ function Dashboard() {
       return true
     }
   })
+
+  const [selectedType, setSelectedType] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      return params.get('menu') || null
+    } catch {
+      return null
+    }
+  })
+
+  const [targetSubTab, setTargetSubTab] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      return params.get('tab') || null
+    } catch {
+      return null
+    }
+  })
+
+  // Pengecekan Hak Akses CBT (Mode Rilis Publik vs Whitelist Tester)
+  const [canAccessCbt, setCanAccessCbt] = useState(false)
+
   const [menuTypes, setMenuTypes] = useState([])
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
   
@@ -44,6 +68,9 @@ function Dashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // Default to collapsed as requested
   const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
   const [showIosHint, setShowIosHint] = useState(false)
+  // Sidebar helpers — sederhana & terbukti di semua platform
+  const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
+  const closeSidebar = () => setSidebarOpen(false)
 
   // Status Bendahara Kelas
   const [isBendahara, setIsBendahara] = useState(false)
@@ -52,18 +79,22 @@ function Dashboard() {
   // Status Pengingat Presensi Hari Ini
   const [presensiHariIniStatus, setPresensiHariIniStatus] = useState(null) // null | 'belum_masuk' | 'sudah_masuk'
   const hasAutoRedirectedPresensiRef = useRef(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncToast, setSyncToast] = useState(null)
 
   useEffect(() => {
     // Otomatis minta izin notifikasi, lokasi, dan kamera di Android APK
     requestAllInitialPermissions().catch(() => {})
   }, [])
 
-  // Cek status presensi hari ini siswa & jalankan interval pengingat
+  // Cek status presensi hari ini siswa & jalankan interval pengingat (smart polling: pause saat minimize & stop saat libur/sudah pulang)
   useEffect(() => {
     if (!studentData?.nisn) return
     let intervalId = null
+    let isFinishedForToday = false
 
     const checkPresensiHariIni = async () => {
+      if (isFinishedForToday) return
       try {
         const { data: pengaturan } = await supabase
           .from('pengaturan_sekolah')
@@ -90,6 +121,8 @@ function Dashboard() {
 
         if (!isHariSekolah) {
           setPresensiHariIniStatus('libur')
+          isFinishedForToday = true
+          if (intervalId) { clearInterval(intervalId); intervalId = null }
           return
         }
 
@@ -105,18 +138,20 @@ function Dashboard() {
         const pulang = presensiData?.find(p => p.tipe === 'pulang') || null
         try {
           const cacheKey = `ebm_presensi_cache_${studentData.nisn}_${todayStr}`
-          const prevCache = JSON.parse(sessionStorage.getItem(cacheKey) || '{}')
-          sessionStorage.setItem(cacheKey, JSON.stringify({
+          const prevCache = JSON.parse(localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey) || '{}')
+          const cachePayload = JSON.stringify({
             ...prevCache,
             presensiMasuk: masuk,
             presensiPulang: pulang,
-            tipeAktif: pulang ? 'pulang' : 'masuk',
+            tipeAktif: (!pulang && prevCache.presensiPulangAktif) ? 'pulang' : 'masuk',
             jamBatasHadir,
             timestamp: Date.now()
-          }))
+          })
+          localStorage.setItem(cacheKey, cachePayload)
+          sessionStorage.setItem(cacheKey, cachePayload)
         } catch {}
 
-        if (!sudahMasuk) {
+        if (!sudahMasuk && !pulang) {
           setPresensiHariIniStatus('belum_masuk')
 
           // Hanya arahkan ke menu Presensi sekali saja pada saat pertama kali load dan siswa sedang berada di beranda
@@ -140,17 +175,41 @@ function Dashboard() {
             )
           }
         } else {
-          setPresensiHariIniStatus('sudah_masuk')
+          setPresensiHariIniStatus(pulang ? 'sudah_pulang' : 'sudah_masuk')
+          if (pulang) {
+            isFinishedForToday = true
+            if (intervalId) { clearInterval(intervalId); intervalId = null }
+          }
         }
       } catch (err) {
         console.warn('Error checking presensi status:', err)
       }
     }
 
+    const startPolling = () => {
+      if (isFinishedForToday) return
+      if (intervalId) clearInterval(intervalId)
+      intervalId = setInterval(checkPresensiHariIni, 60 * 1000)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (!isFinishedForToday) {
+          checkPresensiHariIni()
+          startPolling()
+        }
+      } else {
+        if (intervalId) { clearInterval(intervalId); intervalId = null }
+      }
+    }
+
     checkPresensiHariIni()
-    intervalId = setInterval(checkPresensiHariIni, 60 * 1000)
+    startPolling()
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
     return () => {
       if (intervalId) clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [studentData?.nisn])
 
@@ -264,24 +323,38 @@ function Dashboard() {
       document.exitFullscreen().catch(() => {})
     }
   }
-  
-  const [selectedType, setSelectedType] = useState(() => {
-    try {
-      const params = new URLSearchParams(window.location.search)
-      return params.get('menu') || null
-    } catch {
-      return null
-    }
-  })
 
-  const [targetSubTab, setTargetSubTab] = useState(() => {
-    try {
-      const params = new URLSearchParams(window.location.search)
-      return params.get('tab') || null
-    } catch {
-      return null
+  useEffect(() => {
+    if (!studentData?.nisn) return
+    const checkCbtAccess = async () => {
+      try {
+        const { data: config } = await supabase
+          .from('cbt_pengaturan')
+          .select('is_cbt_active')
+          .eq('id', 1)
+          .single()
+
+        if (config?.is_cbt_active) {
+          setCanAccessCbt(true)
+          return
+        }
+
+        const { data: whitelist } = await supabase
+          .from('cbt_whitelist_user')
+          .select('id')
+          .eq('nisn', studentData.nisn)
+          .eq('role', 'siswa')
+          .maybeSingle()
+
+        if (whitelist) {
+          setCanAccessCbt(true)
+        }
+      } catch (err) {
+        console.error('[CBT Access Check] Error:', err)
+      }
     }
-  })
+    checkCbtAccess()
+  }, [studentData?.nisn])
 
   useEffect(() => {
     const checkMenuParam = () => {
@@ -303,6 +376,7 @@ function Dashboard() {
   const [pdfUrl, setPdfUrl] = useState(null)
   const [accessBlocked, setAccessBlocked] = useState(false)
   const [refreshBerkas, setRefreshBerkas] = useState(0)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState(null)
   const [studentBerkas, setStudentBerkas] = useState(null)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
@@ -437,7 +511,9 @@ function Dashboard() {
       const [resEnr, resTa, resBio, resTypes, resSettings, resFotos] = await Promise.all([
         supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn),
         supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
-        supabase.from('siswa_permanent').select('*').eq('nisn', data.nisn).maybeSingle(),
+        (data.nisn && data.akun_id
+          ? supabase.rpc('fn_get_my_student_profile', { p_nisn: data.nisn, p_akun_id: data.akun_id }).then(r => ({ data: r.data?.data || null }))
+          : supabase.from('siswa_permanent').select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu').eq('nisn', data.nisn).maybeSingle()),
         supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
         supabase.from('pengaturan_sekolah').select('*'),
         data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
@@ -471,7 +547,7 @@ function Dashboard() {
       try {
         const { data: healedStudent } = await supabase
           .from('siswa_permanent')
-          .select('*')
+          .select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu')
           .ilike('nama_lengkap', data.nama_lengkap.trim())
           .maybeSingle()
         if (healedStudent && healedStudent.nisn) {
@@ -625,6 +701,24 @@ function Dashboard() {
     
     setLoading(false)
   }, [navigate])
+
+  const handleSyncData = async () => {
+    if (isSyncing) return
+    setIsSyncing(true)
+    try {
+      await init()
+      setRefreshKey(prev => prev + 1)
+      setRefreshBerkas(prev => prev + 1)
+      window.dispatchEvent(new CustomEvent('app_refresh_data'))
+      setSyncToast({ type: 'success', text: '✅ Data & penilaian berhasil diperbarui!' })
+      setTimeout(() => setSyncToast(null), 3000)
+    } catch (e) {
+      setSyncToast({ type: 'error', text: '❌ Gagal memperbarui data.' })
+      setTimeout(() => setSyncToast(null), 3000)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
 
   useEffect(() => {
     init()
@@ -1006,10 +1100,6 @@ function Dashboard() {
             handleBerkasUpdate()
           } else if (payload.eventType === 'DELETE' && payload.old && (currentStudent?.enrollments?.map(e => e.kode).includes(payload.old.kode_siswa) || payload.old.kode_siswa === currentStudent.kode)) {
              handleBerkasUpdate()
-          } else {
-            // Also call handleBerkasUpdate just in case the filter was failing due to missing columns
-            console.log('[REALTIME DEBUG] Payload did not contain expected kode_siswa, but calling update anyway.')
-            handleBerkasUpdate()
           }
         }
       )
@@ -1053,10 +1143,17 @@ function Dashboard() {
   }, [loading, studentData?.nisn])
 
   const handleLogout = async () => {
-    window.__ebudimuliaExplicitLogout = true
-    localStorage.removeItem('siswa_session')
-    await supabase.auth.signOut()
-    navigate('/')
+    try {
+      window.__ebudimuliaExplicitLogout = true
+      localStorage.removeItem('siswa_session')
+      try {
+        await supabase.auth.signOut()
+      } catch (authErr) {
+        console.warn('[Logout] Supabase signOut skipped/error:', authErr)
+      }
+    } finally {
+      window.location.href = '/'
+    }
   }
 
   const handleChangePassword = async (e) => {
@@ -1307,8 +1404,10 @@ function Dashboard() {
   const isNisnVisible = showProfileConfig.nisn || showNisnMenu
   const isNipdVisible = showProfileConfig.nipd || showNipdMenu
   const currentMenuLabel = 
+    selectedType === 'BERITA_PENGUMUMAN' ? 'Berita & Pengumuman Sekolah' :
     selectedType === 'INPUT_TABUNGAN' ? `Input Tabungan Kelas ${bendaharaKelas}` :
     selectedType === 'TABUNGAN' ? 'Tabungan Siswa' :
+    selectedType === 'CBT' ? 'Penilaian Digital (CBT)' :
     selectedType === 'NILAI' ? 'Laporan Nilai Saya' : 
     selectedType === 'PRESENSI' ? 'Presensi Hari Ini' : 
     selectedType === 'POIN' ? 'Poin & Disiplin' : 
@@ -1385,34 +1484,40 @@ function Dashboard() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800">
+    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800 w-full max-w-full">
       
       {/* Mobile Backdrop */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in"
-          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in print:hidden"
+          onClick={closeSidebar}
         />
       )}
-{/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${sidebarOpen ? 'translate-x-0' : '-translate-x-[150%]'} ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
-        
+      {/* Sidebar */}
+      <aside 
+        className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${
+          sidebarCollapsed ? 'w-72 md:w-24' : 'w-72 md:w-72'
+        } ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-[150%] md:translate-x-0'
+        }`}
+      >
         {/* Sidebar Header */}
-        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
-            {!sidebarCollapsed && (
-              <div className="animate-fade-in truncate">
-                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
-                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
-              </div>
-            )}
+        <div className={`p-4 sm:p-5 pt-[calc(env(safe-area-inset-top,0px)+1rem)] border-b border-slate-200 flex items-center shrink-0 bg-white transition-all justify-between ${sidebarCollapsed ? 'md:justify-center' : 'md:justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity gap-3 ${sidebarCollapsed ? 'md:justify-center md:w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'md:w-14 md:h-14' : 'md:w-20 md:h-20'} w-12 h-12 object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <div className={`animate-fade-in truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>
+              <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+              <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
+            </div>
           </div>
-          {!sidebarCollapsed && (
-            <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          )}
+          <button 
+            type="button"
+            className="md:hidden w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 active:scale-95 rounded-xl transition-all touch-manipulation cursor-pointer" 
+            onClick={closeSidebar}
+            aria-label="Tutup Menu"
+          >
+            <svg className="w-5 h-5 shrink-0 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
         
         {/* Sidebar Menu */}
@@ -1428,6 +1533,20 @@ function Dashboard() {
               >
                 <svg className={`w-6 h-6 shrink-0 ${!selectedType ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
+              </button>
+
+              {/* Berita & Pengumuman */}
+              <button 
+                onClick={() => { setSelectedType('BERITA_PENGUMUMAN'); setSidebarOpen(false) }}
+                title="Berita & Pengumuman"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'BERITA_PENGUMUMAN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'BERITA_PENGUMUMAN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  <circle cx="18" cy="4" r="3" fill="currentColor" className="text-rose-500 stroke-none" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Berita & Pengumuman</span>}
               </button>
               {showFeatureConfig.presensi && (
                 <button 
@@ -1447,6 +1566,17 @@ function Dashboard() {
                 >
                   <svg className={`w-6 h-6 shrink-0 ${selectedType === 'NILAI' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"></path></svg>
                   {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Saya</span>}
+                </button>
+              )}
+
+              {canAccessCbt && (
+                <button 
+                  onClick={() => { setSelectedType('CBT'); setSidebarOpen(false) }}
+                  title="Penilaian Digital (CBT)"
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'CBT' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+                >
+                  <svg className={`w-6 h-6 shrink-0 ${selectedType === 'CBT' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                  {!sidebarCollapsed && <span className="animate-fade-in truncate">Penilaian (CBT)</span>}
                 </button>
               )}
               {showFeatureConfig.poin && (
@@ -1621,7 +1751,7 @@ function Dashboard() {
             {!sidebarCollapsed && <span className="animate-fade-in">Keluar</span>}
           </button>
         </div>
-      </div>
+      </aside>
 
       {/* iOS Fullscreen Hint Modal */}
       {showIosHint && (
@@ -1676,17 +1806,19 @@ function Dashboard() {
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
         )}
       </button>
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50 dashboard-content-area">
+      <div className="flex-1 flex flex-col min-h-0 bg-slate-50/50 dashboard-content-area">
         
         {/* Top Header Navbar (Mirip Desain Guru) */}
-        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 md:px-8 py-3.5 flex items-center justify-between shadow-2xs shrink-0">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 md:px-8 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] flex items-center justify-between shadow-2xs shrink-0 app-header-safe">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSidebarOpen(true)}
-              className="p-2 text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl md:hidden transition-colors"
+              type="button"
+              onClick={openSidebar}
+              className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-95 border border-slate-300 md:hidden transition-all shadow-xs touch-manipulation cursor-pointer shrink-0"
               title="Buka Menu"
+              aria-label="Buka Menu"
             >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <svg className="w-6 h-6 text-slate-800 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
@@ -1696,6 +1828,18 @@ function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Sync Data Siswa Button */}
+            <button
+              onClick={handleSyncData}
+              disabled={isSyncing}
+              className="p-2 text-indigo-600 hover:text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 rounded-xl transition-all duration-200 border border-indigo-200/60 disabled:opacity-50"
+              title="Sinkronkan / Perbarui Data Siswa"
+            >
+              <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+
             {/* Notification Bell Button */}
             <button
               onClick={() => setShowNotifPanel(true)}
@@ -1965,10 +2109,14 @@ function Dashboard() {
                 mode="siswa"
                 studentData={studentData}
               />
+            ) : selectedType === 'BERITA_PENGUMUMAN' ? (
+              <BeritaPengumumanSiswaSection studentData={studentData} isOrangTua={false} />
+            ) : selectedType === 'CBT' ? (
+              <SiswaCbtPortalSection key={`cbt-${refreshKey}`} student={studentData} />
             ) : selectedType === 'NILAI' ? (
-              <SiswaNilaiSection studentData={studentData} />
+              <SiswaNilaiSection key={`nilai-${refreshKey}`} studentData={studentData} />
             ) : selectedType === 'PRESENSI' ? (
-              <SiswaPresensiSection studentData={studentData} />
+              <SiswaPresensiSection key={`presensi-${refreshKey}`} studentData={studentData} />
             ) : selectedType === 'POIN' ? (
               <SiswaPoinSection 
                 siswaNisn={studentData?.nisn} 
@@ -2622,6 +2770,17 @@ function Dashboard() {
         currentUsername={studentData?.nisn}
         currentRole="Siswa"
       />
+
+      {/* Toast Sinkronisasi Data Siswa */}
+      {syncToast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-xl text-xs font-bold flex items-center gap-2 border animate-in fade-in slide-in-from-bottom-2 ${
+          syncToast.type === 'success' 
+            ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20' 
+            : 'bg-rose-600 text-white border-rose-500 shadow-rose-500/20'
+        }`}>
+          <span>{syncToast.text}</span>
+        </div>
+      )}
     </div>
   )
 }

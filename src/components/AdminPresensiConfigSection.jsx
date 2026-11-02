@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { getTodayWIB } from '../utils/dateUtils'
+import { getPortalBaseUrl } from '../utils/urlHelper'
 
 // ===== Haversine Distance Calculator =====
 function hitungJarak(lat1, lon1, lat2, lon2) {
@@ -44,6 +45,9 @@ export default function AdminPresensiConfigSection() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
   const [isDetectingLocation, setIsDetectingLocation] = useState(false)
+  const [sesiMasukHariIni, setSesiMasukHariIni] = useState(false)
+  const [updatingSesiMasuk, setUpdatingSesiMasuk] = useState(false)
+  const [updatingSesiPulang, setUpdatingSesiPulang] = useState(false)
   
   // State untuk Fitur Reset Data Presensi
   const [resetConfirmText, setResetConfirmText] = useState('')
@@ -57,7 +61,7 @@ export default function AdminPresensiConfigSection() {
       // Find by code first (cleaner, no spaces)
       let { data: guru, error: errGuru } = await supabase
         .from('guru')
-        .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
+        .select('id, kode, nama_guru, foto_url, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
         .eq('kode', 'piketsmpbm135')
         .maybeSingle()
 
@@ -65,7 +69,7 @@ export default function AdminPresensiConfigSection() {
       if (!guru) {
         const { data: guruByName } = await supabase
           .from('guru')
-          .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
+          .select('id, kode, nama_guru, foto_url, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id)')
           .eq('nama_guru', 'Petugas Piket')
           .maybeSingle()
         guru = guruByName
@@ -162,14 +166,31 @@ export default function AdminPresensiConfigSection() {
       }
     }
 
-    const [{ data: pengaturan }, { data: subsSiswa }, { data: subsOrtu }] = await Promise.all([
+    const todayStr = getTodayWIB()
+    const [{ data: pengaturan }, { data: subsSiswa }, { data: subsOrtu }, { data: sesiToday }] = await Promise.all([
       supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
       supabase.from('push_subscriptions').select('nisn'),
-      supabase.from('push_subscriptions_ortu').select('nisn_anak')
+      supabase.from('push_subscriptions_ortu').select('nisn_anak'),
+      supabase.from('sesi_presensi').select('tanggal').eq('tanggal', todayStr).maybeSingle()
     ])
+    setSesiMasukHariIni(!!sesiToday)
     if (pengaturan) {
       const map = {}
       pengaturan.forEach(p => { map[p.setting_key] = p.setting_value || '' })
+      
+      // Expire stale pulang status from previous days
+      if (map['presensi_pulang_tanggal'] && map['presensi_pulang_tanggal'] !== todayStr) {
+        map['presensi_pulang_aktif'] = 'false'
+      }
+
+      // Bersihkan sesi_selesai hari ini jika jadwal otomatis aktif agar tidak memblokir jadwal
+      if (map['jadwal_otomatis_aktif'] === 'true' || map['jadwal_otomatis_aktif'] === '1') {
+        if (map[`sesi_selesai_${todayStr}`]) {
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayStr}`).then(() => {})
+          delete map[`sesi_selesai_${todayStr}`]
+        }
+      }
+
       setSettings(prev => ({ ...prev, ...map }))
       // Load multiple geofence areas
       if (map['geofence_areas']) {
@@ -199,6 +220,51 @@ export default function AdminPresensiConfigSection() {
     }
   }
 
+  const handleToggleSesiMasuk = async () => {
+    setUpdatingSesiMasuk(true)
+    const todayStr = getTodayWIB()
+    const nextVal = !sesiMasukHariIni
+    try {
+      if (nextVal) {
+        await Promise.all([
+          supabase.from('sesi_presensi').upsert({ tanggal: todayStr, dibuka_oleh: 'admin', dibuka_pada: new Date().toISOString() }, { onConflict: 'tanggal' }),
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayStr}`)
+        ])
+      } else {
+        await Promise.all([
+          supabase.from('sesi_presensi').delete().eq('tanggal', todayStr),
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayStr}`)
+        ])
+      }
+      setSesiMasukHariIni(nextVal)
+    } catch (err) {
+      alert('Gagal mengubah status sesi masuk: ' + err.message)
+    } finally {
+      setUpdatingSesiMasuk(false)
+    }
+  }
+
+  const handleToggleSesiPulang = async (v) => {
+    setUpdatingSesiPulang(true)
+    const todayStr = getTodayWIB()
+    const nextVal = v !== undefined ? v : (settings.presensi_pulang_aktif === 'true' ? 'false' : 'true')
+    try {
+      if (nextVal === 'true') {
+        await Promise.all([
+          saveSetting('presensi_pulang_aktif', 'true'),
+          saveSetting('presensi_pulang_tanggal', todayStr)
+        ])
+      } else {
+        await saveSetting('presensi_pulang_aktif', 'false')
+      }
+      setSettings(p => ({ ...p, presensi_pulang_aktif: nextVal }))
+    } catch (err) {
+      alert('Gagal mengubah status sesi pulang: ' + err.message)
+    } finally {
+      setUpdatingSesiPulang(false)
+    }
+  }
+
   const handleSaveAll = async () => {
     setSaving(true)
     setSaveMsg('')
@@ -211,9 +277,21 @@ export default function AdminPresensiConfigSection() {
       'kode_pembatalan_presensi'
     ]
     try {
+      const todayStr = getTodayWIB()
+      const additionalSaves = [
+        saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
+      ]
+      if (settings.presensi_pulang_aktif === 'true') {
+        additionalSaves.push(saveSetting('presensi_pulang_tanggal', todayStr))
+      }
+      if (settings.jadwal_otomatis_aktif === 'true' || settings.jadwal_otomatis_aktif === '1') {
+        additionalSaves.push(
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayStr}`)
+        )
+      }
       await Promise.all([
         ...keys.map(k => saveSetting(k, settings[k])),
-        saveSetting('geofence_areas', JSON.stringify(geofenceAreas))
+        ...additionalSaves
       ])
       setSaving(false)
       setSaveMsg('Pengaturan berhasil disimpan.')
@@ -263,7 +341,7 @@ export default function AdminPresensiConfigSection() {
     s.kelas.toLowerCase().includes(searchSiswa.toLowerCase())
   )
 
-  const tvUrl = `${window.location.origin}/presensi-tv`
+  const tvUrl = `${getPortalBaseUrl()}/presensi-tv`
 
   // Hitung statistik presensi hari ini
   const [statHariIni, setStatHariIni] = useState({ hadir: 0, belum: 0, pulang: 0 })
@@ -398,17 +476,45 @@ export default function AdminPresensiConfigSection() {
         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3">⚙️ Pengaturan Umum</h3>
 
 
-        {/* Toggle Presensi Pulang */}
-        <div className="flex items-center justify-between p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
-          <div>
-            <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
-              <span>🏠</span> Status Sesi Presensi Pulang
-            </p>
-            <p className="text-xs text-blue-700 mt-0.5">
-              Jika diaktifkan, siswa yang hadir/terlambat dapat langsung foto selfie untuk presensi pulang tanpa scan QR.
-            </p>
+        {/* Grid Dual Sesi: Masuk & Pulang */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Toggle Presensi Masuk (Hadir) */}
+          <div className="flex items-center justify-between p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <div>
+              <p className="text-sm font-bold text-emerald-900 flex items-center gap-1.5">
+                <span>📋</span> Sesi Presensi Masuk (Hadir)
+              </p>
+              <p className="text-xs text-emerald-700 mt-0.5">
+                {sesiMasukHariIni ? 'Sesi masuk hari ini aktif' : 'Sesi masuk hari ini nonaktif'}
+              </p>
+            </div>
+            <ToggleSwitch
+              value={sesiMasukHariIni ? 'true' : 'false'}
+              onChange={handleToggleSesiMasuk}
+              disabled={updatingSesiMasuk}
+              colorOn="bg-emerald-600"
+            />
           </div>
-          <ToggleSwitch value={settings.presensi_pulang_aktif} onChange={v => setSettings(p => ({ ...p, presensi_pulang_aktif: v }))} colorOn="bg-blue-600" />
+
+          {/* Toggle Presensi Pulang */}
+          <div className="flex items-center justify-between p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+            <div>
+              <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+                <span>🏠</span> Sesi Presensi Pulang
+              </p>
+              <p className="text-xs text-blue-700 mt-0.5">
+                {settings.presensi_pulang_aktif === 'true' 
+                  ? 'Sesi pulang aktif dibuka (Siswa langsung bisa selfie pulang tanpa harus presensi masuk dahulu)' 
+                  : 'Sesi pulang nonaktif manual (mengikuti jam jadwal otomatis)'}
+              </p>
+            </div>
+            <ToggleSwitch 
+              value={settings.presensi_pulang_aktif} 
+              onChange={handleToggleSesiPulang} 
+              disabled={updatingSesiPulang}
+              colorOn="bg-blue-600" 
+            />
+          </div>
         </div>
 
         {/* Interval QR */}

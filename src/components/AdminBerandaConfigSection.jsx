@@ -118,6 +118,23 @@ export default function AdminBerandaConfigSection() {
         const { error } = await supabase.from('pengaturan_sekolah').insert([item])
         if (error) throw error
       }
+
+      // Broadcast perubahan seketika ke seluruh tab Orang Tua
+      try {
+        const broadcastCh = supabase.channel('ebudimulia-global-settings-broadcast')
+        broadcastCh.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await broadcastCh.send({
+              type: 'broadcast',
+              event: 'toggle_tagihan_feature',
+              payload: { key: 'show_tagihan_ortu', value: showTagihanOrtu }
+            })
+            setTimeout(() => supabase.removeChannel(broadcastCh), 1500)
+          }
+        })
+      } catch (bcErr) {
+        console.warn('Broadcast error:', bcErr)
+      }
       
       setMessage({ type: 'success', text: 'Pengaturan beranda berhasil disimpan!' })
       logActivity({ userRole: 'Administrator', action: 'Update Beranda', details: 'Mengubah pengaturan tampilan beranda, fitur, sub-fitur poin, dan visibilitas kalender.' })

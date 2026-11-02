@@ -7,6 +7,16 @@ import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
 import { sendFCMPushNotification } from '../utils/fcmSender'
 import SiswaRiwayatPresensi from './SiswaRiwayatPresensi'
 import { getTodayWIB, getCurrentTimeWIB, getServerNow, getDayIndexWIB, syncServerTime } from '../utils/dateUtils'
+import {
+  enqueuePresensi,
+  submitPresensiDirectOrQueue,
+  forceSyncPendingQueue,
+  getLocalPresensiForToday,
+  removeLocalPresensi,
+  processPresensiQueue
+} from '../utils/presensiQueue'
+import { evaluatePresensiSession } from '../utils/presensiSessionUtils'
+import { compressImage } from '../utils/imageCompressor'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -43,11 +53,25 @@ function hitungJarak(lat1, lon1, lat2, lon2) {
 
 const getPresensiCacheKey = (nisn, tgl) => `ebm_presensi_cache_${nisn}_${tgl}`
 
+const cleanOldPresensiCache = (nisn, today) => {
+  if (!nisn) return
+  try {
+    const prefix = `ebm_presensi_cache_${nisn}_`
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith(prefix) && key !== `ebm_presensi_cache_${nisn}_${today}`) {
+        localStorage.removeItem(key)
+      }
+    }
+  } catch {}
+}
+
 const getCachedPresensiData = (nisn, tgl) => {
   if (!nisn) return null
   try {
-    const raw = sessionStorage.getItem(getPresensiCacheKey(nisn, tgl))
-    return raw ? JSON.parse(raw) : null
+    const raw = localStorage.getItem(getPresensiCacheKey(nisn, tgl)) || sessionStorage.getItem(getPresensiCacheKey(nisn, tgl))
+    if (!raw) return null
+    return JSON.parse(raw)
   } catch {
     return null
   }
@@ -64,13 +88,57 @@ export default function SiswaPresensiSection({ studentData }) {
     return () => clearInterval(timer)
   }, [])
 
+  // Trigger background queue sync saat komponen mount
+  useEffect(() => {
+    processPresensiQueue().catch(() => {})
+  }, [])
+
+  // Listener untuk pembaruan status sinkronisasi presensi lokal ke server
+  useEffect(() => {
+    const handleSynced = (e) => {
+      const detail = e.detail
+      if (!detail || detail.siswa_nisn !== studentData?.nisn) return
+      if (detail.tipe === TIPE.MASUK) {
+        setPresensiMasuk(prev => prev ? { ...prev, _syncStatus: 'synced', selfie_url: detail.selfieUrl || prev.selfie_url } : prev)
+      } else if (detail.tipe === TIPE.PULANG) {
+        setPresensiPulang(prev => prev ? { ...prev, _syncStatus: 'synced', selfie_url: detail.selfieUrl || prev.selfie_url } : prev)
+      }
+      setLastSubmitSyncStatus('synced')
+    }
+    window.addEventListener('ebm-presensi-synced', handleSynced)
+    return () => window.removeEventListener('ebm-presensi-synced', handleSynced)
+  }, [studentData?.nisn])
+
   const today = useMemo(() => getTodayWIB(currentDate), [currentDate])
 
   const cachedData = useMemo(() => {
     return getCachedPresensiData(studentData?.nisn, today)
   }, [studentData?.nisn, today])
 
-  const [loadingStatus, setLoadingStatus] = useState(() => !cachedData)
+  // Bersihkan cache hari kemarin agar penyimpanan HP bersih dan hari baru mulai fresh
+  useEffect(() => {
+    cleanOldPresensiCache(studentData?.nisn, today)
+  }, [studentData?.nisn, today])
+
+  // Evaluasi pengaturan offline dari localStorage untuk render instan 0ms tanpa muter-muter
+  const cachedSchoolSettings = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('ebm_cached_pengaturan_sekolah')
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }, [])
+
+  const initialEval = useMemo(() => {
+    return evaluatePresensiSession({
+      settings: cachedSchoolSettings,
+      sesiPresensiRow: null,
+      dateNow: getServerNow()
+    })
+  }, [cachedSchoolSettings])
+
+  const [loadingStatus, setLoadingStatus] = useState(() => !cachedData && cachedSchoolSettings.length === 0)
   const [presensiMasuk, setPresensiMasuk] = useState(() => cachedData?.presensiMasuk || null)
   const [presensiPulang, setPresensiPulang] = useState(() => cachedData?.presensiPulang || null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -78,29 +146,80 @@ export default function SiswaPresensiSection({ studentData }) {
   const [selfieSrc, setSelfieSrc] = useState(null)
   const [selfieBlob, setSelfieBlob] = useState(null)
   const [scannedToken, setScannedToken] = useState(null)
-  const [jamBatasHadir, setJamBatasHadir] = useState(() => cachedData?.jamBatasHadir || '07:00')
-  const [qrAktif, setQrAktif] = useState(() => cachedData?.qrAktif ?? true)
+  const [jamBatasHadir, setJamBatasHadir] = useState(() => cachedData?.jamBatasHadir || initialEval.jamBatasHadir || '06:55')
+  const [qrAktif, setQrAktif] = useState(() => {
+    if (cachedData?.qrAktif !== undefined) return cachedData.qrAktif
+    const qrStatus = cachedSchoolSettings.find(s => s.setting_key === 'presensi_qr_aktif')?.setting_value
+    return qrStatus !== 'false'
+  })
   const [selfieRequired, setSelfieRequired] = useState(() => cachedData?.selfieRequired ?? true)
   const [activeTab, setActiveTab] = useState('isi_presensi')
-  const [tipeAktif, setTipeAktif] = useState(() => cachedData?.tipeAktif || TIPE.MASUK)
-  const [sesiAktif, setSesiAktif] = useState(() => cachedData?.sesiAktif || false)
-  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(() => cachedData?.jadwalOtomatisAktif || false)
-  const [jamMulaiPresensi, setJamMulaiPresensi] = useState(() => cachedData?.jamMulaiPresensi || '05:00')
-  const [jamMulaiPulang, setJamMulaiPulang] = useState(() => cachedData?.jamMulaiPulang || '13:00')
-  const [hariAktifPresensi, setHariAktifPresensi] = useState(() => cachedData?.hariAktifPresensi || '1,2,3,4,5')
-  const [jamBatasPulang, setJamBatasPulang] = useState(() => cachedData?.jamBatasPulang || '18:00')
-  const [presensiMasukMode, setPresensiMasukMode] = useState(() => cachedData?.presensiMasukMode || 'qr')
-  const [presensiPulangAktif, setPresensiPulangAktif] = useState(() => cachedData?.presensiPulangAktif || false)
+  // Penentuan tipe awal:
+  // Jika waktu/sesi pulang sedang aktif dan siswa belum presensi pulang hari ini,
+  // maka WAJIB muncul Presensi PULANG (tidak peduli sudah presensi masuk atau belum).
+  // Di hari baru (pagi sebelum jam pulang), selalu mulai dari Presensi MASUK.
+  const [tipeAktif, setTipeAktif] = useState(() => {
+    if ((cachedData?.presensiPulangAktif || initialEval.isSesiPulangAktif) && !cachedData?.presensiPulang) {
+      return TIPE.PULANG
+    }
+    return TIPE.MASUK
+  })
+  const [sesiAktif, setSesiAktif] = useState(() => cachedData?.sesiAktif ?? initialEval.isSesiMasukAktif)
+  const [jadwalOtomatisAktif, setJadwalOtomatisAktif] = useState(() => cachedData?.jadwalOtomatisAktif ?? initialEval.autAct)
+  const [jamMulaiPresensi, setJamMulaiPresensi] = useState(() => cachedData?.jamMulaiPresensi || initialEval.jamMulaiMasuk || '04:25')
+  const [jamMulaiPulang, setJamMulaiPulang] = useState(() => cachedData?.jamMulaiPulang || initialEval.jamMulaiPulang || '11:00')
+  const [hariAktifPresensi, setHariAktifPresensi] = useState(() => cachedData?.hariAktifPresensi || (cachedSchoolSettings.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value) || '1,2,3,4,5')
+  const [jamBatasPulang, setJamBatasPulang] = useState(() => cachedData?.jamBatasPulang || initialEval.jamBatasPulang || '19:00')
+  const [presensiMasukMode, setPresensiMasukMode] = useState(() => cachedData?.presensiMasukMode || (cachedSchoolSettings.find(s => s.setting_key === 'presensi_masuk_mode')?.setting_value) || 'qr')
+  const [presensiPulangAktif, setPresensiPulangAktif] = useState(() => cachedData?.presensiPulangAktif ?? initialEval.isSesiPulangAktif)
   const [selectedMode, setSelectedMode] = useState(null)
   const [notifGranted, setNotifGranted] = useState(isNotifGranted())
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
-  const [geofenceConfig, setGeofenceConfig] = useState(() => cachedData?.geofenceConfig || {
-    aktif: false,
-    lat: null,
-    lng: null,
-    radius: 200
+  const [geofenceConfig, setGeofenceConfig] = useState(() => {
+    if (cachedData?.geofenceConfig) return cachedData.geofenceConfig
+    const geoAktif = cachedSchoolSettings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
+    const geoLat = parseFloat(cachedSchoolSettings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
+    const geoLng = parseFloat(cachedSchoolSettings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
+    const geoRadius = parseInt(cachedSchoolSettings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
+    return {
+      aktif: geoAktif,
+      lat: isNaN(geoLat) ? null : geoLat,
+      lng: isNaN(geoLng) ? null : geoLng,
+      radius: isNaN(geoRadius) ? 200 : geoRadius
+    }
   })
-  const [geofenceAreas, setGeofenceAreas] = useState(() => cachedData?.geofenceAreas || [])
+  const [geofenceAreas, setGeofenceAreas] = useState(() => {
+    if (cachedData?.geofenceAreas) return cachedData.geofenceAreas
+    const areasRaw = cachedSchoolSettings.find(s => s.setting_key === 'geofence_areas')?.setting_value
+    if (areasRaw) {
+      try {
+        return JSON.parse(areasRaw)
+      } catch {
+        return []
+      }
+    }
+    return []
+  })
+  const [lastSubmitSyncStatus, setLastSubmitSyncStatus] = useState('synced')
+  const [syncingManual, setSyncingManual] = useState(false)
+
+  // Laporan Kendala Presensi States
+  const [laporanKendalaList, setLaporanKendalaList] = useState(() => cachedData?.laporanKendalaList || [])
+  const [showModalKendala, setShowModalKendala] = useState(false)
+  const [kendalaTipe, setKendalaTipe] = useState(TIPE.MASUK)
+  const [kendalaDesc, setKendalaDesc] = useState('')
+  const [kendalaBlob, setKendalaBlob] = useState(null)
+  const [kendalaPreview, setKendalaPreview] = useState(null)
+  const [kendalaCompressInfo, setKendalaCompressInfo] = useState(null)
+  const [kendalaCompressing, setKendalaCompressing] = useState(false)
+  const [kendalaSubmitting, setKendalaSubmitting] = useState(false)
+  const [kendalaError, setKendalaError] = useState('')
+  const [lightboxImg, setLightboxImg] = useState(null)
+
+  const laporanKendalaToday = useMemo(() => {
+    if (!laporanKendalaList || laporanKendalaList.length === 0) return null
+    return laporanKendalaList.find(l => l.tipe === tipeAktif) || laporanKendalaList[0] || null
+  }, [laporanKendalaList, tipeAktif])
 
   const scannerRef = useRef(null)
   const selfieFileInputRef = useRef(null)
@@ -108,99 +227,169 @@ export default function SiswaPresensiSection({ studentData }) {
   const videoRef = useRef(null)
   const selectedModeRef = useRef(null) // ref agar tidak stale di async callbacks
 
+  const reset = useCallback(() => {
+    setStep(STEP.IDLE)
+    setErrorMsg('')
+    setSelfieSrc(null)
+    setSelfieBlob(null)
+    setScannedToken(null)
+    setSelectedMode(null)
+    selectedModeRef.current = null
+  }, [])
+
   // Load status presensi hari ini & pengaturan
   const loadStatus = useCallback(async (isSilent = false) => {
     if (!isSilent && !getCachedPresensiData(studentData?.nisn, today)) {
       setLoadingStatus(true)
     }
     try {
-      const [{ data: prDataAll }, { data: settings }, { data: sesi }] = await Promise.all([
+      // Baca pengaturan cached dari localStorage sebagai fallback instan jika Supabase lag
+      let cachedSettings = []
+      try {
+        const rawS = localStorage.getItem('ebm_cached_pengaturan_sekolah')
+        if (rawS) cachedSettings = JSON.parse(rawS)
+      } catch {}
+
+      // Gunakan Promise.allSettled agar kegagalan 1 query tidak menggugurkan status sesi
+      const results = await Promise.allSettled([
         supabase.from('presensi_harian')
           .select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
         supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
-        supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle()
+        supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
+        supabase.from('laporan_kendala_presensi').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
       ])
+
+      const prDataAll = results[0].status === 'fulfilled' ? results[0].value.data : null
+      const settings = (results[1].status === 'fulfilled' && results[1].value.data?.length > 0)
+        ? results[1].value.data
+        : (cachedSettings.length > 0 ? cachedSettings : [])
+      const sesi = results[2].status === 'fulfilled' ? results[2].value.data : null
+      const kendalaData = results[3].status === 'fulfilled' ? (results[3].value.data || []) : []
+      setLaporanKendalaList(kendalaData)
+
+      if (results[1].status === 'fulfilled' && results[1].value.data?.length > 0) {
+        try {
+          localStorage.setItem('ebm_cached_pengaturan_sekolah', JSON.stringify(results[1].value.data))
+        } catch {}
+      }
+
+      const evalResult = evaluatePresensiSession({
+        settings: settings || [],
+        sesiPresensiRow: sesi,
+        dateNow: getServerNow()
+      })
 
       let masuk = null
       let pulang = null
       let newTipeAktif = TIPE.MASUK
-      let isSesiPulangAktif = false
-      let isSesiMasukAktif = false
 
-      let curJamBatasHadir = '07:00'
+      const isSesiMasukAktif = evalResult.isSesiMasukAktif
+      setSesiAktif(isSesiMasukAktif)
+
+      const isSesiPulangAktif = evalResult.isSesiPulangAktif
+      setPresensiPulangAktif(isSesiPulangAktif)
+
+      const curJamBatasHadir = evalResult.jamBatasHadir
+      setJamBatasHadir(curJamBatasHadir)
+
+      const curJamMulaiPresensi = evalResult.jamMulaiMasuk
+      setJamMulaiPresensi(curJamMulaiPresensi)
+
+      const curJamMulaiPulang = evalResult.jamMulaiPulang
+      setJamMulaiPulang(curJamMulaiPulang)
+
+      const curJamBatasPulang = evalResult.jamBatasPulang
+      setJamBatasPulang(curJamBatasPulang)
+
+      const curHariAktifPresensi = (settings?.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value) || '1,2,3,4,5'
+      setHariAktifPresensi(curHariAktifPresensi)
+
+      const curJadwalOtomatisAktif = evalResult.autAct
+      setJadwalOtomatisAktif(curJadwalOtomatisAktif)
+
       let curQrAktif = true
-      let curJadwalOtomatisAktif = false
-      let curJamMulaiPresensi = '05:00'
-      let curJamMulaiPulang = '13:00'
-      let curHariAktifPresensi = '1,2,3,4,5'
-      let curJamBatasPulang = '18:00'
       let curSelfieRequired = true
       let curPresensiMasukMode = 'qr'
       let curGeofenceConfig = { aktif: false, lat: null, lng: null, radius: 200 }
       let curGeofenceAreas = []
 
       if (settings) {
-        const jam = settings.find(s => s.setting_key === 'jam_batas_hadir')?.setting_value
-        if (jam) { curJamBatasHadir = jam; setJamBatasHadir(jam); }
         const qrStatus = settings.find(s => s.setting_key === 'presensi_qr_aktif')?.setting_value
         curQrAktif = qrStatus !== 'false'
         setQrAktif(curQrAktif)
-        const autAct = settings.find(s => s.setting_key === 'jadwal_otomatis_aktif')?.setting_value === 'true'
-        curJadwalOtomatisAktif = autAct
-        setJadwalOtomatisAktif(autAct)
-        const mul = settings.find(s => s.setting_key === 'jam_mulai_presensi')?.setting_value || '05:00'
-        curJamMulaiPresensi = mul
-        setJamMulaiPresensi(mul)
-        const mulP = settings.find(s => s.setting_key === 'jam_mulai_pulang')?.setting_value || '13:00'
-        curJamMulaiPulang = mulP
-        setJamMulaiPulang(mulP)
-        const har = settings.find(s => s.setting_key === 'hari_aktif_presensi')?.setting_value || '1,2,3,4,5'
-        curHariAktifPresensi = har
-        setHariAktifPresensi(har)
-        const pul = settings.find(s => s.setting_key === 'jam_batas_pulang')?.setting_value || '18:00'
-        curJamBatasPulang = pul
-        setJamBatasPulang(pul)
-        const pulAktifVal = settings.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
-        const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
-
-        // Hitung apakah hari ini dan jam ini aktif otomatis (berbasis jam resmi server WIB)
-        const now = getServerNow()
-        const currentDow = getDayIndexWIB(now)
-        const [currentH, currentM] = getCurrentTimeWIB(now).split(':').map(Number)
-        const isHariJadwal = har.split(',').map(Number).includes(currentDow)
-
-        const [mh, mm] = mul.split(':').map(Number)
-        const [mph, mpm] = mulP.split(':').map(Number)
-        const [bh, bm] = pul.split(':').map(Number)
-
-        const isSudahMulai = currentH > mh || (currentH === mh && currentM >= (mm || 0))
-        const isBelumLewatBatas = currentH < bh || (currentH === bh && currentM < (bm || 0))
-        const isAutoActive = autAct && isHariJadwal && isSudahMulai && isBelumLewatBatas
-
-        isSesiMasukAktif = !!sesi || isAutoActive
-        setSesiAktif(isSesiMasukAktif)
-
-        const isSudahWaktuPulang = currentH > mph || (currentH === mph && currentM >= (mpm || 0))
-        const isAutoPulangActive = autAct && isHariJadwal && isSudahWaktuPulang && isBelumLewatBatas
-        isSesiPulangAktif = pulAktif || isAutoPulangActive
-        setPresensiPulangAktif(isSesiPulangAktif)
 
         if (prDataAll) {
           masuk = prDataAll.find(p => !p.tipe || p.tipe === TIPE.MASUK) || null
           pulang = prDataAll.find(p => p.tipe === TIPE.PULANG) || null
-          setPresensiMasuk(masuk)
-          setPresensiPulang(pulang)
-
-          if (isSesiPulangAktif) {
-            newTipeAktif = TIPE.PULANG
-          } else {
-            newTipeAktif = TIPE.MASUK
-          }
-          setTipeAktif(newTipeAktif)
-        } else {
-          newTipeAktif = isSesiPulangAktif ? TIPE.PULANG : TIPE.MASUK
-          setTipeAktif(newTipeAktif)
         }
+
+        // Cek antrean lokal di IndexedDB jika data di server belum ada atau belum tersinkron
+        try {
+          const localToday = await getLocalPresensiForToday(studentData.nisn, today)
+
+          // 1. Cek Presensi Masuk
+          if (!masuk && localToday.masuk) {
+            if (localToday.masuk.syncStatus === 'synced') {
+              // Jika status di lokal sudah 'synced' tapi di server tidak ada,
+              // berarti data ini telah DIHAPUS / DIRESET oleh Petugas Piket / Admin.
+              // Bersihkan dari IndexedDB agar akun siswa ter-reset.
+              await removeLocalPresensi(studentData.nisn, today, TIPE.MASUK)
+            } else {
+              // Benar-benar masih pending (offline belum sempat terkirim)
+              masuk = {
+                id: localToday.masuk.id,
+                status: localToday.masuk.status,
+                waktu: localToday.masuk.waktu,
+                tipe: TIPE.MASUK,
+                selfie_url: localToday.masuk.selfieUrl || localToday.masuk.selfiePreview,
+                keterangan: localToday.masuk.keterangan,
+                _isLocalQueue: true,
+                _syncStatus: localToday.masuk.syncStatus
+              }
+            }
+          }
+
+          // 2. Cek Presensi Pulang
+          if (!pulang && localToday.pulang) {
+            if (localToday.pulang.syncStatus === 'synced') {
+              // Data pulang telah dihapus di server oleh Piket/Admin
+              await removeLocalPresensi(studentData.nisn, today, TIPE.PULANG)
+            } else {
+              pulang = {
+                id: localToday.pulang.id,
+                status: localToday.pulang.status,
+                waktu: localToday.pulang.waktu,
+                tipe: TIPE.PULANG,
+                selfie_url: localToday.pulang.selfieUrl || localToday.pulang.selfiePreview,
+                keterangan: localToday.pulang.keterangan,
+                _isLocalQueue: true,
+                _syncStatus: localToday.pulang.syncStatus
+              }
+            }
+          }
+        } catch (queueErr) {
+          console.warn('Gagal membaca antrean lokal:', queueErr)
+        }
+
+        setPresensiMasuk(masuk)
+        setPresensiPulang(pulang)
+
+        // Jika data presensi masuk tidak ada (dihapus/reset oleh piket), kembalikan step ke IDLE
+        if (!masuk) {
+          setStep(prev => (prev === STEP.SUCCESS || prev === STEP.SUBMITTING) ? STEP.IDLE : prev)
+        }
+
+        // Penentuan tipe presensi:
+        // 1. Jika sesi pulang sedang aktif (sesuai jam jadwal atau dibuka manual oleh piket/admin)
+        //    dan siswa belum presensi pulang hari ini, maka WAJIB muncul mode PULANG
+        //    (TIDAK PEDULI apakah dia sudah presensi masuk atau belum).
+        // 2. Di hari baru (pagi hari sebelum sesi pulang aktif), selalu reset ke presensi MASUK.
+        if (isSesiPulangAktif && !pulang) {
+          newTipeAktif = TIPE.PULANG
+        } else {
+          newTipeAktif = TIPE.MASUK
+        }
+        setTipeAktif(newTipeAktif)
 
         const selfieReq = settings.find(s => s.setting_key === 'selfie_required')?.setting_value
         curSelfieRequired = selfieReq !== 'false'
@@ -232,9 +421,9 @@ export default function SiswaPresensiSection({ studentData }) {
         }
       }
 
-      // Simpan snapshot ke sessionStorage untuk render instan di kunjungan berikutnya
+      // Simpan snapshot ke localStorage & sessionStorage untuk render instan di kunjungan berikutnya
       try {
-        sessionStorage.setItem(getPresensiCacheKey(studentData.nisn, today), JSON.stringify({
+        const cachePayload = JSON.stringify({
           presensiMasuk: masuk,
           presensiPulang: pulang,
           sesiAktif: isSesiMasukAktif,
@@ -251,8 +440,11 @@ export default function SiswaPresensiSection({ studentData }) {
           presensiMasukMode: curPresensiMasukMode,
           geofenceConfig: curGeofenceConfig,
           geofenceAreas: curGeofenceAreas,
+          laporanKendalaList: kendalaData,
           timestamp: Date.now()
-        }))
+        })
+        localStorage.setItem(getPresensiCacheKey(studentData.nisn, today), cachePayload)
+        sessionStorage.setItem(getPresensiCacheKey(studentData.nisn, today), cachePayload)
       } catch {}
     } catch (e) {
       console.warn('Gagal memuat status presensi:', e)
@@ -260,6 +452,28 @@ export default function SiswaPresensiSection({ studentData }) {
       setLoadingStatus(false)
     }
   }, [studentData?.nisn, today])
+
+  // Pemicu sinkronisasi manual untuk antrean presensi lokal
+  const handleManualSyncQueue = useCallback(async () => {
+    setSyncingManual(true)
+    try {
+      const res = await forceSyncPendingQueue()
+      if (res.success) {
+        setLastSubmitSyncStatus('synced')
+        await loadStatus(true)
+        if (step === STEP.SUCCESS) {
+          reset()
+        }
+        alert(res.message || 'Presensi berhasil disinkronkan ke server sekolah!')
+      } else {
+        alert(res.message || 'Gagal menyinkronkan. Periksa koneksi internet Anda.')
+      }
+    } catch (err) {
+      alert('Terjadi kesalahan: ' + err.message)
+    } finally {
+      setSyncingManual(false)
+    }
+  }, [loadStatus, step, reset])
 
   const isHariAktif = useMemo(() => {
     if (!jadwalOtomatisAktif) return true
@@ -269,23 +483,54 @@ export default function SiswaPresensiSection({ studentData }) {
   }, [jadwalOtomatisAktif, hariAktifPresensi, currentDate])
 
   const presensiBelumMulai = useMemo(() => {
+    if (sesiAktif) return false
     if (!jadwalOtomatisAktif || !jamMulaiPresensi) return false
     if (!isHariAktif) return false
     const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
     const [nh, nm] = getCurrentTimeWIB(currentDate).split(':').map(Number)
     return nh < mh || (nh === mh && nm < mm)
-  }, [jadwalOtomatisAktif, jamMulaiPresensi, isHariAktif, currentDate])
+  }, [jadwalOtomatisAktif, jamMulaiPresensi, isHariAktif, currentDate, sesiAktif])
 
   const presensiSelesai = useMemo(() => {
+    if (sesiAktif || presensiPulangAktif) return false
     if (!jadwalOtomatisAktif || !jamBatasPulang) return false
     if (!isHariAktif) return false
-    if (presensiPulangAktif) return false
     const [bh, bm] = jamBatasPulang.split(':').map(Number)
     const [nh, nm] = getCurrentTimeWIB(currentDate).split(':').map(Number)
     return nh > bh || (nh === bh && nm >= bm)
-  }, [jadwalOtomatisAktif, jamBatasPulang, isHariAktif, currentDate, presensiPulangAktif])
+  }, [jadwalOtomatisAktif, jamBatasPulang, isHariAktif, currentDate, sesiAktif, presensiPulangAktif])
 
   useEffect(() => { loadStatus(true) }, [loadStatus])
+
+  // Smart polling: 60 detik + pause saat layar HP mati / tab diminimalkan (hemat bandwidth Supabase)
+  useEffect(() => {
+    if (presensiPulang) return
+    let pollTimer = null
+
+    const startPolling = () => {
+      if (pollTimer) clearInterval(pollTimer)
+      pollTimer = setInterval(() => {
+        loadStatus(true)
+      }, 60000)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadStatus(true) // Refresh segera saat kembali aktif
+        startPolling()
+      } else {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+      }
+    }
+
+    startPolling()
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      if (pollTimer) clearInterval(pollTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [presensiPulang, loadStatus])
 
   const loadStatusRef = useRef(loadStatus)
   useEffect(() => {
@@ -337,14 +582,16 @@ export default function SiswaPresensiSection({ studentData }) {
     const channel = supabase
       .channel(`presensi-section-live-${studentData.nisn}`)
       .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'presensi_harian',
-        filter: `siswa_nisn=eq.${studentData.nisn}`
+        event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}`
       }, debouncedLoadStatus)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'pengaturan_sekolah'
       }, debouncedLoadStatus)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'sesi_presensi'
+      }, debouncedLoadStatus)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'laporan_kendala_presensi', filter: `siswa_nisn=eq.${studentData.nisn}`
       }, debouncedLoadStatus)
       .subscribe()
 
@@ -391,16 +638,14 @@ export default function SiswaPresensiSection({ studentData }) {
         setStep(STEP.ERROR)
         return
       }
-      if (presensiMasuk) {
-        const statusMasuk = presensiMasuk.status
-        if (['S', 'I', 'A'].includes(statusMasuk)) {
-          setErrorMsg('Presensi pulang tidak tersedia karena status presensi Anda hari ini adalah Sakit, Izin, atau Alpha.')
-          setStep(STEP.ERROR)
-          return
-        }
+      const statusMasuk = presensiMasuk?.status
+      if (statusMasuk && ['S', 'I', 'A'].includes(statusMasuk)) {
+        setErrorMsg('Presensi pulang tidak tersedia karena status presensi Anda hari ini tercatat Sakit, Izin, atau Alpha.')
+        setStep(STEP.ERROR)
+        return
       }
       if (!presensiPulangAktif) {
-        setErrorMsg('Sesi presensi pulang belum dibuka oleh Petugas Piket / Admin. Silakan tunggu hingga petugas mengaktifkan sesi pulang.')
+        setErrorMsg('Sesi presensi pulang belum dibuka oleh Petugas Piket / Admin. Silakan tunggu hingga sesi pulang dimulai.')
         setStep(STEP.ERROR)
         return
       }
@@ -576,8 +821,8 @@ export default function SiswaPresensiSection({ studentData }) {
       const origW = video.videoWidth || 640
       const origH = video.videoHeight || 480
       
-      // Auto-compress & downscale proportionally (Max dimension: 640px)
-      const maxDim = 640
+      // Auto-compress & downscale proportionally (Max dimension: 480px, quality 0.55 untuk upload kilat)
+      const maxDim = 480
       let targetW = origW
       let targetH = origH
 
@@ -608,7 +853,7 @@ export default function SiswaPresensiSection({ studentData }) {
           setSelfieBlob(blob)
           setSelfieSrc(URL.createObjectURL(blob))
         }
-      }, 'image/jpeg', 0.75)
+      }, 'image/jpeg', 0.55)
     } catch (err) {
       console.error('Error saat mengambil foto selfie:', err)
       setErrorMsg('Gagal mengambil foto. Silakan tekan tombol selfie sekali lagi.')
@@ -622,7 +867,7 @@ export default function SiswaPresensiSection({ studentData }) {
       const fileName = `${nisn}_${tipe}_${today}_${Date.now()}.jpg`
       const { data, error } = await supabase.storage
         .from('selfie-presensi')
-        .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true })
+        .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' })
       if (error) { console.warn('Upload selfie gagal:', error.message); return null }
       const { data: urlData } = supabase.storage.from('selfie-presensi').getPublicUrl(fileName)
       return urlData?.publicUrl || null
@@ -706,38 +951,60 @@ export default function SiswaPresensiSection({ studentData }) {
     // modeKirim: 'qr' | 'geofence' | undefined (auto-detect dari selectedMode)
     setStep(STEP.SUBMITTING)
     try {
-      // 1. Dapatkan koordinat (opsional / soft-check)
+      const modeYangDipakai = modeKirim || selectedModeRef.current
+      const isGeofenceRequired = geofenceConfig.aktif && modeYangDipakai !== 'qr'
+
+      // 1. Dapatkan koordinat (HANYA wajib jika geofence aktif dan bukan scan QR)
       let coords = '0,0';
       let accuracy = 0;
-      try {
-        if ("geolocation" in navigator) {
-          const getPos = () => new Promise((resolve) => {
-            navigator.geolocation.getCurrentPosition(
-              (p) => resolve(p),
-              () => {
-                navigator.geolocation.getCurrentPosition(
-                  (p2) => resolve(p2),
-                  () => resolve(null),
-                  { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 }
-                );
-              },
-              { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
-            );
-          });
-          const pos = await getPos();
-          if (pos && pos.coords) {
-            coords = `${pos.coords.latitude},${pos.coords.longitude}`;
-            accuracy = Math.round(pos.coords.accuracy);
+
+      if (isGeofenceRequired) {
+        try {
+          if ("geolocation" in navigator) {
+            const getPos = () => new Promise((resolve) => {
+              // 1. Coba High Accuracy (Satelit GPS presisi) dengan waktu tunggu hingga 10 detik
+              navigator.geolocation.getCurrentPosition(
+                (p) => resolve(p),
+                () => {
+                  // 2. Fallback network location jika GPS murni gagal
+                  navigator.geolocation.getCurrentPosition(
+                    (p2) => resolve(p2),
+                    () => resolve(null),
+                    { enableHighAccuracy: false, timeout: 7000, maximumAge: 10000 }
+                  );
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+              );
+            });
+            const pos = await getPos();
+            if (pos && pos.coords) {
+              coords = `${pos.coords.latitude},${pos.coords.longitude}`;
+              accuracy = Math.round(pos.coords.accuracy || 0);
+            }
           }
+        } catch (err) {
+          // Lokasi diabaikan sesuai pengaturan
         }
-      } catch (err) {
-        // Lokasi diabaikan sesuai pengaturan
+      } else {
+        // Cek cepat lokasi (maks 300ms dari cache browser/HP tanpa memblokir presensi)
+        try {
+          if ("geolocation" in navigator) {
+            const pos = await new Promise((resolve) => {
+              navigator.geolocation.getCurrentPosition(
+                (p) => resolve(p),
+                () => resolve(null),
+                { enableHighAccuracy: false, timeout: 300, maximumAge: 300000 }
+              );
+            });
+            if (pos?.coords) {
+              coords = `${pos.coords.latitude},${pos.coords.longitude}`;
+              accuracy = Math.round(pos.coords.accuracy || 0);
+            }
+          }
+        } catch {}
       }
 
       // ===== GEOFENCING CHECK =====
-      // Gunakan ref (bukan state) agar tidak stale di async callback QR scanner
-      const modeYangDipakai = modeKirim || selectedModeRef.current
-      const isGeofenceRequired = geofenceConfig.aktif && modeYangDipakai !== 'qr'
       if (isGeofenceRequired) {
         if (!window.isSecureContext && window.location.protocol === 'http:') {
           setStep(STEP.ERROR)
@@ -747,7 +1014,7 @@ export default function SiswaPresensiSection({ studentData }) {
 
         if (coords === '0,0') {
           setStep(STEP.ERROR)
-          setErrorMsg('Presensi ditolak. Gagal mendapatkan lokasi GPS HP Anda. Pastikan Izin Lokasi diizinkan di browser HP Anda dan fitur GPS HP telah diaktifkan.')
+          setErrorMsg('Presensi ditolak. Gagal mendapatkan lokasi GPS HP Anda. Pastikan Izin Lokasi (Lokasi Presisi/Akurat) diizinkan di Pengaturan HP Anda dan fitur GPS HP telah diaktifkan.')
           return
         }
 
@@ -767,20 +1034,28 @@ export default function SiswaPresensiSection({ studentData }) {
         });
 
         if (allAreas.length > 0) {
-          // OR logic: allowed if within ANY area
+          // OR logic: lolos jika berada di dalam salah satu area dengan mempertimbangkan toleransi sinyal akurasi
           const diDalamSalahSatuArea = allAreas.some(area => {
-            const jarak = hitungJarak(userLat, userLng, area.lat, area.lng);
-            return jarak <= area.radius;
+            const rawJarak = hitungJarak(userLat, userLng, area.lat, area.lng);
+            // Berikan toleransi akurasi sinyal indoor hingga 60 meter
+            const toleransiAkurasi = Math.min(accuracy || 0, 60);
+            const jarakEfektif = Math.max(0, rawJarak - toleransiAkurasi);
+            return jarakEfektif <= area.radius;
           });
 
           if (!diDalamSalahSatuArea) {
-            // Find closest area for error message
+            // Cari area terdekat untuk pesan error yang informatif
             const closest = allAreas.reduce((best, area) => {
               const jarak = hitungJarak(userLat, userLng, area.lat, area.lng);
-              return jarak < best.jarak ? { ...area, jarak } : best;
-            }, { jarak: Infinity });
+              return jarak < best.jarak ? { ...area, jarak, radius: area.radius } : best;
+            }, { jarak: Infinity, radius: geofenceConfig.radius || 204 });
+            const jarakMeter = Math.round(closest.jarak);
             setStep(STEP.ERROR);
-            setErrorMsg('Jarak Anda terlalu jauh dengan lokasi sekolah. Silakan masuk ke area sekolah SMP Budi Mulia untuk melakukan presensi.');
+            if (accuracy > 120) {
+              setErrorMsg(`Jarak Anda terdeteksi ${jarakMeter}m dari sekolah (maksimal ${closest.radius}m) dengan sinyal GPS lemah (akurasi ±${accuracy}m). Buka Pengaturan HP > Aplikasi > eBudiMulia > Izin Lokasi dan pastikan opsi 'Gunakan Lokasi Tepat / Akurat' AKTIF, atau gunakan Scan QR di layar TV sekolah.`);
+            } else {
+              setErrorMsg(`Jarak Anda terdeteksi ${jarakMeter}m dari sekolah (maksimal ${closest.radius}m). Silakan masuk ke area sekolah atau gunakan Scan QR di layar TV sekolah.`);
+            }
             return;
           }
         }
@@ -793,83 +1068,93 @@ export default function SiswaPresensiSection({ studentData }) {
       const [sH, sM] = jamSekarang.split(':').map(Number);
       const lewatBatas = sH > bH || (sH === bH && sM > bM);
 
-      // Kunci presensi masuk jika sudah masuk waktu pulang
-      const [mph, mpm] = (jamMulaiPulang || '13:00').split(':').map(Number);
-      const isSudahWaktuPulang = sH > mph || (sH === mph && sM >= (mpm || 0));
-      const targetTipe = (presensiPulangAktif || isSudahWaktuPulang) ? TIPE.PULANG : tipeAktif;
+      let targetTipe = tipeAktif
+      if (targetTipe === TIPE.PULANG && presensiMasuk && ['S', 'I', 'A'].includes(presensiMasuk.status)) {
+        setStep(STEP.ERROR)
+        setErrorMsg('Presensi pulang tidak tersedia karena status presensi Anda hari ini tercatat Sakit, Izin, atau Alpha.')
+        return
+      }
 
       const statusOtomatis = (targetTipe === TIPE.MASUK) ? (lewatBatas ? 'T' : 'H') : 'P';
       let keteranganStr = coords || '';
 
-      // Cek duplikat untuk tipe yang sama
-      const { data: existing } = await supabase.from('presensi_harian')
-        .select('id').eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
-        .eq('tipe', targetTipe).maybeSingle();
-
-      if (existing) {
-        setStep(STEP.ERROR);
-        setErrorMsg(`Anda sudah melakukan presensi ${targetTipe === TIPE.PULANG ? 'pulang' : 'masuk'} hari ini.`);
-        return;
+      // Cek duplikat lokal terlebih dahulu
+      if (targetTipe === TIPE.MASUK && presensiMasuk) {
+        setStep(STEP.ERROR)
+        setErrorMsg('Anda sudah melakukan presensi masuk hari ini.')
+        return
       }
-
-      // Upload selfie ke Supabase Storage (jika ada)
-      let selfieUrl = null;
-      if (selfieB) {
-        selfieUrl = await uploadSelfie(selfieB, studentData.nisn, targetTipe);
+      if (targetTipe === TIPE.PULANG && presensiPulang) {
+        setStep(STEP.ERROR)
+        setErrorMsg('Anda sudah melakukan presensi pulang hari ini.')
+        return
       }
 
       // Tentukan metode presensi
-      const metodePilihan = modeYangDipakai === 'geofence' ? 'geofence' : 'qr_scan';
+      const metodePilihan = modeYangDipakai === 'geofence' ? 'geofence' : 'qr_scan'
+      const previewPhoto = selfieSrcLocal || selfieSrc || null
 
-      // Insert presensi (dengan fallback upsert agar aman dari double click)
-      const { error: insertErr } = await supabase.from('presensi_harian').upsert({
+      setStep(STEP.SUBMITTING)
+
+      // Coba kirim langsung ke database Supabase (Online-first dengan timeout 3.5 detik)
+      // Jika internet putus/timeout, otomatis tersimpan ke IndexedDB antrean lokal sebagai fallback
+      const submitResult = await submitPresensiDirectOrQueue({
         tanggal: today,
-        tahun_ajaran_id: studentData.tahun_ajaran_id || null,
-        kelas: studentData.kelas || '-',
+        tipe: targetTipe,
         siswa_nisn: studentData.nisn,
+        nama_lengkap: studentData.nama_lengkap,
+        kelas: studentData.kelas || '-',
+        tahun_ajaran_id: studentData.tahun_ajaran_id || null,
         status: statusOtomatis,
         waktu: jamSekarang,
         metode: metodePilihan,
-        tipe: targetTipe,
-        selfie_url: selfieUrl,
         keterangan: keteranganStr,
-        updated_at: now.toISOString()
-      }, { onConflict: 'tanggal,siswa_nisn,tipe' })
-      if (insertErr) throw insertErr
+        selfieBlob: selfieB || null,
+        selfiePreview: previewPhoto,
+        selfieUrl: null
+      }, 5000)
 
-      // Update state lokal & langsung tampilkan sukses agar siswa tidak menunggu notifikasi pihak ke-3
-      if (tipeAktif === TIPE.MASUK) {
-        setPresensiMasuk({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.MASUK, selfie_url: selfieUrl, keterangan: keteranganStr })
-        setTipeAktif(TIPE.PULANG)
-      } else {
-        setPresensiPulang({ status: statusOtomatis, waktu: jamSekarang, tipe: TIPE.PULANG, selfie_url: selfieUrl, keterangan: keteranganStr })
+      const queueItem = submitResult?.queueItem
+      const isServerSynced = submitResult?.isServerSynced ?? false
+
+      // Update state lokal
+      const presensiObj = {
+        id: queueItem?.id || `local_${Date.now()}`,
+        status: statusOtomatis,
+        waktu: jamSekarang,
+        tipe: targetTipe,
+        selfie_url: previewPhoto,
+        keterangan: keteranganStr,
+        _isLocalQueue: !isServerSynced,
+        _syncStatus: isServerSynced ? 'synced' : 'pending'
       }
 
+      if (targetTipe === TIPE.MASUK) {
+        setPresensiMasuk(presensiObj)
+        setTipeAktif(TIPE.PULANG)
+      } else {
+        setPresensiPulang(presensiObj)
+      }
+
+      setLastSubmitSyncStatus(isServerSynced ? 'synced' : 'pending')
       setStep(STEP.SUCCESS)
 
-      // Kirim notifikasi ke orangtua secara background (non-blocking)
-      notifyOrangTua(
-        studentData.nisn,
-        studentData.nama_lengkap,
-        studentData.kelas,
-        statusOtomatis,
-        jamSekarang,
-        targetTipe,
-        selfieUrl,
-        keteranganStr
-      ).catch(err => console.warn('[Background Notif Ortu] Error:', err))
-
-      // Tampilkan 1 notifikasi konfirmasi ke siswa lengkap dengan foto & lokasi
-      if (isNotifGranted()) {
-        const tipeLabelSiswa = tipeAktif === TIPE.PULANG ? 'Pulang' : 'Masuk'
-        const statusLabelSiswa = STATUS_LABELS[statusOtomatis] || statusOtomatis
-        const bodyText = `${studentData.nama_lengkap || studentData.nama || 'Siswa'} - Presensi ${tipeLabelSiswa} (${statusLabelSiswa}) berhasil dicatat pukul ${jamSekarang} WIB.${keteranganStr ? ' Lokasi: ' + keteranganStr : ''}`
-        showLocalNotif(`[Siswa] Presensi ${tipeLabelSiswa} Berhasil (${statusLabelSiswa} - ${jamSekarang} WIB)`, bodyText, {
-          tag: `presensi-siswa-${studentData.nisn}-${tipeAktif}`,
-          image: selfieUrl || selfieSrc || undefined,
-          summaryText: bodyText,
-          data: { url: '/dashboard?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Siswa', nisn: studentData?.nisn }
-        })
+      // Tampilkan notifikasi konfirmasi lokal di HP siswa
+      try {
+        if (isNotifGranted()) {
+          const tipeLabelSiswa = targetTipe === TIPE.PULANG ? 'Pulang' : 'Masuk'
+          const statusLabelSiswa = STATUS_LABELS[statusOtomatis] || statusOtomatis
+          const serverKet = isServerSynced ? 'Tercatat di Server Sekolah' : 'Tersimpan Sementara di HP'
+          const bodyText = `${studentData.nama_lengkap || 'Siswa'} - Presensi ${tipeLabelSiswa} (${statusLabelSiswa}) ${serverKet} pukul ${jamSekarang} WIB.${keteranganStr ? ' Lokasi: ' + keteranganStr : ''}`
+          showLocalNotif(`Presensi ${tipeLabelSiswa} (${statusLabelSiswa} - ${serverKet})`, bodyText, {
+            tag: `presensi-siswa-${studentData.nisn}-${targetTipe}`,
+            image: previewPhoto || undefined,
+            summaryText: bodyText,
+            data: { url: '/dashboard?menu=PRESENSI', targetMenu: 'PRESENSI', role: 'Siswa', nisn: studentData?.nisn }
+          })
+        }
+      } catch (notifErr) {
+        console.warn('Gagal memicu local notif:', notifErr)
       }
     } catch (err) {
       setStep(STEP.ERROR)
@@ -882,21 +1167,11 @@ export default function SiswaPresensiSection({ studentData }) {
     await doSubmit(selfieBlob, selfieSrc, scannedToken, selectedMode)
   }
 
-  const reset = () => {
-    setStep(STEP.IDLE)
-    setErrorMsg('')
-    setSelfieSrc(null)
-    setSelfieBlob(null)
-    setScannedToken(null)
-    setSelectedMode(null)
-    selectedModeRef.current = null
-  }
-
   const handleResetTesting = async () => {
     const confirmed = await requestConfirm({
-      title: 'Reset Presensi?',
-      message: 'Hapus data presensi hari ini untuk keperluan testing?',
-      confirmLabel: 'Hapus Data', confirmColor: 'red', icon: 'danger'
+      title: 'Reset Presensi & Laporan?',
+      message: 'Hapus data presensi dan laporan kendala hari ini untuk keperluan testing?',
+      confirmLabel: 'Hapus Bersih', confirmColor: 'red', icon: 'danger'
     })
     if (!confirmed) return
     setStep(STEP.SUBMITTING)
@@ -913,19 +1188,54 @@ export default function SiswaPresensiSection({ studentData }) {
         filesToDelete.push(fileName)
       }
 
+      // 1. Hapus presensi harian siswa hari ini
       const { error } = await supabase.from('presensi_harian').delete().eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
       if (error) throw error
 
+      // 2. Ambil bukti screenshot kendala untuk dihapus dari storage jika ada
+      try {
+        const { data: existingKendala } = await supabase
+          .from('laporan_kendala_presensi')
+          .select('bukti_url')
+          .eq('tanggal', today)
+          .eq('siswa_nisn', studentData.nisn)
+
+        if (existingKendala && existingKendala.length > 0) {
+          existingKendala.forEach(k => {
+            if (k.bukti_url) {
+              const urlParts = k.bukti_url.split('/selfie-presensi/')
+              if (urlParts[1]) {
+                filesToDelete.push(decodeURIComponent(urlParts[1].split('?')[0]))
+              }
+            }
+          })
+        }
+      } catch {}
+
+      // 3. Hapus laporan kendala presensi hari ini
+      await supabase
+        .from('laporan_kendala_presensi')
+        .delete()
+        .eq('tanggal', today)
+        .eq('siswa_nisn', studentData.nisn)
+
+      // 4. Hapus file-file selfie & screenshot di storage jika ada
       if (filesToDelete.length > 0) {
         await supabase.storage.from('selfie-presensi').remove(filesToDelete)
       }
 
-      // Bersihkan cache notifikasi & batalkan notifikasi tray sebelumnya
+      // 5. Bersihkan cache notifikasi & storage
       await clearPresensiNotif(studentData.nisn)
+      try {
+        localStorage.removeItem(getPresensiCacheKey(studentData.nisn, today))
+        sessionStorage.removeItem(getPresensiCacheKey(studentData.nisn, today))
+      } catch {}
 
+      setLaporanKendalaList([])
       setPresensiMasuk(null); setPresensiPulang(null)
       setTipeAktif(TIPE.MASUK)
       setStep(STEP.IDLE)
+      await loadStatus(true)
     } catch (err) {
       setStep(STEP.ERROR)
       setErrorMsg(`Gagal mereset data: ${err.message}`)
@@ -962,8 +1272,136 @@ export default function SiswaPresensiSection({ studentData }) {
     }
   }
 
+  // === Laporan Kendala Presensi Handlers ===
+  const handleKendalaFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setKendalaCompressing(true)
+    setKendalaError('')
+    try {
+      const res = await compressImage(file, {
+        maxWidth: 1080,
+        maxHeight: 1920,
+        quality: 0.65,
+        outputType: 'image/jpeg'
+      })
+      setKendalaBlob(res.blob)
+      setKendalaCompressInfo({
+        originalSize: res.originalSize,
+        compressedSize: res.compressedSize,
+        reductionPercent: res.reductionPercent
+      })
+      const previewUrl = URL.createObjectURL(res.blob)
+      setKendalaPreview(previewUrl)
+    } catch (err) {
+      console.error('Kompresi kendala error:', err)
+      setKendalaError('Gagal memproses gambar: ' + (err.message || 'File tidak valid'))
+    } finally {
+      setKendalaCompressing(false)
+    }
+  }
+
+  const handleSubmitKendala = async () => {
+    if (!kendalaDesc.trim()) {
+      setKendalaError('Silakan tuliskan deskripsi kendala yang Anda alami.')
+      return
+    }
+    if (!kendalaBlob && !kendalaPreview) {
+      setKendalaError('Silakan unggah screenshot atau foto bukti kendala.')
+      return
+    }
+
+    setKendalaSubmitting(true)
+    setKendalaError('')
+    try {
+      let uploadedUrl = null
+      if (kendalaBlob) {
+        // Folder terpusat Supabase Storage: 'kendala-presensi/${today}/...'
+        const fileName = `kendala-presensi/${today}/${studentData.nisn}_${kendalaTipe}_${Date.now()}.jpg`
+        const { error: uploadErr } = await supabase.storage
+          .from('selfie-presensi')
+          .upload(fileName, kendalaBlob, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' })
+
+        if (uploadErr) {
+          throw new Error('Gagal mengunggah bukti kendala: ' + uploadErr.message)
+        }
+        const { data: urlData } = supabase.storage
+          .from('selfie-presensi')
+          .getPublicUrl(fileName)
+        uploadedUrl = urlData?.publicUrl || null
+      }
+
+      const isUUID = (v) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+
+      const payload = {
+        tanggal: today,
+        tipe: kendalaTipe,
+        siswa_nisn: studentData.nisn,
+        nama_siswa: studentData.nama_lengkap || 'Siswa',
+        kelas: studentData.kelas || '-',
+        deskripsi: kendalaDesc.trim(),
+        bukti_url: uploadedUrl,
+        status: 'pending',
+        reviewed_by: null,
+        reviewed_at: null,
+        created_at: new Date().toISOString()
+      }
+
+      if (studentData.tahun_ajaran_id && isUUID(studentData.tahun_ajaran_id)) {
+        payload.tahun_ajaran_id = studentData.tahun_ajaran_id
+      }
+
+      let { error: insertErr } = await supabase
+        .from('laporan_kendala_presensi')
+        .upsert(payload, { onConflict: 'tanggal,siswa_nisn,tipe' })
+
+      // Fallback otomatis jika di database kolom tahun_ajaran_id masih bertipe BIGINT
+      if (insertErr && insertErr.message?.includes('bigint') && payload.tahun_ajaran_id) {
+        console.warn('Kolom tahun_ajaran_id di database masih bertipe BIGINT. Melakukan retry tanpa tahun_ajaran_id...')
+        delete payload.tahun_ajaran_id
+        const retryRes = await supabase
+          .from('laporan_kendala_presensi')
+          .upsert(payload, { onConflict: 'tanggal,siswa_nisn,tipe' })
+        insertErr = retryRes.error
+      }
+
+      if (insertErr) {
+        throw insertErr
+      }
+
+      setShowModalKendala(false)
+      setKendalaDesc('')
+      setKendalaBlob(null)
+      setKendalaPreview(null)
+      setKendalaCompressInfo(null)
+      await loadStatus(true)
+    } catch (err) {
+      console.error('Submit kendala error:', err)
+      setKendalaError(err.message || 'Terjadi kesalahan saat mengirim laporan kendala.')
+    } finally {
+      setKendalaSubmitting(false)
+    }
+  }
+
+  const handleHapusLaporanKendala = async (laporanId) => {
+    const confirmed = await requestConfirm({
+      title: 'Batalkan Laporan Kendala?',
+      message: 'Apakah Anda yakin ingin membatalkan laporan kendala presensi ini?',
+      confirmLabel: 'Ya, Batalkan',
+      confirmColor: 'red',
+      icon: 'danger'
+    })
+    if (!confirmed) return
+    try {
+      await supabase.from('laporan_kendala_presensi').delete().eq('id', laporanId)
+      await loadStatus(true)
+    } catch (err) {
+      console.error('Hapus kendala error:', err)
+    }
+  }
+
   // ===================== RENDER =====================
-  if (loadingStatus) return (
+  if (loadingStatus && !cachedData && cachedSchoolSettings.length === 0) return (
     <div className="flex items-center justify-center py-20">
       <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
     </div>
@@ -1003,7 +1441,7 @@ export default function SiswaPresensiSection({ studentData }) {
 
   const sudahMasuk = !!presensiMasuk
   const sudahPulang = !!presensiPulang
-  const isDone = sudahMasuk && sudahPulang
+  const isDone = sudahPulang || (sudahMasuk && sudahPulang)
 
   return (
     <div className="animate-fade-in w-full max-w-4xl mx-auto">
@@ -1054,6 +1492,124 @@ export default function SiswaPresensiSection({ studentData }) {
 
 
 
+          {/* Status Laporan Kendala Presensi Hari Ini (jika ada) */}
+          {laporanKendalaToday && (
+            <div className={`rounded-2xl p-4 mb-4 border transition-all ${
+              laporanKendalaToday.status === 'disetujui'
+                ? 'bg-emerald-50/90 border-emerald-300 text-emerald-900'
+                : laporanKendalaToday.status === 'ditolak'
+                ? 'bg-rose-50/90 border-rose-300 text-rose-900'
+                : 'bg-amber-50/90 border-amber-300 text-amber-900'
+            }`}>
+              <div className="flex items-start gap-3">
+                <span className="text-2xl shrink-0 select-none">
+                  {laporanKendalaToday.status === 'disetujui' ? '✅' : laporanKendalaToday.status === 'ditolak' ? '❌' : '⏳'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                      laporanKendalaToday.status === 'disetujui'
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : laporanKendalaToday.status === 'ditolak'
+                        ? 'bg-rose-100 text-rose-800 border-rose-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      Laporan Kendala ({laporanKendalaToday.tipe === 'pulang' ? 'Pulang' : 'Masuk'}) — {
+                        laporanKendalaToday.status === 'disetujui'
+                          ? 'Diterima Guru Piket (Bebas Poin)'
+                          : laporanKendalaToday.status === 'ditolak'
+                          ? 'Ditolak'
+                          : 'Menunggu Verifikasi Piket'
+                      }
+                    </span>
+                    {laporanKendalaToday.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => handleHapusLaporanKendala(laporanKendalaToday.id)}
+                        className="text-[11px] font-bold text-rose-600 hover:text-rose-800 underline cursor-pointer"
+                      >
+                        Batalkan Laporan
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs font-bold text-slate-800 break-words">{laporanKendalaToday.deskripsi}</p>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    {laporanKendalaToday.status === 'disetujui'
+                      ? 'Kendala Anda telah disetujui oleh Petugas Piket. Status presensi Anda tercatat Hadir resmi tanpa pengurangan poin disiplin.'
+                      : laporanKendalaToday.status === 'ditolak'
+                      ? 'Laporan kendala Anda tidak disetujui oleh Petugas Piket. Silakan hubungi piket atau ajukan laporan ulang.'
+                      : 'Laporan telah dikirim. Petugas Piket akan meninjau screenshot & kendala Anda agar Anda tidak terkena sanksi pengurangan poin.'}
+                  </p>
+                  {laporanKendalaToday.bukti_url && (
+                    <div className="mt-2.5 flex items-center gap-2.5">
+                      <img
+                        src={laporanKendalaToday.bukti_url}
+                        alt="Bukti kendala"
+                        onClick={() => setLightboxImg(laporanKendalaToday.bukti_url)}
+                        className="w-14 h-14 object-cover rounded-xl border border-slate-200 cursor-pointer hover:opacity-90 transition-opacity shadow-2xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLightboxImg(laporanKendalaToday.bukti_url)}
+                        className="text-[11px] text-indigo-700 hover:text-indigo-900 font-bold underline cursor-pointer"
+                      >
+                        🔍 Lihat Screenshot
+                      </button>
+                    </div>
+                  )}
+                  {laporanKendalaToday.status === 'ditolak' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKendalaTipe(tipeAktif)
+                        setKendalaDesc('')
+                        setKendalaBlob(null)
+                        setKendalaPreview(null)
+                        setKendalaCompressInfo(null)
+                        setKendalaError('')
+                        setShowModalKendala(true)
+                      }}
+                      className="mt-2.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>🚨</span>
+                      <span>Lapor Kendala Ulang</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Banner Tombol Lapor Kendala Presensi (Jika belum ada laporan pending/disetujui) */}
+          {(!laporanKendalaToday || laporanKendalaToday.status === 'ditolak') && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-3.5 mb-4 shadow-2xs flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold text-lg shrink-0">
+                  🚨
+                </div>
+                <div>
+                  <p className="text-xs font-black text-slate-800 leading-tight">Mendapat Kendala Presensi?</p>
+                  <p className="text-[11px] text-slate-500 leading-snug">Screenshot kendala &amp; laporkan agar tidak terkena pengurangan poin</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setKendalaTipe(tipeAktif)
+                  setKendalaDesc('')
+                  setKendalaBlob(null)
+                  setKendalaPreview(null)
+                  setKendalaCompressInfo(null)
+                  setKendalaError('')
+                  setShowModalKendala(true)
+                }}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all shrink-0 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <span>Lapor Kendala</span>
+              </button>
+            </div>
+          )}
+
           {/* Status Masuk & Pulang */}
           {sesiAktif && (
             <div className="grid grid-cols-2 gap-3 mb-5">
@@ -1066,6 +1622,25 @@ export default function SiswaPresensiSection({ studentData }) {
                     {presensiMasuk.selfie_url && (
                       <img src={presensiMasuk.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-emerald-200" />
                     )}
+                    <div className="mt-2 flex justify-center">
+                      {presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed' ? (
+                        <button
+                          type="button"
+                          onClick={handleManualSyncQueue}
+                          disabled={syncingManual}
+                          className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-0.5 rounded-full cursor-pointer transition-colors"
+                          title="Data tersimpan di HP, belum masuk server sekolah. Klik untuk kirim sekarang."
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full bg-amber-500 ${syncingManual ? 'animate-spin' : 'animate-ping'}`}></span>
+                          {syncingManual ? 'Mengirim...' : 'Belum di Server (Kirim)'}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          Tersinkron di Server
+                        </span>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <p className="text-xs text-slate-400 mt-1">Belum</p>
@@ -1080,6 +1655,25 @@ export default function SiswaPresensiSection({ studentData }) {
                     {presensiPulang.selfie_url && (
                       <img src={presensiPulang.selfie_url} alt="selfie" className="w-10 h-10 rounded-full object-cover mx-auto mt-2 border-2 border-blue-200" />
                     )}
+                    <div className="mt-2 flex justify-center">
+                      {presensiPulang._syncStatus === 'pending' || presensiPulang._syncStatus === 'failed' ? (
+                        <button
+                          type="button"
+                          onClick={handleManualSyncQueue}
+                          disabled={syncingManual}
+                          className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-0.5 rounded-full cursor-pointer transition-colors"
+                          title="Data tersimpan di HP, belum masuk server sekolah. Klik untuk kirim sekarang."
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full bg-amber-500 ${syncingManual ? 'animate-spin' : 'animate-ping'}`}></span>
+                          {syncingManual ? 'Mengirim...' : 'Belum di Server (Kirim)'}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          Tersinkron di Server
+                        </span>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <p className="text-xs text-slate-400 mt-1">Belum</p>
@@ -1090,28 +1684,87 @@ export default function SiswaPresensiSection({ studentData }) {
 
           {/* 1. Presensi Lengkap (Masuk & Pulang sudah tercatat) */}
           {isDone && step !== STEP.SUCCESS ? (
-            <div className="bg-white rounded-xl border border-emerald-200 shadow-sm p-8 flex flex-col items-center text-center">
+            <div className={`bg-white rounded-xl border shadow-sm p-8 flex flex-col items-center text-center ${(presensiMasuk?._syncStatus === 'pending' || presensiMasuk?._syncStatus === 'failed' || presensiPulang?._syncStatus === 'pending' || presensiPulang?._syncStatus === 'failed') ? 'border-amber-300 ring-2 ring-amber-100' : 'border-emerald-200'}`}>
+              {(presensiMasuk?._syncStatus === 'pending' || presensiMasuk?._syncStatus === 'failed' || presensiPulang?._syncStatus === 'pending' || presensiPulang?._syncStatus === 'failed') && (
+                <div className="w-full bg-amber-50 border border-amber-300 rounded-2xl p-4 mb-5 text-left shadow-2xs">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-xl shrink-0">⚠️</span>
+                    <div className="flex-1">
+                      <p className="text-xs font-black text-amber-900">Perhatian: Ada Data Belum Terkirim ke Server!</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                        Sebagian data presensi Anda baru tersimpan di HP ini. Tekan tombol di bawah untuk menyinkronkan ke rekap guru/wali kelas.
+                      </p>
+                      <button
+                        onClick={handleManualSyncQueue}
+                        disabled={syncingManual}
+                        className="mt-2.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <span className={syncingManual ? "animate-spin" : ""}>🔄</span>
+                        <span>{syncingManual ? "Sedang Mengirim..." : "Kirim ke Server Sekarang"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="w-16 h-16 rounded-full bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center mb-3">
                 <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               </div>
-              <h3 className="text-lg font-black text-slate-800 mb-1">Presensi Hari Ini Lengkap</h3>
-              <p className="text-sm text-slate-500">Presensi masuk dan pulang Anda hari ini telah tercatat. Sampai jumpa besok.</p>
+              <h3 className="text-lg font-black text-slate-800 mb-1">
+                {sudahMasuk ? 'Presensi Hari Ini Lengkap' : 'Presensi Pulang Tercatat'}
+              </h3>
+              <p className="text-sm text-slate-500">
+                {sudahMasuk 
+                  ? 'Presensi masuk dan pulang Anda hari ini telah tercatat. Sampai jumpa besok.' 
+                  : 'Presensi pulang Anda hari ini telah tercatat. Sampai jumpa besok.'}
+              </p>
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}
             </div>
           ) : (sudahMasuk && !sudahPulang && !presensiPulangAktif && step !== STEP.SUCCESS) ? (
             /* 2. Sudah Presensi Masuk, Menunggu Sesi Pulang */
-            <div className="bg-white rounded-xl border border-emerald-200 shadow-sm p-8 flex flex-col items-center text-center">
-              <div className="w-16 h-16 rounded-full bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center mb-3">
-                <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/></svg>
+            <div className={`bg-white rounded-xl border shadow-sm p-8 flex flex-col items-center text-center ${presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed' ? 'border-amber-300 ring-2 ring-amber-100' : 'border-emerald-200'}`}>
+              
+              {/* Alert jika belum masuk server sekolah */}
+              {(presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed') && (
+                <div className="w-full bg-amber-50 border border-amber-300 rounded-2xl p-4 mb-5 text-left shadow-2xs">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-xl shrink-0">⚠️</span>
+                    <div className="flex-1">
+                      <p className="text-xs font-black text-amber-900">Perhatian: Presensi Belum Masuk Rekap Guru!</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                        Data kehadiran Anda ({presensiMasuk.waktu} WIB) baru tersimpan di HP ini. Guru &amp; wali kelas masih melihat status Anda <strong>Belum Presensi</strong> sampai data terkirim ke server.
+                      </p>
+                      <button
+                        onClick={handleManualSyncQueue}
+                        disabled={syncingManual}
+                        className="mt-2.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <span className={syncingManual ? "animate-spin" : ""}>🔄</span>
+                        <span>{syncingManual ? "Sedang Mengirim ke Server..." : "Kirim ke Server Sekarang"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mb-3 ${presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed' ? 'bg-amber-50 border-amber-300 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-500'}`}>
+                {presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed' ? (
+                  <span className="text-2xl">⏳</span>
+                ) : (
+                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/></svg>
+                )}
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Anda Sudah Presensi Masuk</h3>
-              <p className="text-sm font-semibold text-emerald-600 mb-2">
+              <h3 className="text-lg font-bold text-slate-800 mb-1">
+                {presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed'
+                  ? 'Presensi Masuk Tersimpan di HP'
+                  : 'Anda Sudah Presensi Masuk'}
+              </h3>
+              <p className={`text-sm font-semibold mb-2 ${presensiMasuk._syncStatus === 'pending' || presensiMasuk._syncStatus === 'failed' ? 'text-amber-700' : 'text-emerald-600'}`}>
                 {STATUS_LABELS[presensiMasuk.status]} pukul {presensiMasuk.waktu} WIB
               </p>
               <p className="text-xs text-slate-500 max-w-sm">
-                Presensi masuk Anda sudah berhasil tercatat. Presensi pulang akan dibuka otomatis pukul {jamMulaiPulang || '13:00'} WIB.
+                Presensi pulang akan dibuka otomatis pukul {jamMulaiPulang || '13:00'} WIB.
               </p>
               {presensiMasuk.selfie_url && (
                 <img src={presensiMasuk.selfie_url} alt="Foto Kehadiran" className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-200 shadow-xs mt-4" />
@@ -1163,7 +1816,22 @@ export default function SiswaPresensiSection({ studentData }) {
                 <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">Sesi Presensi Belum Dibuka</h3>
-              <p className="text-sm text-slate-500 max-w-sm">Presensi hari ini belum dibuka oleh Petugas Piket. Silakan tunggu beberapa saat lagi atau hubungi petugas.</p>
+              <p className="text-sm text-slate-500 max-w-sm">Presensi hari ini belum dibuka oleh Petugas Piket atau sedang memuat jadwal. Silakan klik tombol di bawah untuk memeriksa ulang status sesi.</p>
+              
+              <button
+                onClick={() => {
+                  try { sessionStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today)) } catch {}
+                  loadStatus(false)
+                }}
+                disabled={loadingStatus}
+                className="mt-5 px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-700 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 border border-indigo-200 shadow-xs cursor-pointer"
+              >
+                <svg className={`w-4 h-4 ${loadingStatus ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {loadingStatus ? 'Memeriksa...' : 'Cek Status Sesi Sekarang'}
+              </button>
+
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}
@@ -1471,28 +2139,74 @@ export default function SiswaPresensiSection({ studentData }) {
           ) : step === STEP.SUBMITTING ? (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-12 flex flex-col items-center text-center">
               <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-4" />
-              <p className="font-bold text-slate-700">Menyimpan presensi...</p>
-              <p className="text-sm text-slate-400 mt-1">Sedang mengirim data ke server</p>
+              <p className="font-bold text-slate-700">Menyimpan Kehadiran ke Server...</p>
+              <p className="text-sm text-slate-400 mt-1">Mohon tunggu sebentar untuk konfirmasi resmi</p>
             </div>
           ) : step === STEP.SUCCESS ? (
-            <div className="bg-white rounded-xl border border-emerald-200 shadow-sm p-8 flex flex-col items-center text-center animate-fade-in">
-              <div className="w-20 h-20 rounded-full bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center mb-4">
-                <svg className="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            (lastSubmitSyncStatus === 'synced' ||
+             (tipeAktif === TIPE.PULANG
+               ? (presensiMasuk && presensiMasuk._syncStatus !== 'pending' && presensiMasuk._syncStatus !== 'failed')
+               : (presensiPulang && presensiPulang._syncStatus !== 'pending' && presensiPulang._syncStatus !== 'failed'))) ? (
+              <div className="bg-white rounded-2xl border-2 border-emerald-300 shadow-md p-8 flex flex-col items-center text-center animate-fade-in">
+                <div className="w-20 h-20 rounded-full bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center mb-4 shadow-sm">
+                  <svg className="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </div>
+                <h3 className="text-xl font-black text-slate-800 mb-1">Presensi Terkirim ke Server! 🎉</h3>
+                <p className="text-sm text-slate-500 mb-3">
+                  Presensi {tipeAktif === TIPE.PULANG ? 'masuk' : 'pulang'} Anda telah resmi tercatat di database sekolah.
+                </p>
+                <div className="flex flex-col items-center gap-1.5 w-full bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
+                    <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/></svg>
+                    <span>Terverifikasi di Server Sekolah</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700 leading-snug">
+                    Guru &amp; wali kelas sudah dapat melihat status kehadiran Anda di sistem laporan.
+                  </p>
+                </div>
+                <button onClick={reset} className="px-8 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 rounded-xl transition-all shadow-md shadow-indigo-100 cursor-pointer">
+                  Selesai
+                </button>
+                {import.meta.env.DEV && (
+                  <button onClick={handleResetTesting} className="mt-3 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
+                )}
               </div>
-              <h3 className="text-xl font-black text-slate-800 mb-1">Presensi Berhasil! 🎉</h3>
-              <p className="text-sm text-slate-500 mb-3">
-                {tipeAktif === TIPE.PULANG && sudahMasuk ? 'Presensi masuk' : 'Presensi'} sudah tercatat.
-              </p>
-              <p className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
-                📱 Notifikasi sudah dikirim ke akun orang tua
-              </p>
-              <button onClick={reset} className="mt-5 px-5 py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-indigo-100">
-                Selesai
-              </button>
-              {import.meta.env.DEV && (
-                <button onClick={handleResetTesting} className="mt-2 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
-              )}
-            </div>
+            ) : (
+              <div className="bg-white rounded-2xl border-2 border-amber-300 shadow-md p-8 flex flex-col items-center text-center animate-fade-in">
+                <div className="w-20 h-20 rounded-full bg-amber-50 border-2 border-amber-300 flex items-center justify-center mb-4 shadow-sm text-3xl">
+                  ⚠️
+                </div>
+                <h3 className="text-xl font-black text-amber-900 mb-1">Tersimpan di HP (Belum ke Server)</h3>
+                <p className="text-sm text-slate-600 mb-3 max-w-sm">
+                  Koneksi internet lambat atau terputus. Data presensi Anda telah diamankan di HP ini, <strong>namun belum masuk ke laporan guru</strong>.
+                </p>
+                <div className="flex flex-col items-start gap-1.5 w-full bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-left">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-amber-900">
+                    <span>⚠️ PENTING AGAR TIDAK DIANGGAP ALPA:</span>
+                  </div>
+                  <ul className="text-[11px] text-amber-800 list-disc list-inside space-y-1">
+                    <li>Jangan bersihkan riwayat / cache browser Anda.</li>
+                    <li>Segera tekan tombol di bawah saat Anda terhubung ke internet/WiFi sekolah.</li>
+                  </ul>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+                  <button
+                    onClick={handleManualSyncQueue}
+                    disabled={syncingManual}
+                    className="flex-1 py-3 px-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <span className={syncingManual ? "animate-spin" : ""}>🔄</span>
+                    {syncingManual ? "Sedang Mengirim..." : "Kirim ke Server Sekarang"}
+                  </button>
+                  <button onClick={reset} className="py-3 px-5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer">
+                    Tutup
+                  </button>
+                </div>
+                {import.meta.env.DEV && (
+                  <button onClick={handleResetTesting} className="mt-3 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
+                )}
+              </div>
+            )
           ) : step === STEP.ERROR ? (
             <div className="bg-white rounded-xl border border-rose-200 shadow-sm p-8 flex flex-col items-center text-center">
               <div className="w-16 h-16 rounded-full bg-rose-50 border-2 border-rose-200 flex items-center justify-center mb-4">
@@ -1500,9 +2214,229 @@ export default function SiswaPresensiSection({ studentData }) {
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">Terjadi Masalah</h3>
               <p className="text-sm text-slate-500 mb-5 leading-relaxed">{errorMsg}</p>
-              <button onClick={reset} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all text-sm">Coba Lagi</button>
+              <div className="flex flex-col sm:flex-row gap-2.5 w-full justify-center">
+                <button onClick={reset} className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all text-sm">
+                  Coba Lagi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKendalaTipe(tipeAktif)
+                    setKendalaDesc(errorMsg ? `Kendala saat presensi: ${errorMsg}` : '')
+                    setKendalaError('')
+                    setShowModalKendala(true)
+                  }}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <span>🚨</span>
+                  <span>Lapor Kendala</span>
+                </button>
+                {qrAktif && (
+                  <button 
+                    onClick={() => { reset(); handleMulaiPresensiQR(); }} 
+                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2 shadow-sm active:scale-95"
+                  >
+                    <span>📷</span>
+                    <span>Scan QR TV Sekolah Saja</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : null}
+        </div>
+      )}
+
+      {/* Modal Lapor Kendala Presensi */}
+      {showModalKendala && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90dvh] border border-slate-100 animate-scale-up">
+            {/* Modal Header - Pinned at top */}
+            <div className="shrink-0 p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-50 to-orange-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold text-xl shadow-xs shadow-amber-200 shrink-0">
+                  🚨
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-sm sm:text-base">Lapor Kendala Presensi</h3>
+                  <p className="text-[11px] text-slate-500">Kirim bukti &amp; deskripsi kendala agar tidak terkena minus poin</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModalKendala(false)}
+                className="text-slate-400 hover:text-slate-600 p-2 rounded-full hover:bg-white/80 transition-colors cursor-pointer shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+
+            {/* Modal Body - Smooth internal scroll */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar overscroll-contain">
+              {/* Tipe Presensi */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Tipe Presensi yang Terkendala
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setKendalaTipe(TIPE.MASUK)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 cursor-pointer ${
+                      kendalaTipe === TIPE.MASUK
+                        ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>🌅</span>
+                    <span>Presensi Masuk</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKendalaTipe(TIPE.PULANG)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 cursor-pointer ${
+                      kendalaTipe === TIPE.PULANG
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>🏠</span>
+                    <span>Presensi Pulang</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Input Screenshot / Foto Bukti */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Screenshot / Foto Bukti Kendala <span className="text-rose-500">*</span>
+                  </label>
+                  {kendalaCompressing && (
+                    <span className="text-[11px] font-bold text-amber-600 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                      Memproses gambar...
+                    </span>
+                  )}
+                </div>
+
+                <input
+                  id="input-kendala-screenshot"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleKendalaFileChange}
+                />
+
+                {!kendalaPreview ? (
+                  <label
+                    htmlFor="input-kendala-screenshot"
+                    className="border-2 border-dashed border-slate-200 hover:border-amber-400 bg-slate-50/60 hover:bg-amber-50/30 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group text-center block"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform shadow-2xs mx-auto">
+                      📸
+                    </div>
+                    <p className="text-xs font-bold text-slate-700">Pilih Screenshot Bukti Kendala</p>
+                    <p className="text-[11px] text-slate-400">Format JPG, PNG, atau WEBP</p>
+                  </label>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 flex items-center justify-center max-h-48">
+                      <img
+                        src={kendalaPreview}
+                        alt="Preview Bukti Kendala"
+                        className="w-full h-auto max-h-48 object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setKendalaBlob(null)
+                          setKendalaPreview(null)
+                          setKendalaCompressInfo(null)
+                        }}
+                        className="absolute top-2 right-2 w-8 h-8 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md transition-transform active:scale-90 cursor-pointer"
+                        title="Hapus foto"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Deskripsi Kendala */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Deskripsi Kendala yang Dialami <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows="3"
+                  value={kendalaDesc}
+                  onChange={(e) => setKendalaDesc(e.target.value)}
+                  placeholder="Contoh: Kamera HP tidak dapat memindai QR di TV sekolah, koneksi lambat saat selfie, atau GPS tidak merespons..."
+                  className="w-full text-xs p-3.5 border border-slate-200 rounded-2xl bg-slate-50 text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Error notification */}
+              {kendalaError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span className="font-medium">{kendalaError}</span>
+                </div>
+              )}
+
+              {/* Edukasi Poin */}
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-[11px] text-amber-900 leading-relaxed flex items-start gap-2.5">
+                <span className="text-base shrink-0">💡</span>
+                <div>
+                  <p className="font-bold">Kenapa harus lapor kendala?</p>
+                  <p className="text-amber-800 mt-0.5">
+                    Siswa yang tidak presensi dan tidak melapor akan diset hadir oleh piket namun dikenakan <strong>pengurangan poin disiplin</strong>. Dengan melapor dan melampirkan screenshot, Guru Piket akan menyetujui kehadiran Anda <strong>bebas pengurangan poin</strong>.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer - Pinned at bottom */}
+            <div className="shrink-0 p-3.5 sm:p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowModalKendala(false)}
+                disabled={kendalaSubmitting}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitKendala}
+                disabled={kendalaSubmitting || kendalaCompressing}
+                className="px-5 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:bg-amber-300 rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+              >
+                {kendalaSubmitting && (
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                )}
+                <span>{kendalaSubmitting ? 'Mengirim Laporan...' : 'Kirim Laporan Kendala'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Lightbox Screenshot */}
+      {lightboxImg && (
+        <div
+          onClick={() => setLightboxImg(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fade-in cursor-zoom-out"
+        >
+          <div className="relative max-w-xl max-h-[90vh] bg-transparent flex flex-col items-center">
+            <img
+              src={lightboxImg}
+              alt="Perbesar Screenshot"
+              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/20"
+            />
+            <p className="text-xs text-white/80 mt-2 font-medium">Klik di mana saja untuk menutup</p>
+          </div>
         </div>
       )}
     </div>

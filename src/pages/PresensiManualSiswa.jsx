@@ -299,8 +299,8 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
   const uploadSelfie = async (blob, nisn, tipe) => {
     if (!blob) return null
     try {
-      const fileName = `${nisn}_${tipe}_${today}.jpg`
-      const { error } = await supabase.storage.from('selfie-presensi').upload(fileName, blob, { contentType: 'image/jpeg', upsert: true })
+      const fileName = `${nisn}_${tipe}_${today}_${Date.now()}.jpg`
+      const { error } = await supabase.storage.from('selfie-presensi').upload(fileName, blob, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' })
       if (error) return null
       const { data: urlData } = supabase.storage.from('selfie-presensi').getPublicUrl(fileName)
       return urlData?.publicUrl || null

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { sendFCMPushToWaliKelas } from '../utils/fcmSender'
@@ -363,6 +363,14 @@ export default function BendaharaInputTabunganSection({ studentData, bendaharaKe
 
   const formatRupiah = (val) => 'Rp ' + (parseFloat(val || 0)).toLocaleString('id-ID')
 
+  const pendingSetoranList = useMemo(() => {
+    return historiInput.filter(t => t.status_verifikasi === 'PENDING')
+  }, [historiInput])
+
+  const totalPendingNominal = useMemo(() => {
+    return pendingSetoranList.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+  }, [pendingSetoranList])
+
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       {/* FORM INPUT SETORAN */}
@@ -543,9 +551,16 @@ export default function BendaharaInputTabunganSection({ studentData, bendaharaKe
               <p className="text-[11px] text-slate-500 font-medium">Riwayat pencatatan setoran tabungan untuk Kelas {kelasSaya}</p>
             </div>
           </div>
-          <span className="px-2.5 py-0.5 bg-amber-50 text-amber-800 rounded-full text-xs font-bold border border-amber-200">
-            {historiInput.length} Transaksi
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {pendingSetoranList.length > 0 && (
+              <span className="px-2.5 py-1 bg-amber-100 text-amber-900 rounded-lg text-xs font-black border border-amber-300 shadow-2xs">
+                ⏳ Belum Diverifikasi: {formatRupiah(totalPendingNominal)} ({pendingSetoranList.length})
+              </span>
+            )}
+            <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-200">
+              {historiInput.length} Total Transaksi
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">

@@ -6,6 +6,11 @@
   --font-primary: 'Plus Jakarta Sans', sans-serif;
 }
 
+html, body, #root {
+  background-color: #f8fafc;
+  min-height: 100%;
+}
+
 .animate-scale-in {
   animation: scaleIn 0.2s ease-out forwards;
 }
@@ -127,9 +132,54 @@
   --theme-900: #0f172a;
 }
 
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  position: relative;
   border-bottom: 6px solid var(--theme-500);
   min-height: 100vh;
+  min-height: -webkit-fill-available;
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+}
+
+/* Pastikan semua elemen tidak meluap keluar batas lebar layar ponsel */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Dukungan Safe Area (Notch iPhone & Home Indicator) */
+header,
+.app-header-safe,
+.ios-safe-top {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.875rem) !important;
+}
+
+.ios-fullscreen-header {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.625rem) !important;
+}
+
+/* Mencegah iOS WebKit/Safari auto-zoom saat klik form input di ponsel */
+@media screen and (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* Hide Top Section Headings/Subtitles in Dashboards (Teacher, Student, Parent) */
@@ -145,4 +195,226 @@ body {
 .dashboard-content-area div.animate-fade-in > div.shrink-0.mb-6:first-child > div:first-child,
 .dashboard-content-area div.animate-fade-in > div.flex.flex-col.sm:flex-row.justify-between > div:first-child {
   display: none !important;
+}
+
+/* ========== CBT Soal Image Styles ========== */
+.cbt-soal-image,
+[dangerouslysetinnerhtml] img,
+.cbt-rich-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  margin: 8px 0;
+  display: block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cbt-soal-image:hover,
+.cbt-rich-editor img:hover {
+  transform: scale(1.01);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Rich Editor (contentEditable) untuk pertanyaan soal */
+.cbt-rich-editor {
+  min-height: 96px;
+  outline: none;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.cbt-rich-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  pointer-events: none;
+  font-style: italic;
+}
+
+.cbt-rich-editor:focus {
+  outline: none;
+}
+
+/* ========== CBT Soal Table Styles (Tabel dari Word Import & Editor) ========== */
+.cbt-rendered-content table,
+.cbt-soal-table,
+.cbt-rich-editor table {
+  width: 100% !important;
+  max-width: 100% !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  margin: 16px 0 !important;
+  font-size: 13px !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04) !important;
+}
+
+.cbt-rendered-content td,
+.cbt-rendered-content th,
+.cbt-soal-table td,
+.cbt-soal-table th,
+.cbt-rich-editor td,
+.cbt-rich-editor th {
+  border-right: 1px solid #e2e8f0 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding: 10px 16px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.cbt-rendered-content th,
+.cbt-soal-table th,
+.cbt-rich-editor th {
+  background: #f8fafc !important;
+  font-weight: 700 !important;
+  color: #334155 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+.cbt-rendered-content tr:nth-child(even),
+.cbt-soal-table tr:nth-child(even) {
+  background: #fcfcfd !important;
+}
+
+.cbt-rendered-content tr:hover,
+.cbt-soal-table tr:hover {
+  background: #f1f5f9 !important;
+}
+
+/* Gambar Soal CBT */
+.cbt-rendered-content img,
+.cbt-soal-image,
+.cbt-rich-editor img {
+  max-width: 100% !important;
+  max-height: 380px !important;
+  object-fit: contain !important;
+  border-radius: 14px !important;
+  margin: 14px auto !important;
+  display: block !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 2px 8px 0 rgb(0 0 0 / 0.06) !important;
+}
+
+/* Hide scrollbar for Chrome, Safari, Android WebView and Opera */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ==========================================================================
+   FORMAT SURAT SEBARAN RESMI (A4, TITIK DUA DINAMIS, INDENTASI SUB-DATA)
+   ========================================================================== */
+.surat-group-grid {
+  display: grid !important;
+  grid-template-columns: max-content 16px 1fr !important;
+  align-items: baseline !important;
+  row-gap: 2.5px !important;
+  line-height: 1.5 !important;
+}
+.surat-group-grid.surat-indent {
+  margin-left: 1.5rem !important;
+}
+.surat-col-label {
+  color: #000000 !important;
+  white-space: nowrap !important;
+  padding-right: 4px !important;
+}
+.surat-col-sep {
+  text-align: center !important;
+  font-weight: bold !important;
+  color: #000000 !important;
+}
+.surat-col-val {
+  color: #000000 !important;
+}
+
+.surat-colon-row {
+  display: grid !important;
+  align-items: baseline !important;
+  margin-bottom: 2.5px !important;
+  line-height: 1.5 !important;
+}
+.surat-colon-row.surat-type-header {
+  grid-template-columns: 80px 16px 1fr !important;
+}
+.surat-colon-row.surat-type-identitas {
+  grid-template-columns: 110px 16px 1fr !important;
+  margin-left: 1.5rem !important;
+}
+.surat-colon-row.surat-type-sub {
+  grid-template-columns: 195px 16px 1fr !important;
+  margin-left: 1.5rem !important;
+}
+.surat-colon-row:not([class*="surat-type-"]) {
+  grid-template-columns: max-content 16px 1fr !important;
+}
+.surat-colon-row.surat-indent {
+  margin-left: 1.5rem !important;
+}
+.surat-colon-label {
+  font-weight: 500 !important;
+  color: #000000 !important;
+  padding-right: 4px !important;
+}
+.surat-colon-sep {
+  text-align: center !important;
+  font-weight: bold !important;
+  color: #000000 !important;
+}
+.surat-colon-val {
+  color: #000000 !important;
+}
+
+.surat-section-heading {
+  font-weight: bold !important;
+  font-size: 13px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.02em !important;
+  margin-top: 0.85rem !important;
+  margin-bottom: 0.35rem !important;
+  color: #000000 !important;
+}
+
+/* Penomoran (Numbering) & Bullet List Surat Resmi & Dokumen */
+.surat-rendered-body ol,
+ol.surat-numbered-list,
+.prose ol {
+  list-style-type: decimal !important;
+  padding-left: 1.75rem !important;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.65rem !important;
+}
+.surat-rendered-body ul,
+ul.surat-bullet-list,
+.prose ul {
+  list-style-type: disc !important;
+  padding-left: 1.75rem !important;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.65rem !important;
+}
+.surat-rendered-body li,
+ol.surat-numbered-list > li,
+ul.surat-bullet-list > li,
+.prose li {
+  display: list-item !important;
+  margin-bottom: 0.25rem !important;
+  line-height: 1.6 !important;
+  color: #000000 !important;
+}
+.surat-rendered-body ol > li,
+ol.surat-numbered-list > li,
+.prose ol > li {
+  list-style-type: decimal !important;
+}
+.surat-rendered-body ul > li,
+ul.surat-bullet-list > li,
+.prose ul > li {
+  list-style-type: disc !important;
 }

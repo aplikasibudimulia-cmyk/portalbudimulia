@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
@@ -15,6 +15,7 @@ import SiswaJadwalSection from '../components/SiswaJadwalSection'
 import TabunganSiswaSection from '../components/TabunganSiswaSection'
 import OrangTuaTagihanSection from '../components/OrangTuaTagihanSection'
 import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
+import BeritaPengumumanSiswaSection from '../components/BeritaPengumumanSiswaSection'
 import { sendLinePushNotification, createBindingSuccessFlexMessage } from '../utils/lineNotifier'
 
 function DashboardOrangTua() {
@@ -42,6 +43,9 @@ function DashboardOrangTua() {
   // Sidebar state for mobile and desktop collapse
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // Default to collapsed as requested
+  // Sidebar helpers — sederhana & terbukti di semua platform
+  const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
+  const closeSidebar = () => setSidebarOpen(false)
   
   const [selectedType, setSelectedType] = useState(() => {
     try {
@@ -73,6 +77,8 @@ function DashboardOrangTua() {
 
   const [showNotifPanel, setShowNotifPanel] = useState(false)
   const [unreadNotifCount, setUnreadNotifCount] = useState(0)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncToast, setSyncToast] = useState(null)
 
   // State Profile Menu Dropdown & Poin Siswa di Beranda
   const [showProfileMenu, setShowProfileMenu] = useState(false)
@@ -296,30 +302,47 @@ function DashboardOrangTua() {
   const [photoIndex, setPhotoIndex] = useState(0)
 
   // Global Profile Visibility State
-  const [showProfileConfig, setShowProfileConfig] = useState({
-    foto: true,
-    kelas: true,
-    nisn: true,
-    nipd: true,
-    tahun_ajaran: true
+  const [showProfileConfig, setShowProfileConfig] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebudimulia_profile_config_ortu')
+      if (cached) return JSON.parse(cached)
+    } catch {}
+    return {
+      foto: true,
+      kelas: true,
+      nisn: true,
+      nipd: true,
+      tahun_ajaran: true
+    }
   })
 
-  const [showFeatureConfig, setShowFeatureConfig] = useState({
-    presensi: true,
-    nilai: true,
-    poin: true,
-    poinTotal: true,
-    poinNegatif: true,
-    poinPositif: true,
-    poinLeaderboard: true,
-    poinTataTertib: true,
-    poinKatalog: true,
-    kalender: true,
-    jadwal: true,
-    tagihan: true,
-    tabunganOrtuSiswa: true,
-    tabunganWaliKelas: true,
-    jadwalSemester: '2'
+  const [showFeatureConfig, setShowFeatureConfig] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebudimulia_feature_config_ortu')
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        // Pastikan tagihan default false jika belum terverifikasi
+        if (parsed.tagihan !== true) parsed.tagihan = false
+        return parsed
+      }
+    } catch {}
+    return {
+      presensi: true,
+      nilai: true,
+      poin: true,
+      poinTotal: true,
+      poinNegatif: true,
+      poinPositif: true,
+      poinLeaderboard: true,
+      poinTataTertib: true,
+      poinKatalog: true,
+      kalender: true,
+      jadwal: true,
+      tagihan: false,
+      tabunganOrtuSiswa: true,
+      tabunganWaliKelas: true,
+      jadwalSemester: '2'
+    }
   })
 
   const init = useCallback(async () => {
@@ -355,7 +378,9 @@ function DashboardOrangTua() {
       ] = await Promise.all([
         supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn),
         supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
-        supabase.from('siswa_permanent').select('*').eq('nisn', data.nisn).maybeSingle(),
+        (data.nisn && data.akun_id
+          ? supabase.rpc('fn_get_my_student_profile', { p_nisn: data.nisn, p_akun_id: data.akun_id }).then(r => ({ data: r.data?.data || null }))
+          : supabase.from('siswa_permanent').select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu, nama_ortu, no_hp_ortu, email_ortu').eq('nisn', data.nisn).maybeSingle()),
         supabase.from('jenis_pengumuman').select('*').neq('visible_orangtua', false).order('urutan'),
         supabase.from('pengaturan_sekolah').select('*'),
         supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn)
@@ -408,7 +433,7 @@ function DashboardOrangTua() {
           poinKatalog: true, 
           kalender: true,
           jadwal: true,
-          tagihan: true,
+          tagihan: false,
           tabunganOrtuSiswa: true,
           tabunganWaliKelas: true,
           jadwalSemester: '2'
@@ -440,6 +465,10 @@ function DashboardOrangTua() {
         })
         setShowProfileConfig(newShowProfile)
         setShowFeatureConfig(newShowFeature)
+        try {
+          localStorage.setItem('ebudimulia_profile_config_ortu', JSON.stringify(newShowProfile))
+          localStorage.setItem('ebudimulia_feature_config_ortu', JSON.stringify(newShowFeature))
+        } catch {}
       }
       
       const urls = []
@@ -471,6 +500,21 @@ function DashboardOrangTua() {
     }
   }, [navigate])
 
+  const handleSyncData = async () => {
+    if (isSyncing) return
+    setIsSyncing(true)
+    try {
+      await init()
+      setSyncToast({ type: 'success', text: '✅ Data anak & akademik berhasil diperbarui!' })
+      setTimeout(() => setSyncToast(null), 3000)
+    } catch (e) {
+      setSyncToast({ type: 'error', text: '❌ Gagal memperbarui data.' })
+      setTimeout(() => setSyncToast(null), 3000)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
   useEffect(() => {
     init()
 
@@ -487,7 +531,10 @@ function DashboardOrangTua() {
     if (selectedType === 'TABUNGAN' && showFeatureConfig.tabunganOrtuSiswa === false) {
       setSelectedType(null)
     }
-  }, [selectedType, showFeatureConfig.tabunganOrtuSiswa])
+    if (selectedType === 'TAGIHAN' && !showFeatureConfig.tagihan) {
+      setSelectedType(null)
+    }
+  }, [selectedType, showFeatureConfig.tabunganOrtuSiswa, showFeatureConfig.tagihan])
 
   const fetchNotifCount = useCallback(async () => {
     if (!studentData?.nisn) return
@@ -769,7 +816,7 @@ function DashboardOrangTua() {
           poinTataTertib: true, 
           poinKatalog: true, 
           kalender: true,
-          tagihan: true,
+          tagihan: false,
           tabunganOrtuSiswa: true,
           tabunganWaliKelas: true,
           jadwalSemester: '2'
@@ -800,11 +847,17 @@ function DashboardOrangTua() {
           if (p.setting_key === 'jadwal_semester_aktif') newShowFeature.jadwalSemester = p.setting_value || '2'
         })
         setShowProfileConfig(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) return newShowProfile
+          if (JSON.stringify(prev) !== JSON.stringify(newShowProfile)) {
+            try { localStorage.setItem('ebudimulia_profile_config_ortu', JSON.stringify(newShowProfile)) } catch {}
+            return newShowProfile
+          }
           return prev
         })
         setShowFeatureConfig(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(newShowFeature)) return newShowFeature
+          if (JSON.stringify(prev) !== JSON.stringify(newShowFeature)) {
+            try { localStorage.setItem('ebudimulia_feature_config_ortu', JSON.stringify(newShowFeature)) } catch {}
+            return newShowFeature
+          }
           return prev
         })
       }
@@ -852,6 +905,16 @@ function DashboardOrangTua() {
           setShowFeatureConfig(prev => ({ ...prev, tabunganOrtuSiswa: payload.payload.value }))
         }
       })
+      .on('broadcast', { event: 'toggle_tagihan_feature' }, (payload) => {
+        if (payload?.payload?.key === 'show_tagihan_ortu') {
+          const isAllowed = payload.payload.value === true || payload.payload.value === 'true'
+          setShowFeatureConfig(prev => {
+            const updated = { ...prev, tagihan: isAllowed }
+            try { localStorage.setItem('ebudimulia_feature_config_ortu', JSON.stringify(updated)) } catch {}
+            return updated
+          })
+        }
+      })
       .subscribe()
 
     const jenisChannel = supabase.channel('jenis-updates-all')
@@ -869,10 +932,18 @@ function DashboardOrangTua() {
   }, [loading, studentData])
 
   const handleLogout = async () => {
-    window.__ebudimuliaExplicitLogout = true
-    localStorage.removeItem('siswa_session')
-    await supabase.auth.signOut()
-    navigate('/')
+    try {
+      window.__ebudimuliaExplicitLogout = true
+      localStorage.removeItem('orangtua_session')
+      localStorage.removeItem('siswa_session')
+      try {
+        await supabase.auth.signOut()
+      } catch (authErr) {
+        console.warn('[Logout] Supabase signOut error/skipped:', authErr)
+      }
+    } finally {
+      window.location.href = '/'
+    }
   }
 
   const handleChangePassword = async (e) => {
@@ -1062,6 +1133,7 @@ function DashboardOrangTua() {
     : `Selamat datang, Bapak/Ibu orangtua dari ${studentData?.nama_lengkap || studentData?.nama}`;
 
   const currentMenuLabel = 
+    selectedType === 'BERITA_PENGUMUMAN' ? 'Berita & Pengumuman Sekolah' :
     selectedType === 'TAGIHAN' ? 'Status Tagihan & SPP' :
     selectedType === 'TABUNGAN' ? 'Tabungan Siswa' : 
     selectedType === 'NILAI' ? 'Laporan Nilai Anak' : 
@@ -1253,34 +1325,40 @@ function DashboardOrangTua() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800">
+    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800 w-full max-w-full">
       
       {/* Mobile Backdrop */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in"
-          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in print:hidden"
+          onClick={closeSidebar}
         />
       )}
-{/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${sidebarOpen ? 'translate-x-0' : '-translate-x-[150%]'} ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
-        
+      {/* Sidebar */}
+      <aside 
+        className={`fixed inset-y-0 left-0 z-40 bg-white border-r border-slate-200 transform transition-all duration-300 ease-in-out md:translate-x-0 md:relative flex flex-col shadow-sm ${
+          sidebarCollapsed ? 'w-72 md:w-24' : 'w-72 md:w-72'
+        } ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-[150%] md:translate-x-0'
+        }`}
+      >
         {/* Sidebar Header */}
-        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
-            {!sidebarCollapsed && (
-              <div className="animate-fade-in truncate">
-                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
-                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
-              </div>
-            )}
+        <div className={`p-4 sm:p-5 pt-[calc(env(safe-area-inset-top,0px)+1rem)] border-b border-slate-200 flex items-center shrink-0 bg-white transition-all justify-between ${sidebarCollapsed ? 'md:justify-center' : 'md:justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity gap-3 ${sidebarCollapsed ? 'md:justify-center md:w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'md:w-14 md:h-14' : 'md:w-20 md:h-20'} w-12 h-12 object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <div className={`animate-fade-in truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>
+              <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+              <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
+            </div>
           </div>
-          {!sidebarCollapsed && (
-            <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          )}
+          <button 
+            type="button"
+            className="md:hidden w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 active:scale-95 rounded-xl transition-all touch-manipulation cursor-pointer" 
+            onClick={closeSidebar}
+            aria-label="Tutup Menu"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
         
         {/* Sidebar Menu */}
@@ -1296,6 +1374,20 @@ function DashboardOrangTua() {
               >
                 <svg className={`w-6 h-6 shrink-0 ${!selectedType ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda</span>}
+              </button>
+
+              {/* Berita & Pengumuman */}
+              <button 
+                onClick={() => { setSelectedType('BERITA_PENGUMUMAN'); setSidebarOpen(false) }}
+                title="Berita & Pengumuman"
+                className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 ${selectedType === 'BERITA_PENGUMUMAN' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0' : 'gap-4'}`}
+              >
+                <svg className={`w-6 h-6 shrink-0 ${selectedType === 'BERITA_PENGUMUMAN' ? 'text-indigo-600' : 'text-slate-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  <circle cx="18" cy="4" r="3" fill="currentColor" className="text-rose-500 stroke-none" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Berita & Pengumuman</span>}
               </button>
               
               {showFeatureConfig.nilai && (
@@ -1347,7 +1439,7 @@ function DashboardOrangTua() {
               )}
 
               {/* Tagihan & SPP Siswa (Khusus Orang Tua) */}
-              {showFeatureConfig.tagihan !== false && (
+              {showFeatureConfig.tagihan === true && (
                 <button 
                   onClick={() => { setSelectedType('TAGIHAN'); setSidebarOpen(false) }}
                   title="Tagihan & SPP Sekolah"
@@ -1423,10 +1515,10 @@ function DashboardOrangTua() {
              {!sidebarCollapsed && <span className="animate-fade-in">Keluar</span>}
            </button>
         </div>
-      </div>
+      </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/50 dashboard-content-area">
+      <div className="flex-1 flex flex-col min-h-0 bg-slate-50/50 dashboard-content-area">
         
         {/* Sticky Orange Notification Banner */}
         {!notifOrtuGranted && 'Notification' in window && (
@@ -1452,14 +1544,16 @@ function DashboardOrangTua() {
         )}
 
         {/* Top Header Navbar */}
-        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 md:px-8 py-3.5 flex items-center justify-between shadow-2xs shrink-0">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 md:px-8 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] flex items-center justify-between shadow-2xs shrink-0 app-header-safe">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSidebarOpen(true)}
-              className="p-2 text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl md:hidden transition-colors"
+              type="button"
+              onClick={openSidebar}
+              className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-95 border border-slate-300 md:hidden transition-all shadow-xs touch-manipulation cursor-pointer shrink-0"
               title="Buka Menu"
+              aria-label="Buka Menu"
             >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <svg className="w-6 h-6 text-slate-800 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
@@ -1469,6 +1563,18 @@ function DashboardOrangTua() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Sync Data Ortu Button */}
+            <button
+              onClick={handleSyncData}
+              disabled={isSyncing}
+              className="p-2 text-indigo-600 hover:text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 rounded-xl transition-all duration-200 border border-indigo-200/60 disabled:opacity-50"
+              title="Sinkronkan / Perbarui Data Anak"
+            >
+              <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+
             {/* Notification Bell Button */}
             <button
               onClick={() => setShowNotifPanel(true)}
@@ -1728,7 +1834,9 @@ function DashboardOrangTua() {
             )}
 
             {/* Konten Spesifik per Menu */}
-            {selectedType === 'PROFIL' ? (
+            {selectedType === 'BERITA_PENGUMUMAN' ? (
+              <BeritaPengumumanSiswaSection studentData={studentData} isOrangTua={true} />
+            ) : selectedType === 'PROFIL' ? (
               <SiswaProfilSection studentData={studentData} menuTypes={menuTypes} isOrangTua={true} />
             ) : selectedType === 'NILAI' ? (
               <SiswaNilaiSection studentData={studentData} />
@@ -1917,7 +2025,7 @@ function DashboardOrangTua() {
                   </div>
                 </div>
               </div>
-            ) : selectedType === 'TAGIHAN' ? (
+            ) : (selectedType === 'TAGIHAN' && showFeatureConfig.tagihan === true) ? (
               <OrangTuaTagihanSection studentData={studentData} />
             ) : (
               <div className="space-y-6">
@@ -2359,6 +2467,17 @@ function DashboardOrangTua() {
         currentUsername={studentData?.nisn}
         currentRole="Orang Tua"
       />
+
+      {/* Toast Sinkronisasi Data Orang Tua */}
+      {syncToast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-xl text-xs font-bold flex items-center gap-2 border animate-in fade-in slide-in-from-bottom-2 ${
+          syncToast.type === 'success' 
+            ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20' 
+            : 'bg-rose-600 text-white border-rose-500 shadow-rose-500/20'
+        }`}>
+          <span>{syncToast.text}</span>
+        </div>
+      )}
     </div>
   )
 }

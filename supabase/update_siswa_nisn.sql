@@ -65,12 +65,16 @@ BEGIN
   UPDATE public.presensi_harian SET siswa_nisn = new_nisn WHERE siswa_nisn = old_nisn;
   UPDATE public.nilai_siswa SET siswa_nisn = new_nisn WHERE siswa_nisn = old_nisn;
   UPDATE public.point_records SET nisn = new_nisn WHERE nisn = old_nisn;
+  UPDATE public.pengajuan_poin_positif SET nisn = new_nisn WHERE nisn = old_nisn;
+  UPDATE public.poin_positif_siswa_blokir SET nisn = new_nisn WHERE nisn = old_nisn;
   UPDATE public.student_points SET nisn = new_nisn WHERE nisn = old_nisn;
   UPDATE public.prestasi_siswa SET siswa_nisn = new_nisn WHERE siswa_nisn = old_nisn;
   UPDATE public.bk_konsultasi SET siswa_nisn = new_nisn WHERE siswa_nisn = old_nisn;
   UPDATE public.bk_konsultasi_booking SET siswa_nisn = new_nisn WHERE siswa_nisn = old_nisn;
   UPDATE public.foto SET nisn = new_nisn WHERE nisn = old_nisn;
   UPDATE public.push_device_tokens SET nisn = new_nisn WHERE nisn = old_nisn;
+  UPDATE public.notifikasi SET target_nisn = new_nisn WHERE target_nisn = old_nisn;
+  UPDATE public.notifikasi_read SET nisn = new_nisn WHERE nisn = old_nisn;
   UPDATE public.berkas_pengumuman SET kode_siswa = new_nisn WHERE kode_siswa = old_nisn;
   UPDATE public.impersonate_tokens SET target_user_id = new_nisn WHERE target_user_id = old_nisn;
 

@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { getTodayWIB } from '../utils/dateUtils'
+import { getTodayWIB, getServerNow } from '../utils/dateUtils'
+import { evaluatePresensiSession } from '../utils/presensiSessionUtils'
+import PresensiMatriksRekapSection from './PresensiMatriksRekapSection'
+import { sortKelasList } from '../utils/kelasHelper'
 
 export default function PiketDashboardSection({ session, activeTa, filterKelas }) {
+  const [viewMode, setViewMode] = useState('daily') // 'daily' | 'matrix'
   const [tanggal, setTanggal] = useState(getTodayWIB())
   const [semuaKelas, setSemuaKelas] = useState([])
   const [semuaSiswa, setSemuaSiswa] = useState([])
@@ -13,48 +17,99 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
   const [semuaKelasFull, setSemuaKelasFull] = useState([])
   const [loading, setLoading] = useState(true)
   const [laporanLoading, setLaporanLoading] = useState(false)
+  const [presensiMasukAktif, setPresensiMasukAktif] = useState(false)
   const [presensiPulangAktif, setPresensiPulangAktif] = useState(false)
+  const [updatingMasuk, setUpdatingMasuk] = useState(false)
   const [updatingPulang, setUpdatingPulang] = useState(false)
+  const [sessionEval, setSessionEval] = useState(null)
 
-  const fetchPulangStatus = useCallback(async () => {
-    const { data } = await supabase
-      .from('pengaturan_sekolah')
-      .select('setting_value')
-      .eq('setting_key', 'presensi_pulang_aktif')
-      .maybeSingle()
-    setPresensiPulangAktif(data?.setting_value === 'true')
+  const fetchSessionStatus = useCallback(async () => {
+    const todayDateStr = getTodayWIB()
+    try {
+      const [{ data: settings }, { data: sesi }] = await Promise.all([
+        supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
+        supabase.from('sesi_presensi').select('*').eq('tanggal', todayDateStr).maybeSingle()
+      ])
+
+      const evalResult = evaluatePresensiSession({
+        settings: settings || [],
+        sesiPresensiRow: sesi,
+        dateNow: getServerNow()
+      })
+
+      setSessionEval(evalResult)
+      setPresensiMasukAktif(evalResult.isSesiMasukAktif)
+      setPresensiPulangAktif(evalResult.isSesiPulangAktif)
+    } catch (err) {
+      console.warn('Gagal memuat status sesi presensi piket:', err)
+    }
   }, [])
 
   useEffect(() => {
-    fetchPulangStatus()
+    fetchSessionStatus()
     const channel = supabase
-      .channel('piket-pengaturan-pulang')
+      .channel('piket-session-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, () => {
-        fetchPulangStatus()
+        fetchSessionStatus()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
+        fetchSessionStatus()
       })
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [fetchPulangStatus])
+  }, [fetchSessionStatus])
+
+  const togglePresensiMasuk = async () => {
+    const nextState = !presensiMasukAktif
+    setUpdatingMasuk(true)
+    const todayDateStr = getTodayWIB()
+    try {
+      if (nextState) {
+        await Promise.all([
+          supabase.from('sesi_presensi').upsert({
+            tanggal: todayDateStr,
+            dibuka_oleh: session?.id || 'piket',
+            dibuka_pada: new Date().toISOString()
+          }, { onConflict: 'tanggal' }),
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayDateStr}`)
+        ])
+      } else {
+        await Promise.all([
+          supabase.from('sesi_presensi').delete().eq('tanggal', todayDateStr),
+          supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayDateStr}`)
+        ])
+      }
+      await fetchSessionStatus()
+    } catch (err) {
+      console.error('Gagal update status sesi masuk:', err)
+    } finally {
+      setUpdatingMasuk(false)
+    }
+  }
 
   const togglePresensiPulang = async () => {
     const nextState = !presensiPulangAktif
     setUpdatingPulang(true)
+    const todayDateStr = getTodayWIB()
     try {
-      await supabase.from('pengaturan_sekolah').upsert({
-        setting_key: 'presensi_pulang_aktif',
-        setting_value: nextState ? 'true' : 'false'
-      }, { onConflict: 'setting_key' })
-
-      const todayDateStr = getTodayWIB()
       if (nextState) {
-        await supabase.from('sesi_presensi').upsert({
-          tanggal: todayDateStr,
-          status: 'buka',
-          created_at: new Date().toISOString()
-        }, { onConflict: 'tanggal' })
+        await Promise.all([
+          supabase.from('pengaturan_sekolah').upsert({
+            setting_key: 'presensi_pulang_aktif',
+            setting_value: 'true'
+          }, { onConflict: 'setting_key' }),
+          supabase.from('pengaturan_sekolah').upsert({
+            setting_key: 'presensi_pulang_tanggal',
+            setting_value: todayDateStr
+          }, { onConflict: 'setting_key' })
+        ])
+      } else {
+        await supabase.from('pengaturan_sekolah').upsert({
+          setting_key: 'presensi_pulang_aktif',
+          setting_value: 'false'
+        }, { onConflict: 'setting_key' })
       }
-
-      setPresensiPulangAktif(nextState)
+      await fetchSessionStatus()
     } catch (err) {
       console.error('Gagal update status presensi pulang:', err)
     } finally {
@@ -161,7 +216,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
 
         if (siswaData.length > 0) {
           setSemuaSiswa(siswaData)
-          const uniqueClasses = [...new Set(siswaData.map(s => s.kelas).filter(Boolean))].sort()
+          const uniqueClasses = sortKelasList([...new Set(siswaData.map(s => s.kelas).filter(Boolean))])
           setSemuaKelas(uniqueClasses)
           siswaData.forEach(s => { 
             siswaMap[s.nisn] = s.kelas 
@@ -202,7 +257,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
         }
 
         if (semuaSiswaFullDB.length > 0) {
-          const uniqueKelasFull = [...new Set(semuaSiswaFullDB.map(s => s.kelas).filter(Boolean))].sort()
+          const uniqueKelasFull = sortKelasList([...new Set(semuaSiswaFullDB.map(s => s.kelas).filter(Boolean))])
           setSemuaKelasFull(uniqueKelasFull)
           semuaSiswaFullDB.forEach(s => { fullSiswaMap[s.nisn] = s.kelas })
         }
@@ -446,7 +501,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
       }
 
       // All classes (sorted)
-      const allKelas = [...new Set((siswaData || []).map(s => s.kelas).filter(Boolean))].sort()
+      const allKelas = sortKelasList([...new Set((siswaData || []).map(s => s.kelas).filter(Boolean))])
 
       // Rekap per kelas: { kelas, total, hadir, terlambat, sakit, izin, alpa, tidakHadir }
       const rekapKelas = allKelas.map(kelas => {
@@ -807,25 +862,86 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
 
   return (
     <div className="animate-fade-in font-sans text-slate-800 flex flex-col gap-6">
-      {/* Top Header */}
+      {/* View Switcher: Tampilan Harian vs Matriks Rekapitulasi Presensi */}
+      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl w-fit border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setViewMode('daily')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            viewMode === 'daily'
+              ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>📅</span>
+          <span>Tampilan Harian (Per Hari)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('matrix')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            viewMode === 'matrix'
+              ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>📊</span>
+          <span>Matriks Rekap Presensi (Bulanan &amp; Koreksi Hardfile)</span>
+          <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-100 text-indigo-700">Baru</span>
+        </button>
+      </div>
+
+      {viewMode === 'matrix' ? (
+        <PresensiMatriksRekapSection
+          session={session}
+          activeTa={activeTa}
+          initialKelas={filterKelas && filterKelas.length > 0 ? filterKelas[0] : ''}
+          onDataChanged={() => latestFetchRef.current?.(true)}
+        />
+      ) : (
+        <>
+          {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="hidden">
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">Dashboard Presensi</h2>
           <p className="text-sm text-slate-500 font-medium mt-1">Ringkasan harian dan statistik kehadiran siswa.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {/* Status Jadwal Info */}
+          {sessionEval?.autAct && (
+            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold rounded-xl shrink-0" title="Jadwal Otomatis Harian Aktif">
+              <span>⏱️</span>
+              <span>Jadwal: {sessionEval.jamMulaiMasuk} - {sessionEval.jamBatasPulang} (Pulang: {sessionEval.jamMulaiPulang})</span>
+            </div>
+          )}
+
+          {/* Tombol Quick-Toggle Sesi Presensi Masuk (Hadir) */}
+          <button
+            onClick={togglePresensiMasuk}
+            disabled={updatingMasuk}
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 ${
+              presensiMasukAktif
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-300'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+            }`}
+            title="Klik untuk membuka/menutup sesi presensi masuk (hadir) hari ini"
+          >
+            <span className={`w-2 h-2 rounded-full ${presensiMasukAktif ? 'bg-white animate-pulse' : 'bg-rose-500'}`}></span>
+            <span>{updatingMasuk ? 'Memproses...' : presensiMasukAktif ? 'Sesi Masuk: AKTIF' : 'Buka Sesi Masuk'}</span>
+          </button>
+
           {/* Tombol Quick-Toggle Sesi Presensi Pulang */}
           <button
             onClick={togglePresensiPulang}
             disabled={updatingPulang}
-            className={`px-4 py-2 text-sm font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 ${
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0 ${
               presensiPulangAktif
                 ? 'bg-blue-600 hover:bg-blue-700 text-white ring-2 ring-blue-300'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
             }`}
-            title="Klik untuk membuka/menutup sesi presensi pulang siswa"
+            title="Klik untuk membuka/menutup sesi presensi pulang siswa hari ini"
           >
-            <span className="text-base">{presensiPulangAktif ? '🏠' : '🔒'}</span>
+            <span className="text-sm">{presensiPulangAktif ? '🏠' : '🔒'}</span>
             <span>{updatingPulang ? 'Memproses...' : presensiPulangAktif ? 'Sesi Pulang: AKTIF' : 'Buka Sesi Pulang'}</span>
           </button>
 
@@ -1115,6 +1231,8 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
         </div>
 
       </div>
+      </>
+      )}
 
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { sendWhatsAppMessage } from '../utils/whatsappHelper'
 
 const StudentAvatar = ({ student, fotos, className }) => {
   const DEFAULT_AVATAR = `https://ui-avatars.com/api/?name=${encodeURIComponent(student?.nama_lengkap || 'Siswa')}&background=eff6ff&color=2563eb&size=150`
@@ -400,9 +401,11 @@ export default function GuruSiswaDetailModal({ student, fotos, activeTa, onClose
               {waLink && (
                 <a
                   href={waLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-between p-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    sendWhatsAppMessage(waPhone, '')
+                  }}
+                  className="w-full flex items-center justify-between p-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                 >
                   <div className="flex items-center gap-2.5">
                     <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">

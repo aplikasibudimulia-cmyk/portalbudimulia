@@ -263,18 +263,10 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       })
       setBendaharaClassMap(bMap)
 
-      // Check if current logged-in student is Bendahara (only in student login, not parent view)
-      if (mode === 'siswa' && studentData?.nisn && !isOrangTuaView) {
-        const benRecord = benRes?.find(b => b.siswa_nisn === studentData.nisn)
-        if (benRecord) {
-          setIsBendaharaActive(true)
-          setBendaharaKelasAssigned(benRecord.kelas)
-        } else {
-          setIsBendaharaActive(false)
-        }
-      } else {
-        setIsBendaharaActive(false)
-      }
+      // Dalam menu "Tabungan Siswa" (mode === 'siswa'), semua siswa (termasuk yang bertugas sebagai Bendahara)
+      // HANYA menampilkan data & saldo tabungan pribadi miliknya sendiri (sama seperti siswa lainnya).
+      // Pengelolaan & input tabungan kelas bagi bendahara telah memiliki menu khusus tersendiri: "Input Tabungan".
+      setIsBendaharaActive(false)
 
       // 4. Fetch Transaksi Riwayat
       let transQuery = supabase
@@ -333,6 +325,37 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     }
   }, [fetchData, fetchSettings])
 
+  // Map jumlah transaksi yang belum diverifikasi (PENDING) per siswa NISN
+  const pendingCountByNisn = useMemo(() => {
+    const map = {}
+    transaksiList.forEach(t => {
+      if (t.status_verifikasi === 'PENDING' && t.siswa_nisn) {
+        map[t.siswa_nisn] = (map[t.siswa_nisn] || 0) + 1
+      }
+    })
+    return map
+  }, [transaksiList])
+
+  // Map total nominal transaksi yang belum diverifikasi (PENDING) per siswa NISN
+  const pendingNominalByNisn = useMemo(() => {
+    const map = {}
+    transaksiList.forEach(t => {
+      if (t.status_verifikasi === 'PENDING' && t.siswa_nisn) {
+        map[t.siswa_nisn] = (map[t.siswa_nisn] || 0) + parseFloat(t.jumlah || 0)
+      }
+    })
+    return map
+  }, [transaksiList])
+
+  // Jumlah siswa yang memiliki transaksi pending di kelas aktif
+  const pendingStudentsCount = useMemo(() => {
+    const isSemua = !selectedKelas || selectedKelas === 'Semua Kelas' || selectedKelas === 'all'
+    const studentsInView = !isSemua
+      ? semuaSiswa.filter(s => s.kelas && s.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase())
+      : semuaSiswa
+    return studentsInView.filter(s => (pendingCountByNisn[s.nisn] || 0) > 0).length
+  }, [semuaSiswa, selectedKelas, pendingCountByNisn])
+
   // Filter students based on selected class, search query & saldo filter
   const filteredStudents = useMemo(() => {
     const q = (searchQuery || '').trim().toLowerCase()
@@ -348,12 +371,15 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
         (s.kelas || '').toLowerCase().includes(q)
 
       const saldo = rekeningMap[s.nisn]?.saldo || 0
+      const hasPending = (pendingCountByNisn[s.nisn] || 0) > 0
       const matchSaldo = filterSaldo === 'semua' || 
-        (filterSaldo === 'ada_saldo' ? saldo > 0 : saldo === 0)
+        (filterSaldo === 'ada_saldo' ? saldo > 0 : 
+         filterSaldo === 'saldo_nol' ? saldo === 0 :
+         filterSaldo === 'perlu_verifikasi' ? hasPending : true)
 
       return matchKelas && matchSearch && matchSaldo
     })
-  }, [semuaSiswa, selectedKelas, searchQuery, filterSaldo, rekeningMap])
+  }, [semuaSiswa, selectedKelas, searchQuery, filterSaldo, rekeningMap, pendingCountByNisn])
 
   // Filter transactions for Tab 4 (Riwayat Mutasi)
   const filteredTransactions = useMemo(() => {
@@ -424,6 +450,18 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     })
   }, [transaksiList, selectedKelas, searchQuery, semuaSiswa])
 
+  // Total nominal seluruh transaksi yang menunggu verifikasi (sesuai filter aktif)
+  const totalPendingNominal = useMemo(() => {
+    return pendingTransactions.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+  }, [pendingTransactions])
+
+  // Total nominal dari transaksi pending yang sedang dicentang / dipilih
+  const selectedPendingNominal = useMemo(() => {
+    return pendingTransactions
+      .filter(t => selectedPendingIds.includes(t.id))
+      .reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+  }, [pendingTransactions, selectedPendingIds])
+
   // Stats calculation for current view
   const classStats = useMemo(() => {
     const isSemua = !selectedKelas || selectedKelas === 'Semua Kelas' || selectedKelas === 'all'
@@ -453,18 +491,21 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       .filter(t => t.tipe === 'TARIK' && t.created_at >= startOfMonth)
       .reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
 
-    // Calculate pending count for current class or all
-    const pendingCount = transaksiList.filter(t => 
+    // Calculate pending count & pending nominal for current class or all
+    const pendingTransInView = transaksiList.filter(t => 
       (isSemua || (t.kelas && t.kelas.trim().toLowerCase() === selectedKelas.trim().toLowerCase()) || nisnSet.has(t.siswa_nisn)) && 
       t.status_verifikasi === 'PENDING'
-    ).length
+    )
+    const pendingCount = pendingTransInView.length
+    const pendingNominal = pendingTransInView.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
 
     return {
       totalSaldo,
       totalSetorBulanIni,
       totalTarikBulanIni,
       totalSiswa: studentsInCurrentView.length,
-      pendingCount
+      pendingCount,
+      pendingNominal
     }
   }, [semuaSiswa, selectedKelas, rekeningMap, transaksiList])
 
@@ -498,10 +539,13 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
     }
 
     const actionLabel = approve ? 'menyetujui' : 'menolak'
+    const totalSelectedNominal = selectedList.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+    const totalNominalStr = `Rp ${totalSelectedNominal.toLocaleString('id-ID')}`
+
     const confirmed = await requestConfirm({
       title: approve ? `Setujui ${selectedList.length} Transaksi Sekaligus` : `Tolak ${selectedList.length} Transaksi`,
-      message: `Apakah Anda yakin ingin ${actionLabel} ${selectedList.length} transaksi setoran tabungan yang dipilih?`,
-      confirmLabel: approve ? `Ya, Setujui (${selectedList.length})` : `Ya, Tolak (${selectedList.length})`,
+      message: `Apakah Anda yakin ingin ${actionLabel} ${selectedList.length} transaksi setoran tabungan yang dipilih (Total: ${totalNominalStr})?`,
+      confirmLabel: approve ? `Ya, Setujui (${selectedList.length} • ${totalNominalStr})` : `Ya, Tolak (${selectedList.length})`,
       confirmColor: approve ? 'emerald' : 'red'
     })
 
@@ -662,10 +706,17 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
   // Handle 1-Click Verification / Approval / Rejection
   const handleVerifikasiTransaksi = async (transaksiId, approve = true) => {
     const actionLabel = approve ? 'menyetujui' : 'menolak'
+    const tx = transaksiList.find(t => t.id === transaksiId) || detailStudentTxList.find(t => t.id === transaksiId)
+    const nominalStr = tx ? `Rp ${parseFloat(tx.jumlah || 0).toLocaleString('id-ID')}` : ''
+    const student = semuaSiswa.find(s => s.nisn === tx?.siswa_nisn) || detailSiswaTabungan
+    const namaSiswa = tx?.nama_lengkap || student?.nama_lengkap || 'Siswa'
+
     const confirmed = await requestConfirm({
-      title: approve ? 'Setujui Transaksi Tabungan' : 'Tolak Transaksi Tabungan',
-      message: `Apakah Anda yakin ingin ${actionLabel} transaksi setoran ini?`,
-      confirmLabel: approve ? 'Ya, Setujui Setoran' : 'Ya, Tolak Transaksi',
+      title: approve ? 'Verifikasi Setoran Tabungan' : 'Tolak Transaksi Tabungan',
+      message: tx
+        ? `Apakah Anda yakin ingin ${actionLabel} setoran ${nominalStr} untuk ${namaSiswa}? Pastikan setoran telah dicocokkan dengan buku fisik tabungan.`
+        : `Apakah Anda yakin ingin ${actionLabel} transaksi setoran ini?`,
+      confirmLabel: approve ? 'Ya, Verifikasi Sekarang' : 'Ya, Tolak Transaksi',
       confirmColor: approve ? 'emerald' : 'red'
     })
 
@@ -689,24 +740,36 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
         })
 
         // Kirim FCM Push ke HP Orang Tua & Siswa jika disetujui
-        if (approve) {
-          const tx = transaksiList.find(t => t.id === transaksiId)
-          if (tx) {
-            const nominalStr = `Rp ${parseFloat(tx.jumlah || 0).toLocaleString('id-ID')}`
-            const saldoStr = `Rp ${parseFloat(tx.saldo_akhir || (rekeningMap[tx.siswa_nisn]?.saldo || 0) + parseFloat(tx.jumlah || 0)).toLocaleString('id-ID')}`
-            const student = semuaSiswa.find(s => s.nisn === tx.siswa_nisn)
-            const nama = tx.nama_lengkap || student?.nama_lengkap || 'Siswa'
+        if (approve && tx) {
+          const saldoStr = `Rp ${parseFloat(tx.saldo_akhir || (rekeningMap[tx.siswa_nisn]?.saldo || 0) + parseFloat(tx.jumlah || 0)).toLocaleString('id-ID')}`
 
-            sendFCMPushNotification({
-              nisn: tx.siswa_nisn,
-              title: `Setoran Tabungan ${nama}`,
-              body: `${nama} telah menabung sebesar ${nominalStr}. Total tabungan sekarang: ${saldoStr}.`,
-              targetMenu: 'TABUNGAN'
-            }).catch(err => console.warn('[FCM Tabungan Verify] Send error:', err))
-          }
+          sendFCMPushNotification({
+            nisn: tx.siswa_nisn,
+            title: `Setoran Tabungan ${namaSiswa}`,
+            body: `${namaSiswa} telah menabung sebesar ${nominalStr}. Total tabungan sekarang: ${saldoStr}.`,
+            targetMenu: 'TABUNGAN'
+          }).catch(err => console.warn('[FCM Tabungan Verify] Send error:', err))
         }
 
-        fetchData()
+        // Refresh data global
+        await fetchData()
+
+        // Refresh data di modal jika sedang dibuka
+        const targetNisn = detailSiswaTabungan?.nisn || tx?.siswa_nisn
+        if (targetNisn) {
+          try {
+            const { data: updatedTx } = await supabase
+              .from('tabungan_transaksi')
+              .select('*')
+              .eq('siswa_nisn', targetNisn)
+              .order('created_at', { ascending: false })
+            if (updatedTx) {
+              setDetailStudentTxList(updatedTx)
+            }
+          } catch (e) {
+            console.warn('Error refreshing student detail tx:', e)
+          }
+        }
       } else {
         throw new Error(data?.message || 'Gagal memproses verifikasi.')
       }
@@ -718,6 +781,86 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
       })
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Handle verify all pending transactions of currently inspected student in modal
+  const handleVerifikasiSemuaPendingSiswa = async (approve = true) => {
+    if (!detailSiswaTabungan) return
+    const pendingList = detailStudentTxList.filter(t => t.status_verifikasi === 'PENDING')
+    if (pendingList.length === 0) return
+
+    const actionLabel = approve ? 'menyetujui' : 'menolak'
+    const namaSiswa = detailSiswaTabungan.nama_lengkap || 'Siswa'
+    const totalNominal = pendingList.reduce((acc, curr) => acc + parseFloat(curr.jumlah || 0), 0)
+    const totalNominalStr = `Rp ${totalNominal.toLocaleString('id-ID')}`
+
+    const confirmed = await requestConfirm({
+      title: approve ? `Verifikasi ${pendingList.length} Setoran Sekaligus` : `Tolak ${pendingList.length} Transaksi`,
+      message: `Apakah Anda yakin ingin ${actionLabel} ${pendingList.length} transaksi setoran tabungan (Total: ${totalNominalStr}) untuk ${namaSiswa}? Pastikan setoran telah dicocokkan dengan buku fisik tabungan.`,
+      confirmLabel: approve ? `Ya, Verifikasi Semua (${pendingList.length} • ${totalNominalStr})` : `Ya, Tolak (${pendingList.length})`,
+      confirmColor: approve ? 'emerald' : 'red'
+    })
+
+    if (!confirmed) return
+
+    setIsSaving(true)
+    let successCount = 0
+    const rpcName = approve ? 'verifikasi_transaksi_tabungan' : 'tolak_transaksi_tabungan'
+
+    for (const tx of pendingList) {
+      try {
+        const { data, error } = await supabase.rpc(rpcName, {
+          p_transaksi_id: tx.id,
+          p_user_id: session?.id || null
+        })
+
+        if (!error && data?.success) {
+          successCount++
+          if (approve) {
+            const nominalStr = `Rp ${parseFloat(tx.jumlah || 0).toLocaleString('id-ID')}`
+            sendFCMPushNotification({
+              nisn: tx.siswa_nisn,
+              title: `Setoran Tabungan ${namaSiswa}`,
+              body: `Setoran tabungan sebesar ${nominalStr} telah diverifikasi oleh Wali Kelas.`,
+              targetMenu: 'TABUNGAN'
+            }).catch(e => console.warn('[FCM batch error]:', e))
+          }
+        }
+      } catch (err) {
+        console.warn('Batch verify item error:', err)
+      }
+    }
+
+    setIsSaving(false)
+
+    if (successCount > 0) {
+      setNotifModal({
+        type: 'success',
+        title: 'Verifikasi Berhasil',
+        message: `${successCount} transaksi setoran tabungan berhasil ${approve ? 'diverifikasi dan saldo diperbarui' : 'ditolak'}!`
+      })
+
+      await fetchData()
+
+      try {
+        const { data: updatedTx } = await supabase
+          .from('tabungan_transaksi')
+          .select('*')
+          .eq('siswa_nisn', detailSiswaTabungan.nisn)
+          .order('created_at', { ascending: false })
+        if (updatedTx) {
+          setDetailStudentTxList(updatedTx)
+        }
+      } catch (e) {
+        console.warn(e)
+      }
+    } else {
+      setNotifModal({
+        type: 'error',
+        title: 'Gagal Memproses',
+        message: 'Tidak ada transaksi yang berhasil diproses.'
+      })
     }
   }
 
@@ -951,10 +1094,14 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
   const studentStats = useMemo(() => {
     if (mode !== 'siswa' || !studentData?.nisn) return null
     const saldo = rekeningMap[studentData.nisn]?.saldo || 0
-    const myTrans = transaksiList.filter(t => t.siswa_nisn === studentData.nisn && t.status_verifikasi === 'VERIFIED')
-    const totalSetor = myTrans.filter(t => t.tipe === 'SETOR').reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
-    const totalTarik = myTrans.filter(t => t.tipe === 'TARIK').reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
-    return { saldo, totalSetor, totalTarik }
+    const myTrans = transaksiList.filter(t => t.siswa_nisn === studentData.nisn)
+    const verifiedTrans = myTrans.filter(t => t.status_verifikasi === 'VERIFIED')
+    const totalSetor = verifiedTrans.filter(t => t.tipe === 'SETOR').reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+    const totalTarik = verifiedTrans.filter(t => t.tipe === 'TARIK').reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+    const pendingTrans = myTrans.filter(t => t.status_verifikasi === 'PENDING')
+    const pendingNominal = pendingTrans.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+    const pendingCount = pendingTrans.length
+    return { saldo, totalSetor, totalTarik, pendingNominal, pendingCount }
   }, [mode, studentData, rekeningMap, transaksiList])
 
   // Automatically switch tab to 'riwayat' for regular students
@@ -1151,15 +1298,23 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
 
       {/* STATS CARDS - eBudimulia Native Theme */}
       {mode === 'siswa' && !isBendaharaActive ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className={`grid grid-cols-1 ${studentStats?.pendingCount > 0 ? 'sm:grid-cols-2' : 'sm:grid-cols-1 max-w-md'} gap-4`}>
           <div className="bg-white border-2 border-indigo-600 rounded-xl p-5 shadow-xs">
             <p className="text-xs text-indigo-600 font-bold tracking-wide">Saldo Tabungan Saya</p>
             <p className="text-2xl md:text-3xl font-extrabold mt-1 text-indigo-700">{formatRupiah(studentStats?.saldo)}</p>
           </div>
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <p className="text-xs text-slate-500 font-semibold tracking-wide">Total Akumulasi Setoran</p>
-            <p className="text-2xl md:text-3xl font-extrabold mt-1 text-emerald-600">+{formatRupiah(studentStats?.totalSetor)}</p>
-          </div>
+          {studentStats?.pendingCount > 0 && (
+            <div className="bg-white border border-amber-300 rounded-xl p-5 shadow-xs">
+              <p className="text-xs text-amber-800 font-semibold tracking-wide flex items-center justify-between">
+                <span>Menunggu Verifikasi</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                  {studentStats.pendingCount} Transaksi
+                </span>
+              </p>
+              <p className="text-2xl md:text-3xl font-extrabold mt-1 text-amber-600">+{formatRupiah(studentStats.pendingNominal)}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Saldo bertambah setelah diverifikasi wali kelas</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1176,10 +1331,20 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
             <p className="text-2xl md:text-3xl font-extrabold mt-1 text-emerald-600">+{formatRupiah(classStats.totalSetorBulanIni)}</p>
           </div>
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <p className="text-xs text-slate-500 font-semibold tracking-wide">
-              Menunggu Verifikasi {isSpecificClassSelected ? `(${selectedKelas})` : '(Semua)'}
+            <p className="text-xs text-slate-500 font-semibold tracking-wide flex items-center justify-between">
+              <span>Menunggu Verifikasi {isSpecificClassSelected ? `(${selectedKelas})` : '(Semua)'}</span>
+              {classStats.pendingCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                  {classStats.pendingCount} Transaksi
+                </span>
+              )}
             </p>
-            <p className="text-2xl md:text-3xl font-extrabold mt-1 text-amber-600">{classStats.pendingCount} <span className="text-sm font-semibold text-slate-500">Transaksi</span></p>
+            <p className="text-2xl md:text-3xl font-extrabold mt-1 text-amber-600">{formatRupiah(classStats.pendingNominal)}</p>
+            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+              {classStats.pendingCount > 0 
+                ? `${classStats.pendingCount} transaksi setoran belum disetujui`
+                : 'Semua setoran telah terverifikasi'}
+            </p>
           </div>
         </div>
       )}
@@ -1214,6 +1379,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
             {mode !== 'siswa' && (
               <button
                 onClick={() => setActiveTab('pending')}
+                title={pendingTransactions.length > 0 ? `${pendingTransactions.length} transaksi belum diverifikasi (Total: ${formatRupiah(totalPendingNominal)})` : 'Tidak ada transaksi pending'}
                 className={`px-4 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 ${
                   activeTab === 'pending' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -1299,7 +1465,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="text-slate-500 font-bold text-[11px]">Filter Saldo:</span>
-              <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+              <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setFilterSaldo('semua')}
@@ -1321,6 +1487,26 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                 >
                   ⚪ Saldo Rp 0
                 </button>
+                {pendingStudentsCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterSaldo('perlu_verifikasi')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-extrabold transition-all flex items-center gap-1.5 ${
+                      filterSaldo === 'perlu_verifikasi'
+                        ? 'bg-amber-500 text-white shadow-2xs'
+                        : 'text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/80'
+                    }`}
+                    title="Hanya tampilkan siswa yang memiliki setoran tabungan belum diverifikasi"
+                  >
+                    <span className="w-3.5 h-3.5 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px] font-black leading-none">!</span>
+                    <span>Perlu Verifikasi</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                      filterSaldo === 'perlu_verifikasi' ? 'bg-white text-amber-700' : 'bg-amber-200 text-amber-900'
+                    }`}>
+                      {pendingStudentsCount}
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
             <div className="text-[11px] text-slate-500 font-medium">
@@ -1421,11 +1607,14 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
               filteredStudents.map((siswa, idx) => {
                 const saldo = rekeningMap[siswa.nisn]?.saldo || 0
                 const isBendahara = bendaharaClassMap[siswa.kelas]?.siswa_nisn === siswa.nisn
+                const pendingCount = pendingCountByNisn[siswa.nisn] || 0
 
                 return (
                   <div
                     key={siswa.nisn}
-                    className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors"
+                    className={`p-3.5 flex items-center justify-between gap-3 transition-colors ${
+                      pendingCount > 0 ? 'bg-amber-50/25 hover:bg-amber-50/50' : 'hover:bg-slate-50/80'
+                    }`}
                   >
                     {/* Sisi Kiri: Nama Siswa & Bawahnya Total Saldo (Dapat diklik untuk melihat mutasi) */}
                     <div 
@@ -1440,6 +1629,17 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                         {isBendahara && (
                           <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black rounded-full border border-amber-300">
                             Bendahara
+                          </span>
+                        )}
+                        {pendingCount > 0 && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs shrink-0"
+                            title={`${pendingCount} transaksi tabungan belum diverifikasi (Total: ${formatRupiah(pendingNominalByNisn[siswa.nisn] || 0)}). Klik untuk buka dan cocokkan dengan buku hardfile.`}
+                          >
+                            <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-[10px] leading-none shrink-0 shadow-2xs">
+                              !
+                            </span>
+                            <span>{pendingCount > 1 ? `${pendingCount} Menunggu` : 'Perlu Verifikasi'} ({formatRupiah(pendingNominalByNisn[siswa.nisn] || 0)})</span>
                           </span>
                         )}
                       </div>
@@ -1479,13 +1679,13 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-extrabold uppercase tracking-wider">
-                  <th className="py-3.5 px-4 w-12 text-center">No</th>
-                  <th className="py-3.5 px-4">Nama Siswa</th>
-                  <th className="py-3.5 px-4">NISN</th>
-                  <th className="py-3.5 px-4">Kelas</th>
-                  <th className="py-3.5 px-4 text-right">Saldo Tabungan</th>
+                  <th className="py-3.5 px-4 w-14 text-center">No</th>
+                  <th className="py-3.5 px-4 min-w-[220px]">Nama Siswa</th>
+                  <th className="py-3.5 px-4 w-36">NISN</th>
+                  <th className="py-3.5 px-4 w-24 text-center">Kelas</th>
+                  <th className="py-3.5 px-4 w-44 text-right">Saldo Tabungan</th>
                   {(mode !== 'siswa' || isBendaharaActive) && (
-                    <th className="py-3.5 px-4 text-center">Aksi / Transaksi</th>
+                    <th className="py-3.5 px-4 w-48 text-center">Aksi / Transaksi</th>
                   )}
                 </tr>
               </thead>
@@ -1506,28 +1706,38 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                   filteredStudents.map((siswa, idx) => {
                     const saldo = rekeningMap[siswa.nisn]?.saldo || 0
                     const isBendahara = bendaharaClassMap[siswa.kelas]?.siswa_nisn === siswa.nisn
+                    const pendingCount = pendingCountByNisn[siswa.nisn] || 0
 
                     return (
-                      <tr key={siswa.nisn} className="hover:bg-slate-50/80 transition-colors">
+                      <tr key={siswa.nisn} className={`transition-colors ${pendingCount > 0 ? 'bg-amber-50/25 hover:bg-amber-50/50' : 'hover:bg-slate-50/80'}`}>
                         <td className="py-3.5 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
                         <td 
                           onClick={() => handleOpenDetailSiswa(siswa)}
                           className="py-3.5 px-4 font-bold text-slate-800 cursor-pointer hover:text-emerald-700 transition-colors group"
+                          title="Klik untuk melihat rincian mutasi tabungan siswa"
                         >
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="group-hover:underline">{siswa.nama_lengkap}</span>
                             {isBendahara && (
                               <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-black rounded-full border border-amber-300">
                                 Bendahara
                               </span>
                             )}
-                            <span className="text-[10px] text-slate-400 font-normal hidden group-hover:inline">
-                              (Klik untuk lihat mutasi)
-                            </span>
+                            {pendingCount > 0 && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs shrink-0"
+                                title={`${pendingCount} transaksi tabungan belum diverifikasi oleh Wali Kelas (Total: ${formatRupiah(pendingNominalByNisn[siswa.nisn] || 0)}). Klik untuk buka dan cocokkan dengan buku hardfile.`}
+                              >
+                                <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-[10px] leading-none shrink-0 shadow-2xs">
+                                  !
+                                </span>
+                                <span>{pendingCount > 1 ? `${pendingCount} Menunggu` : 'Perlu Verifikasi'} ({formatRupiah(pendingNominalByNisn[siswa.nisn] || 0)})</span>
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="py-3.5 px-4 font-mono text-slate-500">{siswa.nisn}</td>
-                        <td className="py-3.5 px-4">
+                        <td className="py-3.5 px-4 text-center">
                           <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-[11px] font-bold">
                             {siswa.kelas}
                           </span>
@@ -1655,11 +1865,16 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
           {/* Header Banner */}
           <div className="p-4 bg-amber-50/80 border-b border-amber-200/80 flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
-              <span>⏳</span>
+            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs flex-wrap">
+              <span className="text-base">⏳</span>
               <span>
                 Daftar Setoran Bendahara yang Menunggu Verifikasi {isSpecificClassSelected ? `(Kelas ${selectedKelas})` : '(Semua Kelas)'}
               </span>
+              {pendingTransactions.length > 0 && (
+                <span className="px-2.5 py-1 bg-amber-200/80 text-amber-950 rounded-lg text-xs font-black border border-amber-300">
+                  Total Belum Terverifikasi: {formatRupiah(totalPendingNominal)} ({pendingTransactions.length} Transaksi)
+                </span>
+              )}
             </div>
             {pendingTransactions.length > 0 && (
               <div className="flex items-center gap-2">
@@ -1681,9 +1896,14 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                 <span className="w-7 h-7 rounded-full bg-indigo-500/80 text-white flex items-center justify-center text-xs font-black ring-2 ring-indigo-400">
                   {selectedPendingIds.length}
                 </span>
-                <span className="text-xs font-bold text-indigo-100">
-                  Transaksi Setoran Terpilih
-                </span>
+                <div>
+                  <span className="text-xs font-bold text-indigo-100 block">
+                    {selectedPendingIds.length} Transaksi Terpilih
+                  </span>
+                  <span className="text-xs font-black text-amber-300">
+                    Total: {formatRupiah(selectedPendingNominal)}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1693,7 +1913,7 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                   className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black rounded-xl text-xs transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <span>✓</span>
-                  <span>{isBatchProcessing ? 'Memproses...' : `Setujui Terpilih (${selectedPendingIds.length})`}</span>
+                  <span>{isBatchProcessing ? 'Memproses...' : `Setujui Terpilih (${selectedPendingIds.length} • ${formatRupiah(selectedPendingNominal)})`}</span>
                 </button>
                 <button
                   type="button"
@@ -1887,6 +2107,19 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                   })
                 )}
               </tbody>
+              {pendingTransactions.length > 0 && (
+                <tfoot>
+                  <tr className="bg-amber-50/60 font-extrabold border-t-2 border-amber-200">
+                    <td colSpan="5" className="py-3 px-4 text-right text-xs text-amber-900">
+                      Total Tabungan Menunggu Verifikasi:
+                    </td>
+                    <td className="py-3 px-4 text-right font-black text-emerald-800 text-sm">
+                      {formatRupiah(totalPendingNominal)}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
@@ -2406,51 +2639,111 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
 
             {/* Saldo Summary Card (Clean & Responsive) */}
             <div className="p-4 bg-slate-50 border-b border-slate-200/80 shrink-0">
-              <div className="p-3.5 bg-emerald-50 border border-emerald-200/90 rounded-xl flex items-center justify-between gap-3">
-                <div>
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 block">Total Saldo Tabungan</span>
-                  <span className="text-lg sm:text-xl font-black text-emerald-700">
-                    {formatRupiah(rekeningMap[detailSiswaTabungan.nisn]?.saldo || 0)}
-                  </span>
-                </div>
-                {(mode !== 'siswa' || isBendaharaActive) && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const s = detailSiswaTabungan
-                        setDetailSiswaTabungan(null)
-                        handleOpenTransaction(s, 'SETOR')
-                      }}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1"
-                    >
-                      <span>+</span> Setor
-                    </button>
-                    {mode !== 'siswa' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const s = detailSiswaTabungan
-                          setDetailSiswaTabungan(null)
-                          handleOpenTransaction(s, 'TARIK')
-                        }}
-                        className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition-all"
-                      >
-                        Tarik
-                      </button>
+              {(() => {
+                const pendingTxs = detailStudentTxList.filter(t => t.status_verifikasi === 'PENDING')
+                const hasPending = pendingTxs.length > 0
+                const pendingNominal = pendingTxs.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+                const currentSaldo = rekeningMap[detailSiswaTabungan.nisn]?.saldo || 0
+
+                return (
+                  <div className="space-y-2.5">
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200/90 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                      <div>
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 block">Total Saldo Resmi</span>
+                        <span className="text-lg sm:text-xl font-black text-emerald-700">
+                          {formatRupiah(currentSaldo)}
+                        </span>
+                      </div>
+                      {(mode !== 'siswa' || isBendaharaActive) && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const s = detailSiswaTabungan
+                              setDetailSiswaTabungan(null)
+                              handleOpenTransaction(s, 'SETOR')
+                            }}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>+</span> Setor
+                          </button>
+                          {mode !== 'siswa' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const s = detailSiswaTabungan
+                                setDetailSiswaTabungan(null)
+                                handleOpenTransaction(s, 'TARIK')
+                              }}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Tarik
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Informasi Total Tabungan Belum Terverifikasi untuk Siswa ini */}
+                    {hasPending && (
+                      <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50/50 border border-amber-300 rounded-xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-7 h-7 rounded-lg bg-amber-200/80 text-amber-900 flex items-center justify-center font-black text-xs shrink-0 ring-1 ring-amber-300">
+                            ⏳
+                          </span>
+                          <div>
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-800 block">
+                              Total Belum Terverifikasi ({pendingTxs.length} Transaksi)
+                            </span>
+                            <span className="text-base font-black text-amber-950">
+                              +{formatRupiah(pendingNominal)}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold text-amber-800 bg-white/80 px-2.5 py-1 rounded-lg border border-amber-200/80 shrink-0 hidden sm:inline-block">
+                          Menunggu persetujuan
+                        </span>
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
+                )
+              })()}
             </div>
 
             {/* List Transaksi Siswa */}
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-3">
-              <div className="flex items-center justify-between pb-1">
-                <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
-                  📜 Riwayat Mutasi ({detailStudentTxList.length})
-                </h4>
-              </div>
+              {(() => {
+                const pendingTxs = detailStudentTxList.filter(t => t.status_verifikasi === 'PENDING')
+                const hasPending = pendingTxs.length > 0
+                const pendingNominal = pendingTxs.reduce((sum, t) => sum + parseFloat(t.jumlah || 0), 0)
+
+                return (
+                  <div className="flex items-center justify-between pb-1 flex-wrap gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
+                        📜 Riwayat Mutasi ({detailStudentTxList.length})
+                      </h4>
+                      {hasPending && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                          {pendingTxs.length} Perlu Verifikasi ({formatRupiah(pendingNominal)})
+                        </span>
+                      )}
+                    </div>
+
+                    {mode !== 'siswa' && pendingTxs.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={() => handleVerifikasiSemuaPendingSiswa(true)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        title="Verifikasi semua transaksi setoran yang menunggu verifikasi untuk siswa ini"
+                      >
+                        <span>✓</span> {pendingTxs.length > 1 ? `Verifikasi Semua (${pendingTxs.length} • ${formatRupiah(pendingNominal)})` : `Verifikasi (${formatRupiah(pendingNominal)})`}
+                      </button>
+                    )}
+                  </div>
+                )
+              })()}
 
               {loadingDetailTx ? (
                 <div className="py-10 text-center text-slate-400 text-xs font-medium animate-pulse">
@@ -2465,11 +2758,16 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                   {detailStudentTxList.map(tx => {
                     const isSetor = tx.tipe === 'SETOR'
                     const penginput = semuaSiswa.find(s => s.nisn === tx.diinput_oleh_nisn)
+                    const isPending = tx.status_verifikasi === 'PENDING'
 
                     return (
                       <div
                         key={tx.id}
-                        className="p-3.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all space-y-2 shadow-2xs"
+                        className={`p-3.5 rounded-xl transition-all space-y-2.5 shadow-2xs ${
+                          isPending
+                            ? 'bg-amber-50/40 border-2 border-amber-300 ring-1 ring-amber-100'
+                            : 'bg-white hover:bg-slate-50 border border-slate-200'
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2.5">
@@ -2497,47 +2795,73 @@ export default function TabunganSiswaSection({ session, activeTa, mode = 'guru',
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[10px]">
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[10px] flex-wrap">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`px-2 py-0.5 rounded font-bold ${
                               tx.status_verifikasi === 'VERIFIED' ? 'bg-emerald-100 text-emerald-800' :
-                              tx.status_verifikasi === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                              tx.status_verifikasi === 'PENDING' ? 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold' :
                               'bg-rose-100 text-rose-800'
                             }`}>
                               {tx.status_verifikasi === 'VERIFIED' ? '✅ Terverifikasi' :
                                tx.status_verifikasi === 'PENDING' ? '⏳ Menunggu Verifikasi' : '❌ Ditolak'}
                             </span>
                             {tx.diinput_oleh_nisn && (
-                              <span className="text-slate-500">
-                                • Input: {penginput?.nama_lengkap || 'Bendahara'}
+                              <span className="text-slate-500 font-medium">
+                                • Input: <strong className="text-slate-700">{penginput?.nama_lengkap || 'Bendahara'}</strong>
                               </span>
                             )}
                           </div>
 
-                          {(mode !== 'siswa' || isBendaharaActive) && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDetailSiswaTabungan(null)
-                                  handleOpenEditModal(tx)
-                                }}
-                                className="px-2 py-1 bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 text-[10px] font-bold rounded-lg border border-slate-200 transition-colors"
-                              >
-                                ✏️ Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDetailSiswaTabungan(null)
-                                  handleDeleteTransaksi(tx)
-                                }}
-                                className="px-2 py-1 bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-800 text-[10px] font-bold rounded-lg border border-slate-200 transition-colors"
-                              >
-                                🗑️ Hapus
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                            {/* Tombol Verifikasi & Tolak khusus Wali Kelas / Admin saat transaksi PENDING */}
+                            {mode !== 'siswa' && isPending && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={isSaving}
+                                  onClick={() => handleVerifikasiTransaksi(tx.id, true)}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[10px] font-extrabold rounded-lg shadow-2xs transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                  title="Cocokkan dengan buku fisik tabungan dan setujui transaksi ini"
+                                >
+                                  <span>✓</span> Verifikasi
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSaving}
+                                  onClick={() => handleVerifikasiTransaksi(tx.id, false)}
+                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 text-[10px] font-bold rounded-lg border border-rose-200 transition-all cursor-pointer disabled:opacity-50"
+                                  title="Tolak transaksi setoran ini jika tidak sesuai buku fisik"
+                                >
+                                  Tolak
+                                </button>
+                              </>
+                            )}
+
+                            {(mode !== 'siswa' || isBendaharaActive) && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDetailSiswaTabungan(null)
+                                    handleOpenEditModal(tx)
+                                  }}
+                                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 text-[10px] font-bold rounded-lg border border-slate-200 transition-colors"
+                                >
+                                  ✏️ Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDetailSiswaTabungan(null)
+                                    handleDeleteTransaksi(tx)
+                                  }}
+                                  className="px-2 py-1 bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-800 text-[10px] font-bold rounded-lg border border-slate-200 transition-colors"
+                                >
+                                  🗑️ Hapus
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )

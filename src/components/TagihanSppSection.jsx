@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
-import * as XLSX from 'xlsx'
-import ExcelJS from 'exceljs'
+// XLSX & ExcelJS di-lazy-load saat dibutuhkan (hemat ~1MB dari initial load)
 import { downloadFile } from '../utils/fileDownloader'
 import { useConfirm } from '../utils/useConfirm'
+import { sendWhatsAppMessage } from '../utils/whatsappHelper'
 
 // Urutan Bulan Ajaran Indonesia (Tahun Ajaran: Juli = 1 s.d. Juni = 12)
 export const BULAN_AJARAN = [
@@ -184,14 +184,30 @@ export default function TagihanSppSection({ session, activeTa, readOnly = false 
     setTogglingVisibilitas(true)
     const newStatus = !showTagihanOrtu
     try {
-      await supabase.from('pengaturan_sekolah').delete().eq('setting_key', 'show_tagihan_ortu')
-      const { error } = await supabase.from('pengaturan_sekolah').insert([{
+      const { error } = await supabase.from('pengaturan_sekolah').upsert({
         setting_key: 'show_tagihan_ortu',
         setting_value: newStatus.toString()
-      }])
+      }, { onConflict: 'setting_key' })
       if (error) throw error
       setShowTagihanOrtu(newStatus)
       setSuccessMsg(newStatus ? '✅ Menu Tagihan & SPP sekarang DITAMPILKAN di akun Orang Tua!' : '🔒 Menu Tagihan & SPP sekarang DISEMBUNYIKAN dari akun Orang Tua!')
+
+      // Broadcast perubahan seketika ke seluruh tab/perangkat Orang Tua yang aktif
+      try {
+        const broadcastCh = supabase.channel('ebudimulia-global-settings-broadcast')
+        broadcastCh.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await broadcastCh.send({
+              type: 'broadcast',
+              event: 'toggle_tagihan_feature',
+              payload: { key: 'show_tagihan_ortu', value: newStatus }
+            })
+            setTimeout(() => supabase.removeChannel(broadcastCh), 1500)
+          }
+        })
+      } catch (bcErr) {
+        console.warn('Broadcast error:', bcErr)
+      }
     } catch (err) {
       console.error('Error updating parent visibility:', err)
       setErrorMsg('Gagal mengubah visibilitas orang tua: ' + err.message)
@@ -402,6 +418,7 @@ export default function TagihanSppSection({ session, activeTa, readOnly = false 
 
     try {
       const data = await file.arrayBuffer()
+      const XLSX = await import('xlsx')
       const workbook = XLSX.read(data, { type: 'array' })
       const firstSheetName = workbook.SheetNames[0]
       const worksheet = workbook.Sheets[firstSheetName]
@@ -745,6 +762,7 @@ export default function TagihanSppSection({ session, activeTa, readOnly = false 
   // ─────────────────────────────────────────────────────────────────────────────
   const handleExportExcel = async () => {
     try {
+      const ExcelJS = (await import('exceljs')).default
       const workbook = new ExcelJS.Workbook()
       const worksheet = workbook.addWorksheet(`Rekap SPP ${kelasFilter}`)
 
@@ -863,8 +881,8 @@ export default function TagihanSppSection({ session, activeTa, readOnly = false 
       return
     }
     const cleanPhone = String(row.noHpOrtu).replace(/[^0-9]/g, '').replace(/^0/, '62')
-    const message = encodeURIComponent(generateWaMessage(row))
-    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank')
+    const message = generateWaMessage(row)
+    sendWhatsAppMessage(cleanPhone, message)
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { getTodayWIB } from '../utils/dateUtils'
+import { evaluatePresensiSession } from '../utils/presensiSessionUtils'
 
 // Constants
 const STATUS_LABELS = { H: 'Hadir', T: 'Terlambat', S: 'Sakit', I: 'Izin', A: 'Alpha', P: 'Pulang' }
@@ -17,6 +18,7 @@ const getPoinMeta = (p, max = 100) => {
 export default function SiswaDashboardWidgets({ studentData, menuTypes, onNavigate, isOrangTua = false, showFeatureConfig = { presensi: true, nilai: true, poin: true } }) {
   const [presensiHariIni, setPresensiHariIni] = useState(null)
   const [sesiPresensiAktif, setSesiPresensiAktif] = useState(false)
+  const [sesiPulangAktif, setSesiPulangAktif] = useState(false)
   const [rekapBulan, setRekapBulan] = useState({ H: 0, T: 0, S: 0, I: 0, A: 0, total: 0 })
   const [nilaiTerbaru, setNilaiTerbaru] = useState([])
   const [dokumenStatus, setDokumenStatus] = useState([])
@@ -48,13 +50,21 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
 
     let channel = null
     try {
-      const channelName = `sdw-${studentData.nisn}-${Math.random().toString(36).slice(2)}`
+      const channelName = `sdw-${studentData.nisn}`
       channel = supabase.channel(channelName)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian', filter: `siswa_nisn=eq.${studentData.nisn}` }, () => {
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'presensi_harian', 
+          filter: `siswa_nisn=eq.${studentData.nisn}` 
+        }, () => {
           fetchPresensi()
           fetchRekapBulan()
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'sesi_presensi' }, () => {
+          fetchPresensi()
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'pengaturan_sekolah' }, () => {
           fetchPresensi()
         })
         .subscribe()
@@ -76,11 +86,12 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     const [{ data: prData }, { data: sesi }, { data: settings }] = await Promise.all([
       supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
       supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
-      supabase.from('pengaturan_sekolah').select('setting_key, setting_value').eq('setting_key', 'presensi_pulang_aktif').maybeSingle()
+      supabase.from('pengaturan_sekolah').select('setting_key, setting_value')
     ])
-    const pulAktif = settings?.setting_value === 'true' || settings?.setting_value === '1'
     setPresensiHariIni(prData || [])
-    setSesiPresensiAktif(!!sesi || pulAktif)
+    const evalResult = evaluatePresensiSession({ settings: settings || [], sesiPresensiRow: sesi })
+    setSesiPresensiAktif(evalResult.isSesiAktif)
+    setSesiPulangAktif(evalResult.isSesiPulangAktif)
   }
 
   const fetchRekapBulan = async () => {
@@ -171,19 +182,20 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       })
       .catch(err => console.warn('Widget berita error:', err))
 
-    // 5. Settings (Countdown & Presensi Pulang)
-    supabase.from('pengaturan_sekolah').select('setting_key, setting_value').in('setting_key', ['countdown_label', 'countdown_date', 'poin_default_siswa', 'presensi_pulang_aktif'])
-      .then(({ data: settingsData }) => {
+    // 5. Settings (Countdown & Presensi)
+    supabase.from('pengaturan_sekolah').select('setting_key, setting_value')
+      .then(async ({ data: settingsData }) => {
         if (!settingsData) return
-        const pulAktifVal = settingsData.find(s => s.setting_key === 'presensi_pulang_aktif')?.setting_value
-        const pulAktif = pulAktifVal === 'true' || pulAktifVal === '1'
-        
-        // Also check sesi_presensi for active session
-        supabase.from('sesi_presensi').select('*').eq('tanggal', todayStr).maybeSingle()
-          .then(({ data: sesiData }) => {
-            setSesiPresensiAktif(!!sesiData || pulAktif)
-          })
-          .catch(() => setSesiPresensiAktif(pulAktif))
+
+        // Evaluate presensi session accurately
+        try {
+          const { data: sesiData } = await supabase.from('sesi_presensi').select('*').eq('tanggal', todayStr).maybeSingle()
+          const evalResult = evaluatePresensiSession({ settings: settingsData, sesiPresensiRow: sesiData })
+          setSesiPresensiAktif(evalResult.isSesiAktif)
+          setSesiPulangAktif(evalResult.isSesiPulangAktif)
+        } catch (err) {
+          console.warn('Widget evaluatePresensiSession error:', err)
+        }
 
         // Set countdown
         const labelStr = settingsData.find(s => s.setting_key === 'countdown_label')?.setting_value
@@ -260,38 +272,70 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     <div className="animate-slide-up space-y-6">
       
       {/* WIDGET 1: Status Presensi Hari Ini */}
-      {!isOrangTua && showFeatureConfig.presensi && (((presensiHariIni && presensiHariIni.length > 0)) || sesiPresensiAktif) && (
-        <div className={`p-6 rounded-2xl shadow-sm border ${presensiHariIni && presensiHariIni.length > 0 ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-slate-800 text-lg mb-1">
-                {presensiHariIni && presensiHariIni.length > 0 ? `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉` : 'Perhatian: Belum Presensi'}
-              </h3>
-              {presensiHariIni && presensiHariIni.length > 0 ? (
-                <div className="text-sm text-slate-500 flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
-                  {presensiHariIni.map(p => (
-                    <span key={p.id} className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-100">
-                      <span className="font-extrabold capitalize text-xs text-slate-550">{p.tipe || 'masuk'}:</span>
-                      <span className="font-bold text-xs text-slate-700">{STATUS_LABELS[p.status] || p.status}</span>
-                      <span className="text-xs text-slate-400 font-mono">({p.waktu})</span>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-amber-700">Anda belum melakukan presensi hari ini. Silakan klik tombol di samping.</p>
-              )}
+      {!isOrangTua && showFeatureConfig.presensi && (((presensiHariIni && presensiHariIni.length > 0)) || sesiPresensiAktif) && (() => {
+        const hasMasuk = presensiHariIni?.some(p => !p.tipe || p.tipe === 'masuk')
+        const hasPulang = presensiHariIni?.some(p => p.tipe === 'pulang')
+        const isSelesaiHariIni = hasPulang
+        const isWaktunyaPulang = !hasPulang && sesiPulangAktif
+        const isBelumMasuk = !hasMasuk && !sesiPulangAktif
+
+        return (
+          <div className={`p-6 rounded-2xl shadow-sm border ${isSelesaiHariIni ? 'bg-white border-slate-200' : isWaktunyaPulang ? 'bg-blue-50/70 border-blue-200' : hasMasuk ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className="flex items-center justify-between gap-4 flex-wrap sm:flex-nowrap">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg mb-1">
+                  {isSelesaiHariIni ? (
+                    `Sampai jumpa besok, ${studentData.nama_lengkap.split(' ')[0]}! 👋`
+                  ) : isWaktunyaPulang ? (
+                    'Sesi Presensi Pulang Dibuka! 🏠'
+                  ) : hasMasuk ? (
+                    `Selamat datang, ${studentData.nama_lengkap.split(' ')[0]}! 🎉`
+                  ) : (
+                    'Perhatian: Belum Presensi Masuk'
+                  )}
+                </h3>
+                {presensiHariIni && presensiHariIni.length > 0 ? (
+                  <div className="text-sm text-slate-500 flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
+                    {presensiHariIni.map(p => (
+                      <span key={p.id} className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-100">
+                        <span className="font-extrabold capitalize text-xs text-slate-500">{p.tipe || 'masuk'}:</span>
+                        <span className="font-bold text-xs text-slate-700">{STATUS_LABELS[p.status] || p.status}</span>
+                        <span className="text-xs text-slate-400 font-mono">({p.waktu})</span>
+                      </span>
+                    ))}
+                    {isWaktunyaPulang && (
+                      <span className="text-xs font-bold text-blue-700 self-center">
+                        • Silakan lakukan presensi pulang
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-amber-700">
+                    Anda belum melakukan presensi hari ini. Silakan klik tombol di samping.
+                  </p>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              {isWaktunyaPulang ? (
+                <button 
+                  onClick={() => onNavigate('PRESENSI')}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-blue-100 cursor-pointer"
+                >
+                  Presensi Pulang
+                </button>
+              ) : isBelumMasuk ? (
+                <button 
+                  onClick={() => onNavigate('PRESENSI')}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-indigo-100 cursor-pointer"
+                >
+                  Presensi Masuk
+                </button>
+              ) : null}
             </div>
-            {!(presensiHariIni && presensiHariIni.length > 0) && (
-              <button 
-                onClick={() => onNavigate('PRESENSI')}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-all whitespace-nowrap shadow-md shadow-indigo-100"
-              >
-                Scan QR
-              </button>
-            )}
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         

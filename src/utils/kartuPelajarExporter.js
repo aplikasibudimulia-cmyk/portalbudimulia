@@ -1,5 +1,8 @@
-import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
+// Heavy libs di-lazy-load saat dibutuhkan (hemat ~580KB dari initial load)
+let _html2canvas, _jsPDF
+const getHtml2Canvas = async () => _html2canvas || (_html2canvas = (await import('html2canvas')).default)
+const getJsPDF = async () => _jsPDF || (_jsPDF = (await import('jspdf')).default || (await import('jspdf')).jsPDF)
+
 import { Capacitor } from '@capacitor/core'
 import { downloadFile, downloadPdf } from './fileDownloader'
 
@@ -220,6 +223,7 @@ const renderCardElement = async (cardElement) => {
   const width = Math.round(rect.width) || 510
   const height = Math.round(rect.height) || 322
 
+  const html2canvas = await getHtml2Canvas()
   return await withTextBaselineCompensation(async () => {
     return await html2canvas(cardElement, {
       ...defaultHtml2CanvasOptions,
@@ -276,6 +280,7 @@ export const exportCardAsPdf = async (frontElement, backElement, fileName = 'kar
   if (!frontElement && !backElement) return false
   try {
     await ensureFontsReady()
+    const jsPDF = await getJsPDF()
     const pdf = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',
@@ -318,6 +323,7 @@ export const exportBulkCardsAsPdf = async (cardElements, fileName = 'kartu_pelaj
   if (!cardElements || cardElements.length === 0) return false
   try {
     await ensureFontsReady()
+    const jsPDF = await getJsPDF()
     const pdf = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',

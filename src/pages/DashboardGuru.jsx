@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
@@ -6,8 +6,12 @@ import { useConfirm } from '../utils/useConfirm'
 import { initNativePushNotifications } from '../utils/pushNotif'
 import PiketDashboardSection from '../components/PiketDashboardSection'
 import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
+import PresensiMatriksRekapSection from '../components/PresensiMatriksRekapSection'
 import TabunganSiswaSection from '../components/TabunganSiswaSection'
 import NilaiGuruSection from '../components/NilaiGuruSection'
+import LegerNilaiKurikulumSection from '../components/LegerNilaiKurikulumSection'
+import RaporSiswaSection from '../components/RaporSiswaSection'
+import AdminEkskulSection from '../components/AdminEkskulSection'
 import GuruDashboardBerita from '../components/GuruDashboardBerita'
 import AdminTataTertibSection from '../components/AdminTataTertibSection'
 import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
@@ -40,9 +44,12 @@ import GuruSiswaDetailModal from '../components/GuruSiswaDetailModal'
 import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
 import AdminPrestasiSection from '../components/AdminPrestasiSection'
 import PendampingLombaSection from '../components/PendampingLombaSection'
-import TagihanSppSection from '../components/TagihanSppSection'
 import ExportKontakModal from '../components/ExportKontakModal'
+import CbtBankSoalGuruSection from '../components/cbt/CbtBankSoalGuruSection'
+import CbtSesiUjianGuruSection from '../components/cbt/CbtSesiUjianGuruSection'
+import CbtMonitorPengawasSection from '../components/cbt/CbtMonitorPengawasSection'
 import { getTodayWIB, getCurrentTimeWIB, getCurrentTimeSecondsWIB, getDayNameWIB } from '../utils/dateUtils'
+import { sortKelasList } from '../utils/kelasHelper'
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -124,7 +131,7 @@ function GuruAnnouncementSection({ type, students, fitur, fotos, onRefresh }) {
   const allowedClasses = canKelola ? null : (session.kelas || []).map(k => k.kelas)
   const displayStudents = allowedClasses ? students.filter(s => allowedClasses.includes(s.kelas)) : students
 
-  const uniqueClasses = [...new Set(displayStudents.map(s => s.kelas).filter(Boolean))].sort()
+  const uniqueClasses = sortKelasList([...new Set(displayStudents.map(s => s.kelas).filter(Boolean))])
 
   useEffect(() => {
     fetchFiles()
@@ -718,6 +725,7 @@ export default function DashboardGuru() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [session, setSession] = useState(null)
+  const [serverVerifiedAdmin, setServerVerifiedAdmin] = useState(false)
   const activeMenu = searchParams.get('menu') || 'dashboard'
   
   const setActiveMenu = (nextVal) => {
@@ -730,6 +738,9 @@ export default function DashboardGuru() {
   const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
   const [showIosFsHint, setShowIosFsHint] = useState(false)
   const [hideSidebar, setHideSidebar] = useState(false)
+  // Sidebar helpers — sederhana & terbukti di semua platform
+  const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
+  const closeSidebar = () => setSidebarOpen(false)
 
   // Detect iOS (Safari doesn't support requestFullscreen)
   const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
@@ -800,17 +811,38 @@ export default function DashboardGuru() {
     };
   }, []);
   const [showCalendarGuru, setShowCalendarGuru] = useState(true)
-  const [fitur, setFitur] = useState(new Set())
-  const [fiturAkses, setFiturAkses] = useState({})
+  const [fitur, setFitur] = useState(() => {
+    try {
+      const cached = localStorage.getItem('guru_cached_fitur')
+      return cached ? new Set(JSON.parse(cached)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  const [fiturAkses, setFiturAkses] = useState(() => {
+    try {
+      const cached = localStorage.getItem('guru_cached_fitur_akses')
+      return cached ? JSON.parse(cached) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncToast, setSyncToast] = useState(null)
   const [loading, setLoading] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState({
     manajemenPengguna: false,
     akademikData: false,
+    penilaianCbt: false,
     kehadiranPresensi: false,
     informasiDokumen: false,
     sistemPoin: false,
     analitikLaporan: false
   })
+
+  // CBT Access & Monitor State
+  const [canAccessCbt, setCanAccessCbt] = useState(false)
+  const [activeCbtMonitorSesi, setActiveCbtMonitorSesi] = useState(null)
 
   // Notification States
   const [unreadNotifCount, setUnreadNotifCount] = useState(0)
@@ -874,6 +906,7 @@ export default function DashboardGuru() {
   const [showAllJadwal, setShowAllJadwal] = useState(false)
   const [waliKehadiran, setWaliKehadiran] = useState(null)
   const [waliRecapList, setWaliRecapList] = useState([])
+  const [activeSemInfo, setActiveSemInfo] = useState({ nomor: 1, nama: 'Semester 1' })
   const [waliTodayPresensiMap, setWaliTodayPresensiMap] = useState({})
   const [updatingWaliNisn, setUpdatingWaliNisn] = useState(null)
   const [recapSearchText, setRecapSearchText] = useState('')
@@ -944,6 +977,48 @@ export default function DashboardGuru() {
   const [selectedDateEvents, setSelectedDateEvents] = useState([])
   const [selectedKelas, setSelectedKelas] = useState('7A')
   const [jadwalSemester, setJadwalSemester] = useState('2')
+  const [guruJadwalTab, setGuruJadwalTab] = useState('saya') // 'saya' | 'kelas'
+  const [guruJadwalWeekly, setGuruJadwalWeekly] = useState([])
+  const [loadingGuruWeekly, setLoadingGuruWeekly] = useState(false)
+  const [guruWeeklyHari, setGuruWeeklyHari] = useState(() => {
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
+    const today = days[new Date().getDay()]
+    return ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'].includes(today) ? today : 'Senin'
+  })
+
+  const fetchGuruWeeklyJadwal = React.useCallback(async () => {
+    if (!session?.id) return
+    setLoadingGuruWeekly(true)
+    try {
+      const semNum = parseInt(jadwalSemester) || 1
+      let query = supabase
+        .from('jadwal_pelajaran')
+        .select(`
+          id, kelas, hari, jam_ke, waktu_mulai, waktu_selesai,
+          mata_pelajaran:mata_pelajaran_id ( id, nama, singkatan )
+        `)
+        .eq('guru_id', session.id)
+
+      if (activeTa?.id) {
+        query = query.eq('tahun_ajaran_id', activeTa.id)
+      }
+      const { data, error } = await query.eq('semester', semNum).order('jam_ke', { ascending: true })
+
+      if (!error && data) {
+        setGuruJadwalWeekly(data)
+      }
+    } catch (err) {
+      console.warn('Error fetching weekly jadwal guru:', err)
+    } finally {
+      setLoadingGuruWeekly(false)
+    }
+  }, [session?.id, activeTa?.id, jadwalSemester])
+
+  useEffect(() => {
+    if (activeMenu === 'jadwal_pelajaran') {
+      fetchGuruWeeklyJadwal()
+    }
+  }, [activeMenu, fetchGuruWeeklyJadwal])
 
   // States for delegated Admin panels
   const [allStudents, setAllStudents] = useState([])
@@ -1043,15 +1118,19 @@ export default function DashboardGuru() {
   useEffect(() => {
     if (loading) return
     const staticMenus = [
-      'dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'siswa_mapel', 
+      'dashboard', 'profil', 'manajemen_akun', 'siswa_wali', 'presensi_kelas', 'siswa_mapel', 
       'input_nilai', 'piket_dashboard', 'data_presensi_siswa', 'tabungan_siswa', 'password', 
       'tata_tertib', 'katalog_poin', 'tahap_pembinaan', 'catat_poin', 
       'pengaturan_poin', 'pengajuan_poin', 'dashboard_eksekutif', 'program_sekolah', 
       'denah_kehadiran', 'rekap_poin', 'pengumuman_resmi_kepsek',
       'dokumen_guru', 'konsultasi_bk', 'pengacak_duduk', 'jadwal_pelajaran', 'laporan_keterlambatan', 'prestasi_siswa', 'pendamping_lomba',
+      // CBT Menus
+      'cbt_bank_soal', 'cbt_sesi', 'cbt_pengawas',
       // Delegated Admin Menus
       'manajemen_role', 'log_aktivitas', 'berita_sekolah', 'notifikasi', 
-      'presensi_qr', 'konfigurasi'
+      'presensi_qr', 'konfigurasi',
+      // Nilai, Rapor, & Ekskul Menus
+      'rapor_siswa', 'leger_nilai', 'ekskul_nilai'
     ]
     if (!staticMenus.includes(activeMenu)) {
       const exists = menuTypes.find(t => t.id === activeMenu)
@@ -1063,6 +1142,63 @@ export default function DashboardGuru() {
 
 
 
+
+  const refreshWaliPresensiRef = useRef(null)
+
+  const refreshWaliPresensiToday = useCallback(async (currSession) => {
+    try {
+      const sess = currSession || session
+      if (!sess) return
+      const activeWali = sess.kelas?.find(k => k.kelas)
+      if (!activeWali?.kelas) return
+
+      const todayStr = getTodayWIB()
+      const { data: presensiData } = await supabase
+        .from('presensi_harian')
+        .select('siswa_nisn, status, tipe, waktu, selfie_url, keterangan')
+        .eq('kelas', activeWali.kelas)
+        .eq('tanggal', todayStr)
+
+      const todayMap = {}
+      let hadir = 0, terlambat = 0, sakit = 0, izin = 0, alpa = 0
+      if (presensiData) {
+        presensiData.forEach(p => {
+          if (!p.tipe || p.tipe === 'masuk') {
+            todayMap[p.siswa_nisn] = p
+          }
+          if (p.tipe && p.tipe !== 'masuk') return
+          const st = p.status ? p.status.toUpperCase() : ''
+          if (st === 'H' || st === 'HADIR') hadir++
+          else if (st === 'T' || st === 'TERLAMBAT') terlambat++
+          else if (st === 'S' || st === 'SAKIT') sakit++
+          else if (st === 'I' || st === 'IZIN') izin++
+          else if (st === 'A' || st === 'ALPA' || st === 'TANPA KETERANGAN') alpa++
+        })
+      }
+      setWaliTodayPresensiMap(todayMap)
+
+      setWaliKehadiran(prev => {
+        if (!prev) return prev
+        const totalWaliStudents = prev.totalSiswa || 0
+        const masukRecords = presensiData ? presensiData.filter(p => !p.tipe || p.tipe === 'masuk') : []
+        const sudahPresensiCount = masukRecords.length
+        const belumPresensiCount = Math.max(0, totalWaliStudents - sudahPresensiCount)
+
+        return {
+          ...prev,
+          hadir, terlambat, sakit, izin, alpa,
+          sudahPresensi: sudahPresensiCount,
+          belumPresensi: belumPresensiCount
+        }
+      })
+    } catch (e) {
+      console.warn('[Realtime Presensi] Refresh wali presensi failed:', e)
+    }
+  }, [session])
+
+  useEffect(() => {
+    refreshWaliPresensiRef.current = refreshWaliPresensiToday
+  }, [refreshWaliPresensiToday])
 
   useEffect(() => {
     const rawSession = localStorage.getItem('guru_session')
@@ -1082,6 +1218,25 @@ export default function DashboardGuru() {
     setSession(parsed)
     fetchData(parsed)
 
+    // Validasi Keamanan: Verifikasi ke server database apakah pegawai ini benar-benar Admin/Pegawai aktif
+    if (parsed.id && parsed.akun_id) {
+      supabase.rpc('fn_verify_guru_roles', {
+        p_guru_id: parsed.id,
+        p_akun_id: parsed.akun_id
+      }).then(({ data, error }) => {
+        if (data?.valid) {
+          setServerVerifiedAdmin(data.is_admin === true)
+          if (Array.isArray(data.roles)) {
+            setSession(prev => prev ? ({ ...prev, roles: data.roles }) : prev)
+          }
+        } else if (error || data?.valid === false) {
+          console.warn('[Security] Sesi guru ditolak server:', data?.msg || error?.message)
+          localStorage.removeItem('guru_session')
+          navigate('/login?r=guru')
+        }
+      }).catch(() => {})
+    }
+
     const broadcastChannel = supabase.channel('jenis-updates-all')
       .on('broadcast', { event: 'jenis_updated' }, () => {
         console.log('[REALTIME SYNC] Jenis pengumuman updated, refetching...')
@@ -1089,14 +1244,30 @@ export default function DashboardGuru() {
       })
       .subscribe()
 
+    let presensiDebounceTimer = null
     const presensiChannel = supabase.channel('realtime-presensi-harian-guru')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian' }, () => {
-        console.log('[REALTIME SYNC] Presensi harian updated, refetching dashboard data...')
-        fetchData(parsed)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presensi_harian' }, (payload) => {
+        const record = payload.new || payload.old
+        const activeWali = parsed?.kelas?.find(k => k.kelas)
+        const isPiket = parsed?.roles?.some(r => r.nama?.toLowerCase().includes('piket') || r.nama?.toLowerCase().includes('admin'))
+
+        // Filter efisiensi Egress: jika guru bukan piket dan event dari kelas lain, abaikan
+        if (!isPiket && activeWali && record?.kelas && record.kelas !== activeWali.kelas) {
+          return
+        }
+
+        // Debounce 3 detik: Menahan banjir request saat banyak siswa tap bertubi-tubi
+        if (presensiDebounceTimer) clearTimeout(presensiDebounceTimer)
+        presensiDebounceTimer = setTimeout(() => {
+          if (refreshWaliPresensiRef.current) {
+            refreshWaliPresensiRef.current(parsed)
+          }
+        }, 3000)
       })
       .subscribe()
 
     return () => {
+      if (presensiDebounceTimer) clearTimeout(presensiDebounceTimer)
       supabase.removeChannel(broadcastChannel)
       supabase.removeChannel(presensiChannel)
     }
@@ -1139,25 +1310,13 @@ export default function DashboardGuru() {
     }
   }, [])
 
-  // Check Admin Role
+  // Check Admin Role (Wajib terverifikasi oleh server-side RPC, bukan manipulasi localStorage)
   const isAdminUser = useMemo(() => {
     if (!session) return false
-    const roleStr = String(session?.role || session?.app_role || '').toLowerCase()
-    if (roleStr.includes('admin') || roleStr.includes('superadmin')) return true
-    return session?.roles?.some(r => {
-      const n = String(r.nama || r || '').toLowerCase()
-      return n.includes('admin') || n.includes('superadmin')
-    })
-  }, [session])
+    return serverVerifiedAdmin === true
+  }, [session, serverVerifiedAdmin])
 
-  // Check TU Keuangan Role
-  const isKeuanganUser = useMemo(() => {
-    if (!session) return false
-    return session?.roles?.some(r => {
-      const n = String(r.nama || r || '').toLowerCase()
-      return n.includes('keuangan') || n.includes('tu') || n.includes('bendahara') || n.includes('pembayaran') || n.includes('uang sekolah') || n.includes('spp') || n.includes('kasir')
-    }) || fitur.has('kelola_tagihan_spp') || fitur.has('lihat_laporan_keuangan_spp')
-  }, [session, fitur])
+  const isGlobalAdmin = isAdminUser
 
   // Check if user has teaching assignments
   const hasTeachingDuties = useMemo(() => {
@@ -1165,11 +1324,102 @@ export default function DashboardGuru() {
     return (session.guru_mapel_raw?.length > 0 || session.kelas?.length > 0 || session.mapels?.length > 0)
   }, [session])
 
+  // Check Kurikulum Role
+  const isKurikulumUser = useMemo(() => {
+    if (!session) return false
+    if (isAdminUser) return true
+    return session?.roles?.some(r => {
+      const n = String(r?.nama || r || '').toLowerCase()
+      return n.includes('kurikulum')
+    })
+  }, [session, isAdminUser])
+
+  // Check Kepala Sekolah Role
+  const isKepalaSekolah = useMemo(() => {
+    if (!session) return false
+    return session?.roles?.some(r => {
+      const n = String(r?.nama || r || '').toLowerCase()
+      return n.includes('kepala sekolah')
+    })
+  }, [session])
+
+  // Check Wali Kelas (memiliki kelas binaan atau role wali kelas)
+  const isWaliKelasUser = useMemo(() => {
+    if (!session) return false
+    return (session.kelas?.length > 0) || session?.roles?.some(r => {
+      const n = String(r?.nama || r || '').toLowerCase()
+      return n.includes('wali kelas')
+    })
+  }, [session])
+
+  // Check Ekskul Access (Kurikulum atau Koordinator Ekskul)
+  const canAccessEkskul = useMemo(() => {
+    if (!session) return false
+    if (isKurikulumUser) return true
+    return fitur.has('kelola_ekskul') || session?.roles?.some(r => {
+      const n = String(r?.nama || r || '').toLowerCase()
+      return n.includes('ekskul')
+    })
+  }, [session, isKurikulumUser, fitur])
+
+  // Check Rapor Siswa Access (Wali Kelas, Kurikulum, Kepala Sekolah, Admin)
+  const canAccessRapor = useMemo(() => {
+    if (!session) return false
+    return isKurikulumUser || isKepalaSekolah || isWaliKelasUser
+  }, [session, isKurikulumUser, isKepalaSekolah, isWaliKelasUser])
+
   useEffect(() => {
+    if (!session) return
     if (!isAdminUser && showTabunganWaliKelas === false && activeMenu === 'tabungan_siswa') {
       setActiveMenu('dashboard')
     }
-  }, [isAdminUser, showTabunganWaliKelas, activeMenu])
+    if (activeMenu === 'leger_nilai' && !isKurikulumUser) {
+      setActiveMenu('dashboard')
+    }
+    if (activeMenu === 'ekskul_nilai' && !canAccessEkskul) {
+      setActiveMenu('dashboard')
+    }
+    if (activeMenu === 'rapor_siswa' && !canAccessRapor) {
+      setActiveMenu('dashboard')
+    }
+  }, [session, isAdminUser, showTabunganWaliKelas, activeMenu, isKurikulumUser, canAccessEkskul, canAccessRapor])
+
+  // Pengecekan Hak Akses CBT Guru & Pengawas (Mode Rilis Publik vs Whitelist Tester)
+  useEffect(() => {
+    if (!session) return
+    const checkCbtAccess = async () => {
+      try {
+        if (isAdminUser) {
+          setCanAccessCbt(true)
+          return
+        }
+        const { data: config } = await supabase
+          .from('cbt_pengaturan')
+          .select('is_cbt_active')
+          .eq('id', 1)
+          .single()
+
+        if (config?.is_cbt_active) {
+          setCanAccessCbt(true)
+          return
+        }
+
+        const guruId = session.user?.id || session.id
+        const { data: whitelist } = await supabase
+          .from('cbt_whitelist_user')
+          .select('id')
+          .eq('user_id', guruId)
+          .maybeSingle()
+
+        if (whitelist) {
+          setCanAccessCbt(true)
+        }
+      } catch (err) {
+        console.error('[CBT Access Check Guru] Error:', err)
+      }
+    }
+    checkCbtAccess()
+  }, [session, isAdminUser])
 
   // Fetch full admin resources on-demand when entering an Admin module
   useEffect(() => {
@@ -1204,38 +1454,110 @@ export default function DashboardGuru() {
     }
   }, [])
 
-  const fetchData = async (userData) => {
-    // 0. Refresh Guru Session Data
-    const { data: freshGuru } = await supabase
-      .from('guru')
-      .select('*, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_bk(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
-      .eq('id', userData.id)
-      .single()
+  const handleSyncDataGuru = async () => {
+    if (isSyncing) return
+    setIsSyncing(true)
+    try {
+      const raw = localStorage.getItem('guru_session')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        await fetchData(parsed)
+      }
+      setSyncToast({ type: 'success', text: '✅ Data & hak akses guru berhasil disinkronkan!' })
+      setTimeout(() => setSyncToast(null), 3500)
+    } catch (e) {
+      setSyncToast({ type: 'error', text: '❌ Gagal sinkronisasi data.' })
+      setTimeout(() => setSyncToast(null), 3500)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
 
-    let activeSession = userData
-    if (freshGuru) {
-      activeSession = {
-        ...userData,
+  const fetchData = async (userData) => {
+    // 0. Refresh Guru Session Data with resilient fallback
+    let freshGuru = null
+    try {
+      const { data, error } = await supabase
+        .from('guru')
+        .select('id, nama_guru, kode, foto_url, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_bk(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
+        .eq('id', userData.id)
+        .single()
+      if (!error && data) {
+        freshGuru = data
+      }
+    } catch (e) {
+      console.warn('Refresh guru error, attempting fallback:', e)
+    }
+
+    // Fallback: Jika freshGuru gagal atau data mapel kosong, query tabel guru_mapel atau panggil RPC fn_get_guru_mapel
+    let guruMapelData = freshGuru?.guru_mapel || userData?.guru_mapel_raw || []
+    if ((!guruMapelData || guruMapelData.length === 0) && userData?.id) {
+      try {
+        const { data: directGm } = await supabase
+          .from('guru_mapel')
+          .select('kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama)')
+          .eq('guru_id', userData.id)
+        if (directGm && directGm.length > 0) {
+          guruMapelData = directGm
+        }
+      } catch (e) {
+        console.warn('Fallback direct guru_mapel error:', e)
+      }
+
+      // Jika direct query masih kosong (misal diblokir RLS PostgREST), coba via RPC fn_get_guru_mapel
+      if (!guruMapelData || guruMapelData.length === 0) {
+        try {
+          const { data: rpcGm } = await supabase.rpc('fn_get_guru_mapel', { p_guru_id: userData.id })
+          if (rpcGm && Array.isArray(rpcGm) && rpcGm.length > 0) {
+            guruMapelData = rpcGm
+          }
+        } catch (e) {
+          console.warn('Fallback RPC fn_get_guru_mapel error:', e)
+        }
+      }
+    }
+
+    // Fallback: Jika role kosong, query langsung ke guru_role
+    let guruRoles = freshGuru?.guru_role?.map(r => ({ id: r.role_id, nama: r.roles?.nama })) || userData?.roles || []
+    if ((!guruRoles || guruRoles.length === 0) && userData?.id) {
+      try {
+        const { data: directGr } = await supabase
+          .from('guru_role')
+          .select('role_id, roles(nama)')
+          .eq('guru_id', userData.id)
+        if (directGr && directGr.length > 0) {
+          guruRoles = directGr.map(r => ({ id: r.role_id, nama: r.roles?.nama }))
+        }
+      } catch (e) {
+        console.warn('Fallback direct guru_role error:', e)
+      }
+    }
+
+    let activeSession = {
+      ...userData,
+      ...(freshGuru ? {
         kode: freshGuru.kode,
         nama_guru: freshGuru.nama_guru,
         user_name: freshGuru.user_name,
         foto_url: freshGuru.foto_url,
-        roles: freshGuru.guru_role.map(r => ({ id: r.role_id, nama: r.roles?.nama })),
-        kelas: freshGuru.guru_kelas,
-        bk_kelas: freshGuru.guru_bk ? [...new Set(freshGuru.guru_bk.map(b => b.kelas).filter(Boolean))] : [],
-        guru_mapel_raw: freshGuru.guru_mapel,
-        mapels: freshGuru.guru_mapel ? Array.from(new Set(freshGuru.guru_mapel.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))) : []
-      }
-      setSession(activeSession)
-      localStorage.setItem('guru_session', JSON.stringify(activeSession))
-      if (activeSession?.id) {
-        initNativePushNotifications({ nisn: String(activeSession.id), role: 'Guru' })
-      }
-      
-      // Default selectedKelas to teacher's own Wali Kelas assignment if available
-      if (activeSession.kelas && activeSession.kelas[0]?.kelas) {
-        setSelectedKelas(activeSession.kelas[0].kelas)
-      }
+        kelas: freshGuru.guru_kelas || userData.kelas,
+        bk_kelas: freshGuru.guru_bk ? [...new Set(freshGuru.guru_bk.map(b => b.kelas).filter(Boolean))] : (userData.bk_kelas || [])
+      } : {}),
+      roles: guruRoles.length > 0 ? guruRoles : (userData.roles || []),
+      guru_mapel_raw: guruMapelData.length > 0 ? guruMapelData : (userData.guru_mapel_raw || []),
+      mapels: guruMapelData.length > 0 
+        ? Array.from(new Set(guruMapelData.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))) 
+        : (userData.mapels || [])
+    }
+    setSession(activeSession)
+    localStorage.setItem('guru_session', JSON.stringify(activeSession))
+    if (activeSession?.id) {
+      initNativePushNotifications({ nisn: String(activeSession.id), role: 'Guru' })
+    }
+    
+    // Default selectedKelas to teacher's own Wali Kelas assignment if available
+    if (activeSession.kelas && activeSession.kelas[0]?.kelas) {
+      setSelectedKelas(prev => prev || activeSession.kelas[0].kelas)
     }
 
     // Fetch Kalender Akademik visibility settings for Guru
@@ -1246,22 +1568,32 @@ export default function DashboardGuru() {
     const { data: semData } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'jadwal_semester_aktif').maybeSingle()
     setJadwalSemester(semData ? semData.setting_value || '2' : '2')
 
-    // 1. Fetch features
-    let currentFitur = new Set()
-    let currentFiturAkses = {}
-    const roleIds = activeSession.roles.map(r => r.id)
+    // 1. Fetch features (cache-first + background sync)
+    let currentFitur = new Set(fitur)
+    let currentFiturAkses = { ...fiturAkses }
+    const roleIds = (activeSession.roles || []).map(r => r.id).filter(Boolean)
     if (roleIds.length > 0) {
-      const { data } = await supabase.from('role_fitur').select('fitur, akses_level').in('role_id', roleIds)
-      if (data) {
-        data.forEach(d => {
-          currentFitur.add(d.fitur)
-          const level = d.akses_level || 'edit'
-          if (level === 'edit' || !currentFiturAkses[d.fitur]) {
-            currentFiturAkses[d.fitur] = level
-          }
-        })
-        setFitur(currentFitur)
-        setFiturAkses(currentFiturAkses)
+      try {
+        const { data } = await supabase.from('role_fitur').select('fitur, akses_level').in('role_id', roleIds)
+        if (data && data.length > 0) {
+          const freshFitur = new Set()
+          const freshAkses = {}
+          data.forEach(d => {
+            freshFitur.add(d.fitur)
+            const level = d.akses_level || 'edit'
+            if (level === 'edit' || !freshAkses[d.fitur]) {
+              freshAkses[d.fitur] = level
+            }
+          })
+          currentFitur = freshFitur
+          currentFiturAkses = freshAkses
+          setFitur(freshFitur)
+          setFiturAkses(freshAkses)
+          localStorage.setItem('guru_cached_fitur', JSON.stringify([...freshFitur]))
+          localStorage.setItem('guru_cached_fitur_akses', JSON.stringify(freshAkses))
+        }
+      } catch (rfErr) {
+        console.warn('Fetch role_fitur error, mempertahankan cache:', rfErr)
       }
     }
 
@@ -1284,6 +1616,8 @@ export default function DashboardGuru() {
       delete currentFiturAkses['kelola_pengumuman']
       delete currentFiturAkses['lihat_dokumen']
       setFiturAkses({ ...currentFiturAkses })
+      localStorage.setItem('guru_cached_fitur', JSON.stringify([...currentFitur]))
+      localStorage.setItem('guru_cached_fitur_akses', JSON.stringify(currentFiturAkses))
     }
 
     const allAssignedClasses = Array.from(new Set([
@@ -1423,19 +1757,51 @@ export default function DashboardGuru() {
           belumPresensi: belumPresensiCount
         })
 
-        // Fetch Akumulasi Kehadiran Per Siswa Kelas Perwalian (Histori Tahun Ajaran Ini)
+        // Fetch Akumulasi Kehadiran Lengkap Full 1 Semester Per Siswa Kelas Perwalian
         try {
-          let reqQuery = supabase
-            .from('presensi_harian')
-            .select('siswa_nisn, status, tipe, tanggal')
-            .eq('kelas', activeWali.kelas)
-          
+          // 1. Tentukan rentang tanggal semester aktif dari tabel semester
+          let semStartDate = null
+          let semEndDate = null
+          let semNomor = 1
+
           if (activeTaData?.id) {
-            reqQuery = reqQuery.eq('tahun_ajaran_id', activeTaData.id)
+            const { data: semDataList } = await supabase
+              .from('semester')
+              .select('nomor, tanggal_mulai, tanggal_selesai')
+              .eq('tahun_ajaran_id', activeTaData.id)
+
+            if (semDataList && semDataList.length > 0) {
+              const today = new Date()
+              today.setHours(0, 0, 0, 0)
+              let matchedSem = semDataList.find(s => {
+                if (!s.tanggal_mulai || !s.tanggal_selesai) return false
+                const st = new Date(s.tanggal_mulai)
+                const en = new Date(s.tanggal_selesai)
+                st.setHours(0, 0, 0, 0)
+                en.setHours(23, 59, 59, 999)
+                return today >= st && today <= en
+              })
+              if (!matchedSem) {
+                matchedSem = semDataList.find(s => s.nomor === 1) || semDataList[0]
+              }
+              if (matchedSem) {
+                semNomor = matchedSem.nomor
+                semStartDate = matchedSem.tanggal_mulai
+                semEndDate = matchedSem.tanggal_selesai
+              }
+            }
           }
 
-          const { data: recapData } = await reqQuery
+          setActiveSemInfo({ nomor: semNomor, nama: `Semester ${semNomor}` })
 
+          // Fallback rentang tanggal jika konfigurasi semester belum ada
+          if (!semStartDate || !semEndDate) {
+            const curYear = new Date().getFullYear()
+            semStartDate = `${curYear}-06-01`
+            semEndDate = `${curYear}-12-31`
+          }
+
+          const targetNisns = targetStudents.map(s => s.nisn)
           const studentMap = {}
           targetStudents.forEach(s => {
             studentMap[s.nisn] = {
@@ -1449,9 +1815,46 @@ export default function DashboardGuru() {
             }
           })
 
-          if (recapData) {
-            recapData.forEach(r => {
-              if (r.tipe && r.tipe !== 'masuk') return // hitung presensi masuk saja untuk statistik harian
+          if (targetNisns.length > 0) {
+            // 2. Fetch seluruh data presensi masuk semester ini dengan pagination loop (mengatasi batas 1000 baris PostgREST)
+            let allRecapRows = []
+            let from = 0
+            let hasMore = true
+
+            while (hasMore) {
+              let query = supabase
+                .from('presensi_harian')
+                .select('siswa_nisn, status, tipe, tanggal')
+                .in('siswa_nisn', targetNisns)
+                .or('tipe.eq.masuk,tipe.is.null')
+                .gte('tanggal', semStartDate)
+                .lte('tanggal', semEndDate)
+                .range(from, from + 999)
+
+              const { data: chunk, error } = await query
+              if (error) {
+                console.error("Gagal fetch presensi semester chunk:", error)
+                break
+              }
+              if (!chunk || chunk.length === 0) {
+                hasMore = false
+              } else {
+                allRecapRows = allRecapRows.concat(chunk)
+                if (chunk.length < 1000) {
+                  hasMore = false
+                } else {
+                  from += 1000
+                }
+              }
+            }
+
+            // 3. Rekap akumulasi kehadiran (pastikan 1 tanggal per siswa hanya dihitung 1x)
+            const processedPairs = new Set()
+            allRecapRows.forEach(r => {
+              const pairKey = `${r.siswa_nisn}_${r.tanggal}`
+              if (processedPairs.has(pairKey)) return
+              processedPairs.add(pairKey)
+
               const std = studentMap[r.siswa_nisn]
               if (std) {
                 const st = r.status ? r.status.toUpperCase() : ''
@@ -1683,10 +2086,17 @@ export default function DashboardGuru() {
   }
 
   const handleLogout = async () => {
-    window.__ebudimuliaExplicitLogout = true
-    localStorage.removeItem('guru_session')
-    await supabase.auth.signOut()
-    navigate('/')
+    try {
+      window.__ebudimuliaExplicitLogout = true
+      localStorage.removeItem('guru_session')
+      try {
+        await supabase.auth.signOut()
+      } catch (authErr) {
+        console.warn('[Logout] Supabase signOut error/skipped:', authErr)
+      }
+    } finally {
+      window.location.href = '/'
+    }
   }
 
   const handleResetKodeAkses = async () => {
@@ -1748,7 +2158,7 @@ export default function DashboardGuru() {
     ...(session.guru_mapel_raw?.filter(m => activeTa && m.tahun_ajaran_id == activeTa.id).map(m => m.kelas) || [])
   ])).join(', ') || 'Belum ada'
 
-  const uniqueWaliClasses = [...new Set(waliStudents.map(s => s.kelas).filter(Boolean))].sort()
+  const uniqueWaliClasses = sortKelasList([...new Set(waliStudents.map(s => s.kelas).filter(Boolean))])
   let filteredWaliStudents = waliStudents
   if (siswaClassFilter !== 'all') filteredWaliStudents = filteredWaliStudents.filter(s => s.kelas === siswaClassFilter)
   if (siswaSearch) {
@@ -1776,7 +2186,7 @@ export default function DashboardGuru() {
     })
   }
 
-  const uniqueMapelClasses = [...new Set(mapelStudents.map(s => s.kelas).filter(Boolean))].sort()
+  const uniqueMapelClasses = sortKelasList([...new Set(mapelStudents.map(s => s.kelas).filter(Boolean))])
   let filteredMapelStudents = mapelStudents
   if (siswaClassFilter !== 'all') filteredMapelStudents = filteredMapelStudents.filter(s => s.kelas === siswaClassFilter)
   if (siswaSearch) {
@@ -1785,31 +2195,37 @@ export default function DashboardGuru() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800 font-sans">
+    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-800 font-sans print:h-auto print:overflow-visible print:bg-white print:block">
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={() => setSidebarOpen(false)} />
+        <div 
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in print:hidden" 
+          onClick={closeSidebar} 
+        />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:z-auto 
-        ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} 
-        ${sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
-        ${hideSidebar ? 'md:hidden md:w-0 overflow-hidden' : 'md:translate-x-0'}
-        `}>
-        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
-            {!sidebarCollapsed && (
-              <div className="animate-fade-in truncate">
-                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
-                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
-              </div>
-            )}
+      <aside className={`fixed inset-y-0 left-0 z-40 h-full bg-white flex flex-col transition-all duration-300 ease-in-out md:static md:z-auto md:h-auto md:m-4 md:rounded-xl border-none print:hidden ${
+        sidebarCollapsed ? 'w-72 md:w-24' : 'w-72 md:w-64'
+      } ${
+        sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[150%] md:translate-x-0'
+      } ${
+        hideSidebar ? 'md:hidden md:w-0 overflow-hidden' : ''
+      }`}>
+        <div className={`p-4 sm:p-5 pt-[calc(env(safe-area-inset-top,0px)+1rem)] border-b border-slate-200 flex items-center shrink-0 bg-white transition-all justify-between md:${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity gap-3 md:${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'md:w-14 md:h-14' : 'md:w-20 md:h-20'} w-12 h-12 object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <div className={`animate-fade-in truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>
+              <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+              <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
+            </div>
           </div>
-          {!sidebarCollapsed && (
-            <button className="md:hidden p-2 text-slate-500 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" onClick={() => setSidebarOpen(false)}>
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          )}
+          <button 
+            type="button"
+            className="md:hidden w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 active:scale-95 rounded-xl transition-all touch-manipulation cursor-pointer" 
+            onClick={closeSidebar}
+            aria-label="Tutup Menu"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
 
 
@@ -1882,6 +2298,15 @@ export default function DashboardGuru() {
                       <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Wali Kelas</span>}
                     </button>
                   )}
+                  {session.kelas?.length > 0 && (
+                    <button title="Presensi Kelas" onClick={() => { setActiveMenu('presensi_kelas'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'presensi_kelas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi Kelas</span>}
+                    </button>
+                  )}
                   {fitur.has('lihat_data_siswa') && session.kelas?.length > 0 && (
                     <button title="Pengacak Tempat Duduk" onClick={() => { setActiveMenu('pengacak_duduk'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengacak_duduk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
@@ -1889,16 +2314,43 @@ export default function DashboardGuru() {
                       {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengacak Tempat Duduk</span>}
                     </button>
                   )}
-                  {fitur.has('lihat_data_siswa') && session.guru_mapel_raw?.length > 0 && (
+                  {(fitur.has('lihat_data_siswa') || isAdminUser) && (
                     <button title="Siswa Mata Pelajaran" onClick={() => { setActiveMenu('siswa_mapel'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'siswa_mapel' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                       <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Siswa Mapel</span>}
                     </button>
                   )}
-                  {fitur.has('input_nilai') && session.guru_mapel_raw?.length > 0 && (
+                  {(fitur.has('input_nilai') || isAdminUser) && (
                     <button title="Input Nilai Siswa" onClick={() => { setActiveMenu('input_nilai'); setSidebarOpen(false); }}
                       className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'input_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                       <IconNilai /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Input Nilai</span>}
+                    </button>
+                  )}
+                  {isKurikulumUser && (
+                    <button title="Leger Nilai Kurikulum" onClick={() => { setActiveMenu('leger_nilai'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'leger_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Leger Nilai (Kurikulum)</span>}
+                    </button>
+                  )}
+                  {canAccessRapor && (
+                    <button title="Rapor Siswa" onClick={() => { setActiveMenu('rapor_siswa'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'rapor_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Rapor Siswa</span>}
+                    </button>
+                  )}
+                  {canAccessEkskul && (
+                    <button title="Nilai Ekstrakurikuler" onClick={() => { setActiveMenu('ekskul_nilai'); setSidebarOpen(false); }}
+                      className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'ekskul_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                      <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                      {!sidebarCollapsed && <span className="animate-fade-in truncate">Nilai Ekstrakurikuler</span>}
                     </button>
                   )}
                   {(showCalendarGuru || fitur.has('kelola_kalender_akademik')) && (
@@ -1932,6 +2384,42 @@ export default function DashboardGuru() {
                       {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
                     </button>
                   )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Group: CBT & PENILAIAN DIGITAL */}
+          {canAccessCbt && (
+            <>
+              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, penilaianCbt: !prev.penilaianCbt }))}
+                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+                {!sidebarCollapsed ? (
+                  <><p className="px-3 text-[10px] font-bold text-indigo-600 uppercase tracking-wider select-none">PENILAIAN DIGITAL (CBT)</p>
+                  <svg className={`w-3.5 h-3.5 text-indigo-400 transition-transform duration-200 mr-3 ${collapsedGroups.penilaianCbt ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+                ) : <div className="w-full border-t border-indigo-100 my-2" />}
+              </div>
+              {(!collapsedGroups.penilaianCbt || sidebarCollapsed) && (
+                <div className="space-y-1 animate-fade-in">
+                  <button title="Bank Soal CBT" onClick={() => { setActiveMenu('cbt_bank_soal'); setSidebarOpen(false); }}
+                    className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_bank_soal' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                    <svg className="w-5 h-5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                    </svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Bank Soal CBT</span>}
+                  </button>
+
+                  <button title="Jadwal & Sesi Ujian" onClick={() => { setActiveMenu('cbt_sesi'); setSidebarOpen(false); }}
+                    className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_sesi' || activeMenu === 'cbt_pengawas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                    <svg className="w-5 h-5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                    {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal &amp; Sesi Ujian</span>}
+                  </button>
                 </div>
               )}
             </>
@@ -2107,27 +2595,7 @@ export default function DashboardGuru() {
             </>
           )}
 
-          {/* Group: KEUANGAN & SPP */}
-          {(fitur.has('kelola_tagihan_spp') || fitur.has('lihat_laporan_keuangan_spp') || isKeuanganUser || isAdminUser || session.roles?.some(r => r.nama?.toLowerCase().includes('keuangan') || r.nama?.toLowerCase().includes('kepala sekolah'))) && (
-            <>
-              <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, keuanganSpp: !prev.keuanganSpp }))}
-                className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-                {!sidebarCollapsed ? (
-                  <><p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">KEUANGAN & SPP</p>
-                  <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.keuanganSpp ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-                ) : <div className="w-full border-t border-slate-100 my-2" />}
-              </div>
-              {(!collapsedGroups.keuanganSpp || sidebarCollapsed) && (
-                <div className="space-y-1 animate-fade-in">
-                  <button title="Tagihan & SPP Siswa" onClick={() => { setActiveMenu('tagihan_spp'); setSidebarOpen(false); }}
-                    className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tagihan_spp' ? 'bg-emerald-50 text-emerald-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                    <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-                    {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Tagihan & SPP Siswa</span>}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+
 
           {/* Group: ANALITIK & LAPORAN */}
           {(fitur.has('akses_dashboard_eksekutif') || fitur.has('akses_pengumuman_resmi_kepsek')) && (
@@ -2223,6 +2691,18 @@ export default function DashboardGuru() {
               )}
             </button>
 
+            {/* Sync Data Guru Button */}
+            <button 
+              onClick={handleSyncDataGuru} 
+              disabled={isSyncing}
+              title="Sinkronkan Ulang Akses & Data Guru"
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors shrink-0 disabled:opacity-50"
+            >
+              <svg className={`w-4.5 h-4.5 ${isSyncing ? 'animate-spin text-indigo-700' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+
             {/* Notification Bell */}
             <button onClick={() => setShowNotifPanel(true)} title="Notifikasi"
               className="relative w-10 h-10 flex items-center justify-center rounded-xl text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors shrink-0">
@@ -2243,16 +2723,36 @@ export default function DashboardGuru() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm md:hidden print:hidden">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
-              <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] flex items-center justify-between sticky top-0 z-20 shadow-xs md:hidden print:hidden app-header-safe">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <button 
+              type="button"
+              onClick={openSidebar} 
+              className="w-11 h-11 flex items-center justify-center rounded-xl text-slate-800 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-95 border border-slate-300 transition-all shadow-xs touch-manipulation cursor-pointer shrink-0"
+              aria-label="Buka Menu Navigasi"
+              title="Buka Menu Navigasi"
+            >
+              <svg className="w-6 h-6 shrink-0 text-slate-800 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
             </button>
-            <h1 className="font-semibold text-slate-800 text-sm md:hidden">eBudiMulia Guru</h1>
+            <h1 className="font-bold text-slate-800 text-sm sm:text-base tracking-tight truncate select-none">eBudiMulia Guru</h1>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Sync Data Guru Mobile Button */}
+            <button 
+              onClick={handleSyncDataGuru} 
+              disabled={isSyncing}
+              title="Sinkronkan Data"
+              className="p-2.5 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition-all duration-300 disabled:opacity-50"
+            >
+              <svg className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+
             {/* Notification Bell */}
             <button 
               onClick={() => setShowNotifPanel(true)}
@@ -2287,10 +2787,7 @@ export default function DashboardGuru() {
           </div>
         </header>
 
-        <div className={`flex-1 p-4 md:p-6 lg:p-8 flex flex-col dashboard-content-area ${activeMenu === 'dashboard' && session.roles.some(r => r.nama.toLowerCase().includes('piket')) && (!session.kelas || session.kelas.length === 0) && (!session.guru_mapel_raw || session.guru_mapel_raw.length === 0)
-            ? 'min-h-0 overflow-hidden'
-            : 'overflow-y-auto'
-          }`}>
+        <div className="flex-1 p-2.5 sm:p-4 lg:p-5 2xl:p-6 flex flex-col dashboard-content-area overflow-y-auto min-h-0">
           <div className="w-full flex-1 flex flex-col min-h-0 relative">
             {/* Global Floating Full Screen Button */}
             {activeMenu !== 'data_presensi_siswa' && (
@@ -2425,26 +2922,30 @@ export default function DashboardGuru() {
                                       <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z"/></svg>
                                       Rekapan & Stats Kehadiran Siswa Kelas Perwalian
                                     </h4>
-                                    <p className="text-xs text-slate-400">Akumulasi tahun ajaran aktif untuk evaluasi Wali Kelas</p>
+                                    <p className="text-xs text-slate-400">
+                                      Akumulasi Kehadiran Full {activeSemInfo?.nama || 'Semester 1'} ({activeTa?.nama || 'Aktif'}) untuk evaluasi Wali Kelas
+                                    </p>
                                   </div>
 
                                   {/* Tab Navigation */}
                                   <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl overflow-x-auto custom-scrollbar">
                                     <button
                                       onClick={() => setRecapTab('ringkasan')}
-                                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
                                         recapTab === 'ringkasan' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                                       }`}
                                     >
-                                      ⚡ Sorotan Perhatian
+                                      <svg className="w-3.5 h-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                      <span>Sorotan Perhatian</span>
                                     </button>
                                     <button
                                       onClick={() => setRecapTab('tabel')}
-                                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
                                         recapTab === 'tabel' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                                       }`}
                                     >
-                                      📊 Tabel Kelas ({waliRecapList.length})
+                                      <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                      <span>Tabel Kelas ({waliRecapList.length})</span>
                                     </button>
                                   </div>
                                 </div>
@@ -2464,7 +2965,7 @@ export default function DashboardGuru() {
                                       
                                       <div className="space-y-2.5 flex-1">
                                         {waliRecapList.filter(s => s.terlambat > 0).sort((a, b) => b.terlambat - a.terlambat).slice(0, 5).length === 0 ? (
-                                          <p className="text-xs text-slate-400 italic text-center py-4">Belum ada catatan keterlambatan 🎉</p>
+                                          <p className="text-xs text-slate-400 italic text-center py-4">Belum ada catatan keterlambatan</p>
                                         ) : (
                                           waliRecapList.filter(s => s.terlambat > 0).sort((a, b) => b.terlambat - a.terlambat).slice(0, 5).map(s => (
                                             <div key={s.nisn} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-orange-100 shadow-xs">
@@ -2620,31 +3121,7 @@ export default function DashboardGuru() {
                           </div>
                         )}
 
-                        {/* Welcome Card Khusus TU Keuangan */}
-                        {isKeuanganUser && !hasTeachingDuties && (
-                          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 rounded-2xl p-6 text-white shadow-lg space-y-3">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className="px-3 py-1 bg-white/20 rounded-full text-[11px] font-black uppercase tracking-wider">
-                                  🛡️ Staf TU Keuangan
-                                </span>
-                                <h3 className="text-xl font-black mt-2">Pusat Tagihan & SPP Siswa</h3>
-                                <p className="text-emerald-100 text-xs mt-1 max-w-lg">
-                                  Akses Buku Kasir Matriks 12 Bulan, Upload Mutasi Excel BCA (Auto-Reconcile), dan Pengingat Tagihan WhatsApp Orang Tua.
-                                </p>
-                              </div>
-                              <span className="text-4xl hidden sm:inline select-none">💳</span>
-                            </div>
-                            <div className="flex flex-wrap gap-2 pt-2">
-                              <button
-                                onClick={() => setActiveMenu('tagihan_spp')}
-                                className="px-4 py-2.5 bg-white text-emerald-900 font-black rounded-xl text-xs shadow-md hover:bg-emerald-50 active:scale-95 transition-all"
-                              >
-                                Buka Tagihan & SPP Siswa →
-                              </button>
-                            </div>
-                          </div>
-                        )}
+
 
                         {/* 2. Jadwal Mengajar Hari Ini (Hanya Tampil Jika Memiliki Jam Mengajar) */}
                         {hasTeachingDuties && (
@@ -2770,6 +3247,24 @@ export default function DashboardGuru() {
                                   <div>
                                     <div className="text-xs font-bold text-slate-700">Input Nilai Siswa</div>
                                     <div className="text-[10px] text-slate-400 mt-0.5">Kelola nilai akademik siswa kelas ampu</div>
+                                  </div>
+                                </div>
+                                <svg className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                              </button>
+                            )}
+
+                            {canAccessCbt && (
+                              <button 
+                                onClick={() => setActiveMenu('cbt_bank_soal')}
+                                className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30 transition-all text-left group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-700">Penilaian Digital (CBT)</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">Kelola bank soal & pantau sesi ujian</div>
                                   </div>
                                 </div>
                                 <svg className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
@@ -3174,6 +3669,18 @@ export default function DashboardGuru() {
               />
             )}
 
+            {activeMenu === 'presensi_kelas' && session.kelas?.length > 0 && (
+              <div className="flex-1 flex flex-col min-h-0 animate-fade-in">
+                <PresensiMatriksRekapSection 
+                  session={session} 
+                  activeTa={activeTa} 
+                  initialKelas={session.kelas[0]?.kelas || ''}
+                  allowedClasses={session.kelas.map(k => k.kelas).filter(Boolean)}
+                  isWaliMode={true}
+                />
+              </div>
+            )}
+
             {activeMenu === 'tabungan_siswa' && (
               <TabunganSiswaSection 
                 session={session} 
@@ -3402,8 +3909,33 @@ export default function DashboardGuru() {
               <PiketDashboardSection session={session} activeTa={activeTa} />
             )}
 
-            {activeMenu === 'input_nilai' && fitur.has('input_nilai') && session.guru_mapel_raw?.length > 0 && (
+            {activeMenu === 'input_nilai' && (fitur.has('input_nilai') || isAdminUser) && (
               <NilaiGuruSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'leger_nilai' && isKurikulumUser && (
+              <LegerNilaiKurikulumSection session={session} activeTa={activeTa} onNavigateToRapor={(m) => setActiveMenu(m)} />
+            )}
+
+            {activeMenu === 'rapor_siswa' && canAccessRapor && (
+              <RaporSiswaSection session={session} activeTa={activeTa} />
+            )}
+
+            {activeMenu === 'ekskul_nilai' && canAccessEkskul && (
+              <AdminEkskulSection session={session} activeTa={activeTa} />
+            )}
+
+            {/* CBT (Penilaian Digital) Modules */}
+            {canAccessCbt && activeMenu === 'cbt_bank_soal' && (
+              <CbtBankSoalGuruSection session={session} activeTa={activeTa} />
+            )}
+
+            {canAccessCbt && (activeMenu === 'cbt_sesi' || activeMenu === 'cbt_pengawas') && (
+              <CbtSesiUjianGuruSection
+                session={session}
+                activeTa={activeTa}
+                onNavigate={(menu) => setActiveMenu(menu)}
+              />
             )}
 
             {activeMenu === 'program_sekolah' && (showCalendarGuru || fitur.has('kelola_kalender_akademik')) && (
@@ -3411,38 +3943,175 @@ export default function DashboardGuru() {
             )}
 
             {activeMenu === 'jadwal_pelajaran' && (
-              <div className="space-y-6">
-                {/* Control Panel */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-900">📅 Jadwal Pelajaran Kelas</h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Pilih kelas di bawah ini untuk melihat jadwal pelajaran lengkap berdasarkan semester aktif.
-                    </p>
+              <div className="space-y-3 sm:space-y-4">
+                {/* Compact Navigation Bar */}
+                <div className="bg-white border border-slate-200 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                    {/* Sub-tab Switcher */}
+                    <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setGuruJadwalTab('saya')}
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                          guruJadwalTab === 'saya'
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Jadwal Mengajar Saya
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGuruJadwalTab('kelas')}
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                          guruJadwalTab === 'kelas'
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Jadwal Per Kelas
+                      </button>
+                    </div>
+
+                    {/* Semester & Stats */}
+                    <div className="flex items-center gap-2 ml-auto text-xs">
+                      <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold rounded-lg">
+                        Semester {jadwalSemester} (Aktif)
+                      </span>
+                      {guruJadwalTab === 'saya' && (
+                        <span className="text-slate-500 font-medium hidden sm:inline-flex items-center gap-1">
+                          <span>•</span>
+                          <span>Total: <strong className="text-slate-800 font-mono">{guruJadwalWeekly.length} Jam</strong>/minggu</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <label htmlFor="kelas-select" className="text-xs font-bold text-slate-600">Pilih Kelas:</label>
-                    <select
-                      id="kelas-select"
-                      value={selectedKelas}
-                      onChange={(e) => setSelectedKelas(e.target.value)}
-                      className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                    >
-                      {['7A', '7B', '7C', '7D', '8A', '8B', '8C', '8D', '9A', '9B', '9C', '9D'].map(k => (
-                        <option key={k} value={k}>Kelas {k}</option>
-                      ))}
-                    </select>
-                  </div>
+
+                  {/* Day Selector (Tab Saya) */}
+                  {guruJadwalTab === 'saya' && (
+                    <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide items-center pt-1.5 border-t border-slate-100">
+                      {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'].map((hari) => {
+                        const count = guruJadwalWeekly.filter(j => j.hari === hari).length
+                        const isSel = guruWeeklyHari === hari
+                        return (
+                          <button
+                            key={hari}
+                            type="button"
+                            onClick={() => setGuruWeeklyHari(hari)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 border ${
+                              isSel
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border-slate-200/80'
+                            }`}
+                          >
+                            <span>{hari}</span>
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                              isSel ? 'bg-white/25 text-white' : 'bg-slate-200 text-slate-700'
+                            }`}>
+                              {count}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
 
-                {/* Redesigned Excel-styled schedule table component */}
-                <SiswaJadwalSection 
-                  kelas={selectedKelas} 
-                  activeTa={activeTa} 
-                  semester={parseInt(jadwalSemester) || 1} 
-                />
-              </div>
-            )}
+                {/* TAB 1: JADWAL MENGAJAR SAYA */}
+                {guruJadwalTab === 'saya' && (
+                  <div className="space-y-3">
+                    {/* Lesson Cards for Selected Day */}
+                    {loadingGuruWeekly ? (
+                      <div className="bg-white rounded-xl sm:rounded-2xl p-8 text-center border border-slate-200">
+                        <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        <span className="text-xs text-slate-500 font-medium">Memuat jadwal mengajar...</span>
+                      </div>
+                    ) : (() => {
+                      const dayLessons = guruJadwalWeekly.filter(j => j.hari === guruWeeklyHari)
+                      if (dayLessons.length === 0) {
+                        return (
+                          <div className="bg-white rounded-xl sm:rounded-2xl p-8 text-center border border-slate-200">
+                            <h4 className="font-bold text-slate-700 text-xs sm:text-sm">Tidak Ada Jam Mengajar di Hari {guruWeeklyHari}</h4>
+                            <p className="text-xs text-slate-400 mt-1">Anda bebas dari tugas mengajar kelas pada hari ini.</p>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-2.5">
+                          {dayLessons.map((les) => (
+                            <div
+                              key={les.id}
+                              className="bg-white border border-slate-200 hover:border-indigo-300 rounded-xl p-2.5 sm:p-3 shadow-2xs hover:shadow-xs transition-all relative overflow-hidden flex flex-col justify-between"
+                            >
+                              <div className="absolute top-0 left-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500 to-violet-600" />
+                              
+                              <div className="flex items-center justify-between gap-2 mb-1.5 pl-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md">
+                                    Jam {les.jam_ke}
+                                  </span>
+                                  <h4 className="text-sm font-black text-slate-900 tracking-tight">
+                                    Kelas {les.kelas}
+                                  </h4>
+                                </div>
+                                <div className="font-mono text-[11px] text-slate-600 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md">
+                                  {les.waktu_mulai ? les.waktu_mulai.slice(0, 5) : '-'} - {getWaktuSelesai(les)}
+                                </div>
+                              </div>
+
+                              <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs pl-1.5">
+                                <span className="font-bold text-slate-800 truncate">
+                                  {les.mata_pelajaran?.nama || 'Mata Pelajaran'}
+                                </span>
+                                {les.mata_pelajaran?.singkatan && (
+                                  <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded-md shrink-0 ml-2">
+                                    {les.mata_pelajaran.singkatan}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
+
+                {/* TAB 2: JADWAL PER KELAS SISWA */}
+                {guruJadwalTab === 'kelas' && (
+                  <div className="space-y-3">
+                    <div className="bg-white border border-slate-200 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                        <span>Pilih Kelas:</span>
+                      </div>
+                      <div className="flex items-center gap-1 flex-wrap overflow-x-auto pb-0.5">
+                        {['7A', '7B', '7C', '7D', '8A', '8B', '8C', '8D', '9A', '9B', '9C', '9D'].map(k => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => setSelectedKelas(k)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                              selectedKelas === k
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <SiswaJadwalSection 
+                      kelas={selectedKelas} 
+                      activeTa={activeTa} 
+                      semester={parseInt(jadwalSemester) || 1} 
+                    />
+                  </div>
+                  )}
+                </div>
+              )}
 
             {activeMenu === 'rekap_poin' && fitur.has('akses_rekap_poin') && (
               <RekapPoinSiswaSection session={session} activeTa={activeTa} />
@@ -3468,13 +4137,7 @@ export default function DashboardGuru() {
               <DashboardEksekutifSection session={session} activeTa={activeTa} onNavigate={setActiveMenu} />
             )}
 
-            {activeMenu === 'tagihan_spp' && (
-              <TagihanSppSection 
-                session={session} 
-                activeTa={activeTa} 
-                readOnly={!fitur.has('kelola_tagihan_spp') && !isKeuanganUser && !isAdminUser} 
-              />
-            )}
+
 
             {activeMenu === 'dokumen_guru' && (fitur.has('upload_dokumen_guru') || fitur.has('kelola_dokumen_guru')) && (
               <GuruDokumenSection 
@@ -3758,10 +4421,13 @@ export default function DashboardGuru() {
             className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-[100] animate-fade-in"
             onClick={() => setShowNotifPanel(false)}
           />
-          <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-[101] flex flex-col transform transition-transform duration-300 ease-in-out translate-x-0">
+          <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-[110] flex flex-col transform transition-transform duration-300 ease-in-out translate-x-0">
             
             {/* Header */}
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+            <div 
+              style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.25rem)' }}
+              className="px-6 pb-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0 app-header-safe"
+            >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
@@ -3829,7 +4495,10 @@ export default function DashboardGuru() {
 
             {/* Footer */}
             {notifications.some(n => !n.isRead) && (
-              <div className="p-4 border-t border-slate-100 bg-white shrink-0">
+              <div 
+                style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}
+                className="p-4 border-t border-slate-100 bg-white shrink-0"
+              >
                 <button 
                   onClick={() => {
                     const readIds = notifications.map(n => n.id)
@@ -4195,7 +4864,7 @@ export default function DashboardGuru() {
                             className="px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold shadow-2xs inline-flex items-center gap-1.5 cursor-pointer transition-all border border-orange-600"
                             title="Presensi Terlambat (Klik untuk mengubah)"
                           >
-                            <span>⏰ Terlambat</span>
+                            <span>Terlambat</span>
                             {todayRec?.waktu && <span className="text-[10px] opacity-85">({todayRec.waktu.slice(0, 5)})</span>}
                             <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                           </button>
@@ -4209,7 +4878,7 @@ export default function DashboardGuru() {
                             }`}
                             title="Klik untuk mengubah atau mereset presensi"
                           >
-                            <span>{isSakit ? '🏥 Sakit' : isIzin ? '📋 Izin' : '❌ Alpa'}</span>
+                            <span>{isSakit ? 'Sakit' : isIzin ? 'Izin' : 'Alpa'}</span>
                             <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                           </button>
                         )}
@@ -4340,6 +5009,17 @@ export default function DashboardGuru() {
           hideGuru={true}
           modalTitle={`Unduh Kontak Siswa & Ortu (${waliClassesStr && waliClassesStr !== '-' ? `Kelas ${waliClassesStr}` : 'Kelas Perwalian'})`}
         />
+      )}
+
+      {/* Toast Notifikasi Sinkronisasi Data Guru */}
+      {syncToast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-xl text-xs font-bold flex items-center gap-2 border animate-in fade-in slide-in-from-bottom-2 ${
+          syncToast.type === 'success' 
+            ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20' 
+            : 'bg-rose-600 text-white border-rose-500 shadow-rose-500/20'
+        }`}>
+          <span>{syncToast.text}</span>
+        </div>
       )}
     </div>
   )

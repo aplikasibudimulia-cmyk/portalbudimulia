@@ -59,6 +59,7 @@ DECLARE
   v_enrol       enrollment%ROWTYPE;
   v_roles       JSON;
   v_kelas       JSON;
+  v_guru_mapel  JSON;
   v_db_hash     TEXT;
   v_clean_user  TEXT;
   v_user_prefix TEXT;
@@ -154,18 +155,30 @@ BEGIN
   FROM guru_kelas gk
   WHERE gk.guru_id = v_guru.id;
 
+  SELECT json_agg(json_build_object(
+    'kelas', gm.kelas,
+    'tahun_ajaran_id', gm.tahun_ajaran_id,
+    'mata_pelajaran_id', gm.mata_pelajaran_id,
+    'mata_pelajaran', json_build_object('nama', mp.nama)
+  ))
+  INTO v_guru_mapel
+  FROM guru_mapel gm
+  LEFT JOIN mata_pelajaran mp ON mp.id = gm.mata_pelajaran_id
+  WHERE gm.guru_id = v_guru.id;
+
   RETURN json_build_object(
     'ok',      true,
     'role',    v_akun.role,
     'akun_id', v_akun.id,
     'guru', json_build_object(
-      'id',        v_guru.id,
-      'kode',      v_guru.kode,
-      'nama_guru', v_guru.nama_guru,
-      'user_name', v_guru.user_name,
-      'foto_url',  v_guru.foto_url,
-      'roles',     COALESCE(v_roles, '[]'::json),
-      'kelas',     COALESCE(v_kelas, '[]'::json)
+      'id',         v_guru.id,
+      'kode',       v_guru.kode,
+      'nama_guru',  v_guru.nama_guru,
+      'user_name',  v_guru.user_name,
+      'foto_url',   v_guru.foto_url,
+      'roles',      COALESCE(v_roles, '[]'::json),
+      'kelas',      COALESCE(v_kelas, '[]'::json),
+      'guru_mapel', COALESCE(v_guru_mapel, '[]'::json)
     )
   );
 END;
@@ -173,3 +186,55 @@ $$;
 
 REVOKE ALL ON FUNCTION public.fn_login(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.fn_login(TEXT, TEXT, TEXT) TO anon, authenticated;
+
+-- ============================================================
+-- 4. HELPER RPC: FN_GET_GURU_MAPEL (Bypass RLS dengan SECURITY DEFINER)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.fn_get_guru_mapel(p_guru_id UUID)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_res JSON;
+BEGIN
+  SELECT json_agg(json_build_object(
+    'kelas', gm.kelas,
+    'tahun_ajaran_id', gm.tahun_ajaran_id,
+    'mata_pelajaran_id', gm.mata_pelajaran_id,
+    'mata_pelajaran', json_build_object('nama', mp.nama)
+  ))
+  INTO v_res
+  FROM guru_mapel gm
+  LEFT JOIN mata_pelajaran mp ON mp.id = gm.mata_pelajaran_id
+  WHERE gm.guru_id = p_guru_id;
+
+  RETURN COALESCE(v_res, '[]'::json);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.fn_get_guru_mapel(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.fn_get_guru_mapel(UUID) TO anon, authenticated;
+
+-- ============================================================
+-- 5. RLS POLICIES UNTUK TABEL GURU & GURU_MAPEL
+-- ============================================================
+ALTER TABLE public.guru ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_guru" ON public.guru;
+CREATE POLICY "allow_all_guru" ON public.guru FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE public.guru_mapel ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_guru_mapel" ON public.guru_mapel;
+CREATE POLICY "allow_all_guru_mapel" ON public.guru_mapel FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE public.guru_role ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_guru_role" ON public.guru_role;
+CREATE POLICY "allow_all_guru_role" ON public.guru_role FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE public.guru_kelas ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_guru_kelas" ON public.guru_kelas;
+CREATE POLICY "allow_all_guru_kelas" ON public.guru_kelas FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+NOTIFY pgrst, 'reload schema';
+

@@ -65,7 +65,14 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   // Metadata / Options
   const [allClasses, setAllClasses] = useState([])
   const [semesters, setSemesters] = useState([])
-  const [guruList, setGuruList] = useState([])
+  const [guruList, setGuruList] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebudimulia_guru_list')
+      return cached ? JSON.parse(cached) : []
+    } catch (_) {
+      return []
+    }
+  })
 
   // Leaderboard Tabs & Data
   const [showHallOfFame, setShowHallOfFame] = useState(false)
@@ -141,6 +148,8 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   })
   const [addPointPetugas, setAddPointPetugas] = useState('')
+  const [isManualAddPetugas, setIsManualAddPetugas] = useState(false)
+  const [customAddPetugas, setCustomAddPetugas] = useState('')
   const [addPointKatalogSearch, setAddPointKatalogSearch] = useState('')
   const [addPointKatalogResults, setAddPointKatalogResults] = useState([])
   const [addPointSelectedKatalogs, setAddPointSelectedKatalogs] = useState([])
@@ -291,8 +300,38 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       }
 
       // 3. Fetch guru list
-      const { data: gData } = await supabase.from('guru').select('id, nama_guru, kode').order('nama_guru', { ascending: true })
-      setGuruList(gData || [])
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('fn_get_guru_list')
+        if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+          setGuruList(rpcData)
+          localStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
+        } else {
+          const { data: gData, error: gErr } = await supabase.from('guru').select('id, nama_guru, kode').order('nama_guru', { ascending: true })
+          if (!gErr && Array.isArray(gData) && gData.length > 0) {
+            setGuruList(gData)
+            localStorage.setItem('ebudimulia_guru_list', JSON.stringify(gData))
+          } else {
+            const { data: recData } = await supabase
+              .from('point_records')
+              .select('dicatat_oleh')
+              .not('dicatat_oleh', 'is', null)
+              .order('id', { ascending: false })
+              .limit(1000)
+
+            const names = [...new Set((recData || []).map(r => r.dicatat_oleh?.trim()).filter(Boolean))]
+            if (session?.nama_guru && !names.includes(session.nama_guru)) names.push(session.nama_guru)
+            names.sort()
+
+            if (names.length > 0) {
+              const fallbackList = names.map((name, idx) => ({ id: `guru-rec-${idx}`, nama_guru: name, kode: '' }))
+              setGuruList(fallbackList)
+              localStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
+            }
+          }
+        }
+      } catch (errGuru) {
+        console.warn('Error fetching guru list:', errGuru)
+      }
     } catch (err) {
       console.error('Error fetching metadata:', err)
     }
@@ -514,8 +553,12 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       alert('Tahun Ajaran aktif tidak ditemukan.')
       return
     }
-    if (isPiket && !addPointPetugas) {
-      alert('Sebagai Petugas Piket, Anda wajib memilih nama guru/petugas yang mencatat.')
+    const activePetugas = isPiket
+      ? (isManualAddPetugas ? customAddPetugas.trim() : addPointPetugas.trim())
+      : (session?.nama_guru || session?.email || 'Guru BK')
+
+    if (isPiket && !activePetugas) {
+      alert('Sebagai Petugas Piket, Anda wajib memilih atau mengetik nama guru/petugas yang mencatat.')
       return
     }
 
@@ -538,7 +581,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
     setAddPointSaving(true)
     try {
-      const finalPetugas = isPiket ? addPointPetugas : (session?.nama_guru || session?.email || 'Guru BK')
+      const finalPetugas = activePetugas
       const combinedCreatedAt = addPointJam ? new Date(`${addPointTanggal}T${addPointJam}:00`).toISOString() : new Date().toISOString()
       
       let recordsToInsert = []
@@ -2611,17 +2654,51 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
               {isPiket ? (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">Guru / Petugas yang Mencatat *</label>
-                  <select
-                    value={addPointPetugas}
-                    onChange={e => setAddPointPetugas(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="">-- Pilih Guru / Petugas --</option>
-                    {guruList.map(g => (
-                      <option key={g.id} value={g.nama_guru}>{g.nama_guru} ({g.kode})</option>
-                    ))}
-                  </select>
+                  {isManualAddPetugas ? (
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={customAddPetugas}
+                        onChange={e => setCustomAddPetugas(e.target.value)}
+                        placeholder="Ketik nama guru / staf pengisi..."
+                        required
+                        autoFocus
+                        className="w-full px-3 py-2 bg-white border border-indigo-400 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsManualAddPetugas(false)
+                          setCustomAddPetugas('')
+                        }}
+                        className="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[10px] font-bold shrink-0 border border-slate-200 transition-colors"
+                        title="Kembali ke daftar pilihan guru"
+                      >
+                        Pilih List
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={addPointPetugas}
+                      onChange={e => {
+                        if (e.target.value === '__manual__') {
+                          setIsManualAddPetugas(true)
+                          setAddPointPetugas('')
+                          setCustomAddPetugas('')
+                        } else {
+                          setAddPointPetugas(e.target.value)
+                        }
+                      }}
+                      required
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      <option value="">-- Pilih Guru / Petugas --</option>
+                      {guruList.map(g => (
+                        <option key={g.id} value={g.nama_guru}>{g.nama_guru} {g.kode ? `(${g.kode})` : ''}</option>
+                      ))}
+                      <option value="__manual__">✏️ + Ketik Nama Guru Lainnya...</option>
+                    </select>
+                  )}
                 </div>
               ) : (
                 <div>

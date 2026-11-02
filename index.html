@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="id" class="notranslate" translate="no">
   <head>
     <meta charset="UTF-8" />
+    <meta name="google" content="notranslate" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>eBudiMulia - Sistem Informasi Akademik Digital</title>
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#4f46e5" />
@@ -16,13 +17,34 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700&family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400;1,500;1,700&display=swap" rel="stylesheet">
     <script>
+      // 1. Inisialisasi Font
       const savedFont = localStorage.getItem('app_font');
       if (savedFont === 'ubuntu') document.documentElement.classList.add('font-ubuntu');
       if (savedFont === 'bricolage') document.documentElement.classList.add('font-bricolage');
+
+      // 2. Proteksi Kebal Google Translate / Ekstensi Peramban (Mencegah NotFoundError: removeChild)
+      if (typeof Node === 'function' && Node.prototype) {
+        const originalRemoveChild = Node.prototype.removeChild;
+        Node.prototype.removeChild = function (child) {
+          if (child && child.parentNode !== this) {
+            if (console && console.warn) console.warn('[DOM Patch] Prevented NotFoundError: removeChild on modified node.');
+            return child;
+          }
+          return originalRemoveChild.apply(this, arguments);
+        };
+        const originalInsertBefore = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function (newNode, referenceNode) {
+          if (referenceNode && referenceNode.parentNode !== this) {
+            if (console && console.warn) console.warn('[DOM Patch] Prevented NotFoundError: insertBefore on modified node.');
+            return newNode;
+          }
+          return originalInsertBefore.apply(this, arguments);
+        };
+      }
     </script>
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="notranslate" translate="no">
+    <div id="root" class="notranslate" translate="no"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

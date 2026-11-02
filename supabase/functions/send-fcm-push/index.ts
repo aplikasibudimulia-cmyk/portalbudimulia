@@ -257,6 +257,15 @@ serve(async (req) => {
               notification_priority: "PRIORITY_HIGH",
             },
           },
+          apns: {
+            payload: {
+              aps: {
+                sound: "default",
+                badge: 1,
+                "content-available": 1,
+              },
+            },
+          },
           data: {
             url: item.role === "Orang Tua" ? "/dashboard-orang-tua" : (item.role === "Guru" ? "/dashboard-guru" : "/dashboard"),
             targetMenu: targetMenu || (item.role === "Guru" ? "tabungan_siswa" : "PRESENSI"),

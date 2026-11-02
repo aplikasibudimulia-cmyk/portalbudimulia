@@ -366,8 +366,20 @@ export default function SiswaNilaiSection({ studentData }) {
                               <div className="divide-y divide-slate-100 bg-white animate-fade-in">
                                 {(() => {
                                   const visibleTPs = babs[bab].filter(i => i.komponen.is_nilai_visible).sort((a,b) => {
-                                    if (a.komponen.nama.toUpperCase() === 'N. KARAKTER') return 1;
-                                    if (b.komponen.nama.toUpperCase() === 'N. KARAKTER') return -1;
+                                    const namaA = (a.komponen.nama || '').toUpperCase().trim();
+                                    const namaB = (b.komponen.nama || '').toUpperCase().trim();
+                                    const isKarA = namaA.includes('KARAKTER') || namaA === 'NK' || namaA.startsWith('NK ') || namaA.startsWith('N. KARAKTER');
+                                    const isKarB = namaB.includes('KARAKTER') || namaB === 'NK' || namaB.startsWith('NK ') || namaB.startsWith('N. KARAKTER');
+                                    if (isKarA && !isKarB) return 1;
+                                    if (!isKarA && isKarB) return -1;
+                                    if (isKarA && isKarB) return (a.komponen.urutan || 0) - (b.komponen.urutan || 0);
+
+                                    const matchA = (a.komponen.nama || '').match(/^TP\s*(\d+)/i);
+                                    const matchB = (b.komponen.nama || '').match(/^TP\s*(\d+)/i);
+                                    if (matchA && matchB) {
+                                      const diff = parseInt(matchA[1], 10) - parseInt(matchB[1], 10);
+                                      if (diff !== 0) return diff;
+                                    }
                                     return (a.komponen.urutan || 0) - (b.komponen.urutan || 0);
                                   });
                                   if (visibleTPs.length === 0) {

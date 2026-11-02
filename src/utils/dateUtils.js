@@ -65,9 +65,14 @@ export async function syncServerTime() {
     const start = Date.now()
     const url = import.meta.env.VITE_SUPABASE_URL || 'https://ngdepacckohoxemlauhd.supabase.co'
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY
-    const res = await fetch(`${url}/rest/v1/`, {
+    const headers = {}
+    if (key) {
+      headers['apikey'] = key
+      headers['Authorization'] = `Bearer ${key}`
+    }
+    const res = await fetch(`${url}/rest/v1/pengaturan_sekolah?select=setting_key&limit=1`, {
       method: 'HEAD',
-      headers: key ? { apikey: key } : {},
+      headers,
       cache: 'no-store'
     })
     const roundTrip = Date.now() - start

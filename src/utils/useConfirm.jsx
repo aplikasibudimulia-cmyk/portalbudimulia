@@ -61,6 +61,29 @@ export function useConfirm() {
     })
   }, [])
 
+  const requestAlert = useCallback(({
+    title = 'Pemberitahuan',
+    message = '',
+    details = null,
+    confirmLabel = 'Mengerti',
+    confirmColor = 'indigo',
+    icon = 'info',
+  } = {}) => {
+    return new Promise((resolve) => {
+      setConfirmState({
+        isOpen: true,
+        title,
+        message,
+        details,
+        confirmLabel,
+        cancelLabel: null,
+        confirmColor,
+        icon,
+        resolve,
+      })
+    })
+  }, [])
+
   const handleConfirm = useCallback(() => {
     setConfirmState(prev => {
       prev.resolve?.(true)
@@ -90,5 +113,6 @@ export function useConfirm() {
     />
   )
 
-  return { confirmState, requestConfirm, ConfirmModalComponent }
+  return { confirmState, requestConfirm, requestAlert, ConfirmModalComponent }
 }
+

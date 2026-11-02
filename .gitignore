@@ -72,6 +72,9 @@ node_modules/
 # Build output
 dist/
 dist
+dist.zip
+eBudimulia-v*.aab
+eBudimulia_v*.aab
 
 # Android credentials and keystore
 android/gradle.properties
@@ -85,7 +88,7 @@ android/app/*.jks
 **/.DS_Store
 
 # Temporary database dumps and outputs
-scratch/db_dump.json
+scratch/
 hasil.json
 *.log
 current_*.png

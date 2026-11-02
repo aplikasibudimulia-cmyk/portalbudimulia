@@ -16,6 +16,7 @@ import AdminKartuPelajarSection from '../components/AdminKartuPelajarSection'
 import AdminKartuUjianSection from '../components/AdminKartuUjianSection'
 import AdminBeritaSection from '../components/AdminBeritaSection'
 import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
+import AdminSuratSebaranSection from '../components/AdminSuratSebaranSection'
 import AdminLineConfigSection from '../components/AdminLineConfigSection'
 import AdminVerifikasiModal from '../components/AdminVerifikasiModal'
 import AdminSemesterSection from '../components/AdminSemesterSection'
@@ -28,6 +29,9 @@ import AdminKumpulanDokumenSection from '../components/AdminKumpulanDokumenSecti
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
 import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
 import AdminJadwalPelajaranSection from '../components/AdminJadwalPelajaranSection'
+import LegerNilaiKurikulumSection from '../components/LegerNilaiKurikulumSection'
+import RaporSiswaSection from '../components/RaporSiswaSection'
+import AdminEkskulSection from '../components/AdminEkskulSection'
 import ProgramSekolahSection from '../components/ProgramSekolahSection'
 import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
 import DenahKehadiranSection from '../components/DenahKehadiranSection'
@@ -40,6 +44,10 @@ import PendampingLombaSection from '../components/PendampingLombaSection'
 import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
 import LaporanKeterlambatanSection from '../components/LaporanKeterlambatanSection'
 import TagihanSppSection from '../components/TagihanSppSection'
+import AdminCbtConfigSection from '../components/cbt/AdminCbtConfigSection'
+import CbtBankSoalGuruSection from '../components/cbt/CbtBankSoalGuruSection'
+import CbtSesiUjianGuruSection from '../components/cbt/CbtSesiUjianGuruSection'
+import CbtMonitorPengawasSection from '../components/cbt/CbtMonitorPengawasSection'
 import { logActivity } from '../utils/logger'
 import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 import { useConfirm } from '../utils/useConfirm'
@@ -1245,6 +1253,7 @@ function AnnouncementTypeSection({ type, students, allFotos, activeTa, onDelete,
 }
 
 function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProcessing, setIsProcessing, onDeleteIndividual, onRefresh }) {
+  const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [search, setSearch] = useState('')
   const [selectedClasses, setSelectedClasses] = useState([])
   const [selectedTaFilter, setSelectedTaFilter] = useState(activeTa?.nama || 'all')
@@ -1556,8 +1565,61 @@ function DataSiswaSection({ students, allFotos, activeTa, tahunAjarans, isProces
     await downloadWorkbook(wb, `Data_Siswa_${selectedTaFilter}_${classStr}.xlsx`)
   }
 
+  const handleRapihkanKode = async () => {
+    if (!activeTa) return
+    const confirmed = await requestConfirm({
+      title: 'Rapihkan Kode Siswa?',
+      message: `Apakah Anda yakin ingin merapihkan ulang seluruh kode PDF siswa di tahun ajaran ${activeTa.nama} berdasarkan urutan abjad?\n\nJangan khawatir, semua file PDF yang sudah terupload akan otomatis menyesuaikan diri!`,
+      confirmLabel: 'Rapihkan Kode',
+      confirmColor: 'indigo',
+      icon: 'warning',
+    })
+    if (!confirmed) return
+    
+    setIsProcessing(true)
+    try {
+      const activeStudents = students.filter(s => s.tahun_ajaran_id === activeTa.id)
+      const sorted = [...activeStudents].sort((a, b) => {
+        const classA = a.kelas || ''
+        const classB = b.kelas || ''
+        if (classA !== classB) return classA.localeCompare(classB)
+        return (a.nama_lengkap || '').localeCompare(b.nama_lengkap || '')
+      })
+
+      let currentClass = null
+      let currentAbsen = 1
+      const payload = []
+      const formattedTa = activeTa.nama.replace('/', '_')
+
+      sorted.forEach((s) => {
+        if (s.kelas !== currentClass) {
+          currentClass = s.kelas
+          currentAbsen = 1
+        }
+        const nomorAbsenStr = String(currentAbsen).padStart(2, '0')
+        const newKode = `${formattedTa}_${s.kelas}_${nomorAbsenStr}`
+        payload.push({ id: s.kode, kode_pdf: newKode })
+        currentAbsen++
+      })
+
+      for (const item of payload) {
+        if (item.id) {
+          await supabase.from('enrollment').update({ kode_pdf: item.kode_pdf }).eq('id', item.id)
+        }
+      }
+      alert('Kode siswa berhasil dirapihkan!')
+      onRefresh()
+    } catch (err) {
+      console.error(err)
+      alert('Gagal merapihkan kode: ' + err.message)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   return (
     <div className="animate-slide-up flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+      {ConfirmModalComponent}
       <input ref={individualPhotoInputRef} type="file" accept="image/jpeg,image/png,image/jpg" className="hidden" 
         onChange={handleIndividualPhotoUpload} />
 
@@ -1880,6 +1942,10 @@ function Admin() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+
+  // Sidebar helpers — sederhana & terbukti di semua platform
+  const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
+  const closeSidebar = () => setSidebarOpen(false)
   const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
   const [showIosHint, setShowIosHint] = useState(false)
 
@@ -1899,8 +1965,10 @@ function Admin() {
     kehadiranPresensi: false,
     informasiDokumen: false,
     sistemPoin: false,
+    penilaianCbt: false,
     analitikLaporan: false
   })
+  const [activeCbtMonitorSesi, setActiveCbtMonitorSesi] = useState(null)
   const [session, setSession] = useState(null)
   const [csvSyncing, setCsvSyncing] = useState(false)
   const [csvResult, setCsvResult] = useState(null)
@@ -1943,17 +2011,38 @@ function Admin() {
 
   useEffect(() => {
     let handled = false
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event !== 'INITIAL_SESSION' && event !== 'SIGNED_IN') return
       if (handled) return
       handled = true
-      if (!session) { navigate('/'); return }
+      if (!session || !session.user) { 
+        navigate('/login-admin')
+        return 
+      }
+      
       const adminEmail = import.meta.env.VITE_ADMIN_EMAIL
-      if (adminEmail && session.user.email !== adminEmail) { navigate('/dashboard'); return }
+      const userEmail = session.user.email?.toLowerCase() || ''
+      const isConfiguredAdmin = adminEmail && userEmail === adminEmail.toLowerCase()
+
+      let isDbAdmin = false
+      if (!isConfiguredAdmin) {
+        try {
+          const { data: checkAdmin } = await supabase.rpc('fn_check_is_admin', { p_email: userEmail })
+          isDbAdmin = checkAdmin === true
+        } catch {}
+      }
+
+      if (!isConfiguredAdmin && !isDbAdmin) {
+        console.warn('[Admin] Unauthorized access attempt blocked:', userEmail)
+        await supabase.auth.signOut().catch(() => {})
+        navigate('/login-admin')
+        return
+      }
+
       setSession(session)
       setAuthLoading(false)
       fetchMenuTypes()
-    fetchKumpulanDokumen()
+      fetchKumpulanDokumen()
       fetchTahunAjarans()
       fetchStudents()
       fetchAnnouncement()
@@ -2586,7 +2675,18 @@ function Admin() {
     fetchMenuTypes()
   }
 
-  const handleLogout = async () => { window.__ebudimuliaExplicitLogout = true; await supabase.auth.signOut(); navigate('/') }
+  const handleLogout = async () => {
+    try {
+      window.__ebudimuliaExplicitLogout = true
+      try {
+        await supabase.auth.signOut()
+      } catch (authErr) {
+        console.warn('[Logout] Supabase signOut error/skipped:', authErr)
+      }
+    } finally {
+      window.location.href = '/'
+    }
+  }
 
   const activeType = menuTypes.find(t => t.id === activeMenu)
   const getTypeStudents = (type) => {
@@ -2621,8 +2721,6 @@ function Admin() {
     </div>
   )
 
-  const closeSidebar = () => setSidebarOpen(false)
-
   const handleMenuNavigation = (menuId) => {
     if (globalUploadManager.getState().isUploading && !globalUploadManager.getState().minimized) {
       setPendingMenu(menuId)
@@ -2634,33 +2732,39 @@ function Admin() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 animate-fade-in">
+    <div className="flex h-screen overflow-hidden bg-slate-50 animate-fade-in print:h-auto print:overflow-visible print:bg-white print:block">
       {ConfirmModalComponent}
 
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 z-30 md:hidden animate-fade-in" onClick={closeSidebar} />
+        <div 
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in print:hidden" 
+          onClick={closeSidebar} 
+        />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 m-4 bg-white rounded-xl border-none flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto ${sidebarCollapsed ? 'w-24' : 'w-72 md:w-64'} ${
-        sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
+      <aside className={`fixed inset-y-0 left-0 z-40 h-full bg-white flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto md:h-auto md:m-4 md:rounded-xl border-none print:hidden ${
+        sidebarCollapsed ? 'w-72 md:w-24' : 'w-72 md:w-64'
+      } ${
+        sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[150%] md:translate-x-0'
       }`}>
-        <div className={`p-5 border-b border-slate-200 flex items-center shrink-0 bg-white transition-all ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity ${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'w-14 h-14' : 'w-20 h-20'} object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
-            {!sidebarCollapsed && (
-              <div className="animate-fade-in truncate">
-                <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
-                <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
-              </div>
-            )}
+        <div className={`p-4 sm:p-5 pt-[calc(env(safe-area-inset-top,0px)+1rem)] border-b border-slate-200 flex items-center shrink-0 bg-white transition-all justify-between md:${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity gap-3 md:${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
+            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'md:w-14 md:h-14' : 'md:w-20 md:h-20'} w-12 h-12 object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
+            <div className={`animate-fade-in truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>
+              <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
+              <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
+            </div>
           </div>
-          {!sidebarCollapsed && (
-            <button onClick={closeSidebar} className="md:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          )}
+          <button 
+            type="button"
+            onClick={closeSidebar} 
+            className="md:hidden w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 active:scale-95 rounded-xl transition-all touch-manipulation cursor-pointer"
+            aria-label="Tutup Menu"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
@@ -2776,6 +2880,11 @@ function Admin() {
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
                 {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi Siswa</span>}
               </button>
+              <button title="Surat Sebaran (CKG & Mail Merge)" onClick={() => handleMenuNavigation('surat_sebaran')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'surat_sebaran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Surat Sebaran</span>}
+              </button>
               <button title="Notifikasi LINE" onClick={() => handleMenuNavigation('line_config')}
                 className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'line_config' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
                 <span className="w-5 h-5 shrink-0 flex items-center justify-center text-sm font-black text-emerald-600">🟢</span>
@@ -2879,6 +2988,81 @@ function Admin() {
                     )}
                   </span>
                 )}
+              </button>
+            </div>
+          )}
+
+          {/* Group: PENILAIAN (CBT) */}
+          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, penilaianCbt: !prev.penilaianCbt }))}
+            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
+            {!sidebarCollapsed ? (
+              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">PENILAIAN & LEGER NILAI</p>
+              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.penilaianCbt ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
+            ) : <div className="w-full border-t border-slate-100 my-2" />}
+          </div>
+          {(!collapsedGroups.penilaianCbt || sidebarCollapsed) && (
+            <div className="space-y-1 animate-fade-in">
+              <button title="Leger Nilai (Kurikulum)" onClick={() => handleMenuNavigation('leger_nilai')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'leger_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {!sidebarCollapsed && (
+                  <div className="flex items-center justify-between flex-1 truncate">
+                    <span className="animate-fade-in truncate font-semibold">Leger Nilai (Kurikulum)</span>
+                    <span className="ml-1 text-[9px] font-black bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Live</span>
+                  </div>
+                )}
+              </button>
+              <button title="Rapor Siswa" onClick={() => handleMenuNavigation('rapor_siswa')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'rapor_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                {!sidebarCollapsed && (
+                  <div className="flex items-center justify-between flex-1 truncate">
+                    <span className="animate-fade-in truncate font-semibold">Rapor Siswa</span>
+                    <span className="ml-1 text-[9px] font-black bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Cetak</span>
+                  </div>
+                )}
+              </button>
+              <button title="Nilai Ekstrakurikuler" onClick={() => handleMenuNavigation('ekskul_nilai')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'ekskul_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+                {!sidebarCollapsed && (
+                  <div className="flex items-center justify-between flex-1 truncate">
+                    <span className="animate-fade-in truncate font-semibold">Nilai Ekstrakurikuler</span>
+                    <span className="ml-1 text-[9px] font-black bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Ekskul</span>
+                  </div>
+                )}
+              </button>
+              <button title="Bank Soal" onClick={() => handleMenuNavigation('cbt_bank_soal')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_bank_soal' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Bank Soal</span>}
+              </button>
+
+              <button title="Jadwal & Sesi Ujian" onClick={() => handleMenuNavigation('cbt_sesi')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_sesi' || activeMenu === 'cbt_pengawas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal &amp; Sesi Ujian</span>}
+              </button>
+
+              <button title="Pengaturan CBT" onClick={() => handleMenuNavigation('cbt_config')}
+                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_config' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
+                <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan CBT</span>}
               </button>
             </div>
           )}
@@ -3002,16 +3186,22 @@ function Admin() {
         )}
       </button>
 
-      <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50">
-        <div className="md:hidden p-4 border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20 print:hidden">
-          <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50 print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
+        <header className="md:hidden px-4 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20 print:hidden app-header-safe">
+          <button 
+            type="button"
+            onClick={openSidebar} 
+            className="w-11 h-11 flex items-center justify-center rounded-xl border border-slate-300 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-95 text-slate-800 shadow-xs touch-manipulation cursor-pointer shrink-0"
+            title="Buka Menu"
+            aria-label="Buka Menu"
+          >
+            <svg className="w-6 h-6 shrink-0 text-slate-800 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
               <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
           <p className="font-semibold text-slate-800 text-sm">Panel Admin</p>
-        </div>
-        <div className="p-4 md:p-6 lg:p-8 w-full">
+        </header>
+        <div className="p-4 md:p-6 lg:p-8 w-full print:p-0 print:m-0">
           {activeMenu === 'dashboard' && (
             <AdminDashboardSection onNavigate={handleMenuNavigation} />
           )}
@@ -3026,6 +3216,10 @@ function Admin() {
 
           {activeMenu === 'notifikasi' && (
             <AdminNotifikasiSection />
+          )}
+
+          {activeMenu === 'surat_sebaran' && (
+            <AdminSuratSebaranSection />
           )}
 
           {activeMenu === 'line_config' && (
@@ -3065,6 +3259,18 @@ function Admin() {
 
           {activeMenu === 'jadwal_pelajaran' && (
             <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'leger_nilai' && (
+            <LegerNilaiKurikulumSection session={{ ...session, nama_guru: 'Administrator', role: 'admin', is_admin: true }} activeTa={activeTa} onNavigateToRapor={(m) => handleMenuNavigation(m)} />
+          )}
+
+          {activeMenu === 'rapor_siswa' && (
+            <RaporSiswaSection session={{ ...session, nama_guru: 'Administrator', role: 'admin', is_admin: true }} activeTa={activeTa} />
+          )}
+
+          {activeMenu === 'ekskul_nilai' && (
+            <AdminEkskulSection session={{ ...session, nama_guru: 'Administrator', role: 'admin', is_admin: true }} activeTa={activeTa} />
           )}
 
           {activeMenu === 'tabungan_siswa' && (
@@ -3152,6 +3358,26 @@ function Admin() {
             <AdminPengajuanPoinSection session={session} activeTa={activeTa} readOnly={false} />
           )}
 
+          {/* Modul CBT Penilaian Digital Admin */}
+          {activeMenu === 'cbt_bank_soal' && (
+            <CbtBankSoalGuruSection
+              session={{ ...session, role: 'admin', is_admin: true, nama_guru: 'Administrator' }}
+              activeTa={activeTa}
+            />
+          )}
+
+          {(activeMenu === 'cbt_sesi' || activeMenu === 'cbt_pengawas') && (
+            <CbtSesiUjianGuruSection
+              session={{ ...session, role: 'admin', is_admin: true, nama_guru: 'Administrator' }}
+              activeTa={activeTa}
+              onNavigate={handleMenuNavigation}
+            />
+          )}
+
+          {activeMenu === 'cbt_config' && (
+            <AdminCbtConfigSection />
+          )}
+
           {activeMenu === 'konfigurasi' && (
             <div className="animate-slide-up">
               <div className="flex items-center justify-between mb-6">
@@ -3197,6 +3423,10 @@ function Admin() {
 
               <CollapsibleSection title="Tampilan Profil Beranda Siswa">
                 <AdminBerandaConfigSection />
+              </CollapsibleSection>
+
+              <CollapsibleSection title="Pembaruan Aplikasi Android (Google Play Store) & Personalisasi" defaultOpen={true}>
+                <AdminPersonalisasiSection />
               </CollapsibleSection>
 
               <CollapsibleSection title="Sinkronisasi Data (CSV)">

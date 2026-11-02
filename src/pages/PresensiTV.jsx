@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { QRCodeSVG } from 'qrcode.react'
 import { dispatchDualNotification } from '../utils/pushNotif'
 import { getTodayWIB } from '../utils/dateUtils'
+import { evaluatePresensiSession } from '../utils/presensiSessionUtils'
 
 // Theme Colors Mapping (Based on data-theme config in index.css)
 const THEME_MAP = {
@@ -444,29 +445,40 @@ export default function PresensiTV() {
   const qrValue = useMemo(() => token ? JSON.stringify({ token }) : '{}', [token])
   const countdownPct = interval > 0 ? (countdown / interval) * 100 : 0
 
-  const isHariAktif = useMemo(() => {
-    if (!jadwalOtomatisAktif) return true
-    const todayDow = now.getDay()
-    const activeDays = (hariAktifPresensi || '1,2,3,4,5').split(',').map(Number)
-    return activeDays.includes(todayDow)
-  }, [now, jadwalOtomatisAktif, hariAktifPresensi])
+  const sessionEval = useMemo(() => {
+    const settingsMap = {
+      jadwal_otomatis_aktif: jadwalOtomatisAktif ? 'true' : 'false',
+      hari_aktif_presensi: hariAktifPresensi,
+      jam_mulai_presensi: jamMulaiPresensi,
+      jam_batas_pulang: jamBatasPulang,
+      jam_batas_hadir: '07:00'
+    }
+    return evaluatePresensiSession({
+      settings: settingsMap,
+      sesiPresensiRow: sesiAktif ? { tanggal: getTodayWIB(now) } : null,
+      dateNow: now
+    })
+  }, [jadwalOtomatisAktif, hariAktifPresensi, jamMulaiPresensi, jamBatasPulang, sesiAktif, now])
+
+  const isHariAktif = sessionEval.isHariAktif
 
   const presensiBelumMulai = useMemo(() => {
-    if (!sesiAktif) return true
-    if (!jadwalOtomatisAktif || !jamMulaiPresensi) return false
-    if (!isHariAktif) return false
-    const [mh, mm] = jamMulaiPresensi.split(':').map(Number)
-    const [nh, nm] = [now.getHours(), now.getMinutes()]
-    return nh < mh || (nh === mh && nm < mm)
-  }, [now, jadwalOtomatisAktif, jamMulaiPresensi, isHariAktif, sesiAktif])
+    if (sessionEval.isMasukManualAktif) return false
+
+    if (jadwalOtomatisAktif) {
+      if (!isHariAktif) return false
+      if (sessionEval.isPresensiDitutup) return false
+      return sessionEval.isBelumMulai
+    }
+
+    return !sesiAktif
+  }, [sessionEval, jadwalOtomatisAktif, isHariAktif, sesiAktif])
 
   const presensiSelesai = useMemo(() => {
-    if (!jadwalOtomatisAktif || !jamBatasPulang) return false
-    if (!isHariAktif) return false
-    const [bh, bm] = jamBatasPulang.split(':').map(Number)
-    const [nh, nm] = [now.getHours(), now.getMinutes()]
-    return nh > bh || (nh === bh && nm >= bm)
-  }, [now, jadwalOtomatisAktif, jamBatasPulang, isHariAktif])
+    if (sessionEval.isMasukManualAktif) return false
+    if (!jadwalOtomatisAktif || !isHariAktif) return false
+    return sessionEval.isPresensiDitutup
+  }, [sessionEval, jadwalOtomatisAktif, isHariAktif])
 
   return (
     <div className="h-screen bg-slate-50 text-slate-800 flex flex-col overflow-hidden select-none relative">
@@ -579,14 +591,14 @@ export default function PresensiTV() {
             <div className="text-8xl">🌅</div>
             <h2 className="text-4xl font-black text-white tracking-tight">Presensi Belum Dimulai</h2>
             <p className="text-xl text-slate-300 font-semibold">
-              {!sesiAktif 
-                ? "Presensi hari ini belum dimulai"
-                : <>Presensi hari ini akan dimulai pukul <span className="text-emerald-400 font-black">{jamMulaiPresensi}</span>.</>}
+              {jadwalOtomatisAktif
+                ? <>Presensi hari ini akan dimulai pukul <span className="text-emerald-400 font-black">{jamMulaiPresensi} WIB</span>.</>
+                : "Presensi hari ini belum dibuka oleh Petugas Piket."}
             </p>
             <p className="text-slate-400 text-base">
-              {!sesiAktif
-                ? "Silakan tunggu hingga petugas piket mengaktifkan sesi presensi."
-                : "Silakan tunggu hingga waktu presensi dimulai. 👋"}
+              {jadwalOtomatisAktif
+                ? "Silakan tunggu hingga jam presensi otomatis dimulai. 👋"
+                : "Silakan hubungi petugas piket untuk mengaktifkan sesi presensi."}
             </p>
             <div className="mt-4 inline-flex items-center gap-2 px-6 py-3 bg-slate-800 border border-slate-600 rounded-2xl text-slate-300 text-sm font-semibold">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>

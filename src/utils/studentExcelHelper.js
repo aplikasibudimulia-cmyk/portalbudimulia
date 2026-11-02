@@ -581,6 +581,30 @@ export async function syncAllTablesNisn(oldNisn, newNisn) {
   const nNisn = String(newNisn || '').trim()
   if (!oNisn || !nNisn || oNisn === nNisn) return
 
+  // Merge student_points if old and new records both exist
+  try {
+    const { data: oldSp } = await supabase.from('student_points').select('*').eq('nisn', oNisn)
+    if (oldSp && oldSp.length > 0) {
+      for (const osp of oldSp) {
+        const { data: newSp } = await supabase.from('student_points').select('*')
+          .eq('nisn', nNisn).eq('tahun_ajaran_id', osp.tahun_ajaran_id).eq('semester', osp.semester).maybeSingle()
+        if (newSp) {
+          // Both exist, recalculate from point_records
+          const { data: allRecs } = await supabase.from('point_records').select('poin_diberikan')
+            .in('nisn', [oNisn, nNisn]).eq('tahun_ajaran_id', osp.tahun_ajaran_id).eq('semester', osp.semester)
+          const sumDelta = (allRecs || []).reduce((acc, r) => acc + (r.poin_diberikan || 0), 0)
+          const basePoin = newSp.poin_default ?? 100
+          await supabase.from('student_points').update({ total_poin: basePoin + sumDelta }).eq('id', newSp.id)
+          await supabase.from('student_points').delete().eq('id', osp.id)
+        } else {
+          await supabase.from('student_points').update({ nisn: nNisn }).eq('id', osp.id)
+        }
+      }
+    }
+  } catch (spErr) {
+    console.warn('Sync student_points warning:', spErr)
+  }
+
   await Promise.allSettled([
     // 1. Akun Pengguna
     supabase.from('akun_pengguna').update({ foreign_id: nNisn }).eq('foreign_id', oNisn),
@@ -601,12 +625,15 @@ export async function syncAllTablesNisn(oldNisn, newNisn) {
     supabase.from('presensi_harian').update({ siswa_nisn: nNisn }).eq('siswa_nisn', oNisn),
     supabase.from('nilai_siswa').update({ siswa_nisn: nNisn }).eq('siswa_nisn', oNisn),
     supabase.from('point_records').update({ nisn: nNisn }).eq('nisn', oNisn),
-    supabase.from('student_points').update({ nisn: nNisn }).eq('nisn', oNisn),
+    supabase.from('pengajuan_poin_positif').update({ nisn: nNisn }).eq('nisn', oNisn),
+    supabase.from('poin_positif_siswa_blokir').update({ nisn: nNisn }).eq('nisn', oNisn),
     supabase.from('prestasi_siswa').update({ siswa_nisn: nNisn }).eq('siswa_nisn', oNisn),
     supabase.from('bk_konsultasi').update({ siswa_nisn: nNisn }).eq('siswa_nisn', oNisn),
     supabase.from('bk_konsultasi_booking').update({ siswa_nisn: nNisn }).eq('siswa_nisn', oNisn),
     supabase.from('foto').update({ nisn: nNisn }).eq('nisn', oNisn),
     supabase.from('push_device_tokens').update({ nisn: nNisn }).eq('nisn', oNisn),
+    supabase.from('notifikasi').update({ target_nisn: nNisn }).eq('target_nisn', oNisn),
+    supabase.from('notifikasi_read').update({ nisn: nNisn }).eq('nisn', oNisn),
     supabase.from('berkas_pengumuman').update({ kode_siswa: nNisn }).eq('kode_siswa', oNisn),
     supabase.from('impersonate_tokens').update({ target_user_id: nNisn }).eq('target_user_id', oNisn)
   ])

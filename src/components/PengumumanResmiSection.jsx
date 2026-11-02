@@ -119,6 +119,7 @@ export default function PengumumanResmiSection({ session, activeTa }) {
     if (tag === 'bold') replacement = `<b>${selectedText || 'Teks Tebal'}</b>`
     else if (tag === 'italic') replacement = `<i>${selectedText || 'Teks Miring'}</i>`
     else if (tag === 'underline') replacement = `<u>${selectedText || 'Teks Garis Bawah'}</u>`
+    else if (tag === 'number-list') replacement = `\n<ol>\n  <li>${selectedText || 'Poin 1'}</li>\n  <li>Poin 2</li>\n</ol>`
     else if (tag === 'list') replacement = `\n<ul>\n  <li>${selectedText || 'Item Daftar'}</li>\n</ul>`
 
     const newText = text.substring(0, start) + replacement + text.substring(end)
@@ -341,13 +342,31 @@ export default function PengumumanResmiSection({ session, activeTa }) {
     doc.setFont('times', 'bold')
     doc.text(`Hal: ${item.judul}`, 20, 74)
 
-    // 3. Body Text (Hilangkan tag HTML dasar untuk PDF rendering aman)
-    const cleanIsi = item.isi
+    // 3. Body Text (Hilangkan tag HTML dasar untuk PDF rendering aman dengan nomor urut terjaga)
+    let processedIsi = item.isi || ''
+    // Render <ol> as sequential numbering (1. 2. 3.)
+    processedIsi = processedIsi.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (match, listContent) => {
+      let counter = 1
+      const numberedItems = listContent.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, itemText) => {
+        return `\n${counter++}. ${itemText.trim()}`
+      })
+      return numberedItems + '\n'
+    })
+    // Render <ul> as bullet points
+    processedIsi = processedIsi.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (match, listContent) => {
+      const bulletItems = listContent.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, itemText) => {
+        return `\n• ${itemText.trim()}`
+      })
+      return bulletItems + '\n'
+    })
+
+    const cleanIsi = processedIsi
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/p>/gi, '\n')
-      .replace(/<li>/gi, ' - ')
+      .replace(/<li>/gi, '• ')
       .replace(/<\/li>/gi, '\n')
       .replace(/<[^>]*>/g, '') // remove remaining tags
+      .replace(/\n{3,}/g, '\n\n')
 
     doc.setFont('times', 'normal')
     const splitText = doc.splitTextToSize(cleanIsi, 170)
@@ -450,7 +469,8 @@ export default function PengumumanResmiSection({ session, activeTa }) {
                       <button type="button" onClick={() => handleEditorAction('bold')} title="Tebal" className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-xs font-bold rounded">B</button>
                       <button type="button" onClick={() => handleEditorAction('italic')} title="Miring" className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-xs italic rounded">I</button>
                       <button type="button" onClick={() => handleEditorAction('underline')} title="Garis Bawah" className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-xs underline rounded">U</button>
-                      <button type="button" onClick={() => handleEditorAction('list')} title="List" className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-xs rounded">• List</button>
+                      <button type="button" onClick={() => handleEditorAction('number-list')} title="Penomoran (1, 2, 3...)" className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded border border-indigo-200">1. List</button>
+                      <button type="button" onClick={() => handleEditorAction('list')} title="List Poin (•)" className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-xs rounded">• List</button>
                     </div>
                   </div>
                   <textarea
@@ -784,7 +804,7 @@ export default function PengumumanResmiSection({ session, activeTa }) {
 
                 {/* Content */}
                 <div 
-                  className="mt-6 text-xs leading-relaxed text-justify space-y-3 prose max-w-none font-serif"
+                  className="mt-6 text-xs leading-relaxed text-justify space-y-3 prose max-w-none surat-rendered-body font-serif"
                   dangerouslySetInnerHTML={{ __html: previewItem.isi }}
                 />
 

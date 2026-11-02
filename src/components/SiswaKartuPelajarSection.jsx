@@ -452,15 +452,45 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
     const nisn = studentData?.nisn
     if (!nisn) return
     try {
-      const { data: fresh, error } = await supabase
-        .from('siswa_permanent')
-        .select('*')
-        .eq('nisn', nisn)
-        .maybeSingle()
+      let fresh = null
 
-      if (error) {
-        console.warn('Gagal memuat biodata siswa terbaru:', error)
-      } else if (fresh) {
+      // 1. Coba lewat RPC aman terlebih dahulu (bypass RLS restrict)
+      try {
+        const { data: rpcRes } = await supabase.rpc('fn_get_biodata_kartu_pelajar', {
+          p_nisn: String(nisn),
+          p_akun_id: studentData?.akun_id || null
+        })
+        if (rpcRes?.ok && rpcRes.data) {
+          fresh = rpcRes.data
+        }
+      } catch (_) {}
+
+      // 2. Coba RPC profil alternatif jika RPC kartu pelajar belum ada
+      if (!fresh && studentData?.akun_id) {
+        try {
+          const { data: profRes } = await supabase.rpc('fn_get_my_student_profile', {
+            p_nisn: String(nisn),
+            p_akun_id: studentData.akun_id
+          })
+          if (profRes?.ok && profRes.data) {
+            fresh = profRes.data
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback direct select
+      if (!fresh) {
+        const { data, error } = await supabase
+          .from('siswa_permanent')
+          .select('*')
+          .eq('nisn', nisn)
+          .maybeSingle()
+        if (!error && data) {
+          fresh = data
+        }
+      }
+
+      if (fresh) {
         // Ambil data fresh dari database. Jika di database nilainya null / kosong (karena dihapus admin),
         // pastikan nilainya benar-benar terhapus di aplikasi siswa!
         const updated = {
@@ -945,30 +975,56 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
         nama_ortu: formData.parent_nama ? formData.parent_nama.trim() : null
       }
 
-      // Update tabel siswa_permanent
-      const { error: dbError } = await supabase
-        .from('siswa_permanent')
-        .update(payload)
-        .eq('nisn', activeStudent.nisn)
+      // Update data siswa melalui RPC aman atau fallback direct update
+      let saveSuccess = false
+      let savedResultData = null
 
-      if (dbError) {
-        throw dbError
+      // 1. Coba simpan via RPC fn_simpan_biodata_kartu_pelajar
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('fn_simpan_biodata_kartu_pelajar', {
+          p_nisn: String(activeStudent.nisn),
+          p_payload: payload,
+          p_akun_id: activeStudent?.akun_id || null
+        })
+        if (!rpcErr && rpcRes?.ok) {
+          saveSuccess = true
+          savedResultData = rpcRes.data
+        } else if (rpcRes && !rpcRes.ok) {
+          throw new Error(rpcRes.msg || 'Gagal menyimpan biodata')
+        } else if (rpcErr && !rpcErr.message?.includes('function') && rpcErr.code !== 'PGRST202') {
+          throw rpcErr
+        }
+      } catch (rpcEx) {
+        if (!rpcEx.message?.includes('function') && rpcEx.code !== 'PGRST202') {
+          throw rpcEx
+        }
       }
 
-      // Jalankan RPC update_kontak_ortu_siswa jika tersedia sebagai fallback sinkronisasi
+      // 2. Fallback update tabel siswa_permanent jika RPC belum dijalankan di database
+      if (!saveSuccess) {
+        const { error: dbError } = await supabase
+          .from('siswa_permanent')
+          .update(payload)
+          .eq('nisn', activeStudent.nisn)
+
+        if (dbError) {
+          throw dbError
+        }
+      }
+
+      // Jalankan RPC update_kontak_ortu_siswa jika tersedia sebagai fallback sinkronisasi kontak
       try {
         await supabase.rpc('update_kontak_ortu_siswa', {
           p_nisn: String(activeStudent.nisn),
           p_kontak_list: cleanKontakList
         })
-      } catch (rpcEx) {
-        // Toleransi jika RPC tidak wajib
-      }
+      } catch (rpcEx) {}
 
       // Buat objek siswa yang sudah diperbarui
       const updatedStudent = {
         ...activeStudent,
         ...payload,
+        ...(savedResultData || {}),
         no_whatsapp: cleanStudentPhone,
         no_hp: cleanStudentPhone,
         rt: cleanRt,

@@ -65,43 +65,27 @@ export default function ValidasiKartuPelajar() {
 
       setLoading(true)
       try {
-        // 1. Coba cari di view siswa_lengkap
+        // 1. Coba panggil RPC aman fn_validasi_kartu_pelajar (hanya merilis data publik kartu)
         let studentResult = null
-        const { data: siswaLengkap, error: errLengkap } = await supabase
-          .from('siswa_lengkap')
-          .select('*')
-          .eq('nisn', clean)
-          .order('is_aktif', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (!errLengkap && siswaLengkap) {
-          studentResult = siswaLengkap
-        }
-
-        // 2. Jika tidak ditemukan, coba cari di tabel siswa_permanent
-        if (!studentResult) {
-          const { data: perm, error: errPerm } = await supabase
-            .from('siswa_permanent')
-            .select('*')
-            .eq('nisn', clean)
-            .maybeSingle()
-
-          if (!errPerm && perm) {
-            studentResult = perm
+        try {
+          const { data: rpcStudent, error: rpcErr } = await supabase.rpc('fn_validasi_kartu_pelajar', { p_nisn: clean })
+          if (!rpcErr && rpcStudent) {
+            studentResult = rpcStudent
           }
-        }
+        } catch {}
 
-        // 3. Fallback jika query ID bukannya NISN
+        // 2. Fallback jika RPC belum di-apply di DB (hanya minta kolom publik, bukan data ortu)
         if (!studentResult) {
-          const { data: permById } = await supabase
-            .from('siswa_permanent')
-            .select('*')
-            .eq('id', clean)
+          const { data: siswaLengkap } = await supabase
+            .from('siswa_lengkap')
+            .select('nisn, nama_lengkap, kelas, tempat_lahir, tanggal_lahir, jenis_kelamin, foto_url, is_aktif')
+            .eq('nisn', clean)
+            .order('is_aktif', { ascending: false })
+            .limit(1)
             .maybeSingle()
 
-          if (permById) {
-            studentResult = permById
+          if (siswaLengkap) {
+            studentResult = siswaLengkap
           }
         }
 

@@ -140,7 +140,7 @@ export default function ExportKontakModal({
         // 2. Fetch Parent details from siswa_permanent with full pagination
         const permList = await fetchAllFromTable(
           'siswa_permanent',
-          'nisn, nama_lengkap, nama_ortu, no_hp_ortu, no_whatsapp, email_ortu, email_aktif'
+          'nisn, nama_lengkap, nama_ortu, no_hp_ortu, no_whatsapp, email_ortu, email_aktif, kontak_ortu'
         )
 
         const permMap = {}
@@ -160,7 +160,8 @@ export default function ExportKontakModal({
             no_whatsapp: s.no_whatsapp || p.no_whatsapp || '',
             email_ortu: p.email_ortu || '',
             email_aktif: s.email_aktif || p.email_aktif || '',
-            tahun_ajaran: s.tahun_ajaran || ''
+            tahun_ajaran: s.tahun_ajaran || '',
+            kontak_ortu: Array.isArray(p.kontak_ortu) ? p.kontak_ortu : []
           }
         })
 
@@ -170,7 +171,8 @@ export default function ExportKontakModal({
         if (!hideGuru) {
           const { data: rawGurus, error: errGuru } = await supabase
             .from('guru')
-            .select('id, nama_guru, kode, no_hp, nip, guru_role(roles(nama)))')
+            .select('id, nama_guru, kode, no_hp, guru_role(roles(nama))')
+            .order('nama_guru', { ascending: true })
           if (errGuru) console.warn('errGuru:', errGuru)
           setGurusData(rawGurus || [])
         } else {
@@ -249,45 +251,85 @@ export default function ExportKontakModal({
   // Prepared Contacts Array (HANYA kontak yang memiliki nomor HP valid)
   const preparedContacts = useMemo(() => {
     const contacts = []
+    // Deduplikasi nomor HP — mencegah nomor yang sama muncul di banyak kontak dengan nama berbeda
+    const usedPhones = new Set()
 
     // 1. Process Students & Parents
     if (targetType === 'ortu' || targetType === 'siswa' || targetType === 'all') {
       filteredStudents.forEach(s => {
-        const parentPhone = formatPhoneNumberE164(s.no_hp_ortu)
-        const studentPhone = formatPhoneNumberE164(s.no_whatsapp)
         const studentClass = s.kelas || ''
 
-        // Ortu Contact - HANYA jika memiliki nomor HP orang tua
-        if (targetType === 'ortu' || targetType === 'all') {
-          if (parentPhone) {
-            const fn = generateContactName({
-              type: 'ortu',
-              studentName: s.nama_lengkap,
-              parentName: s.nama_ortu,
-              kelas: studentClass,
-              taShort: taShort,
-              formatOrtu: formatOrtu,
-              formatSiswa: formatSiswa,
-              nameStyle: nameStyle,
-            })
+        // Kumpulkan semua nomor kontak orang tua (dari kontak_ortu array dan fallback no_hp_ortu)
+        const parentEntries = []
+        const studentParentPhoneSet = new Set()
 
-            contacts.push({
-              id: `ortu-${s.nisn}`,
-              fullName: fn,
-              phone: parentPhone,
-              email: s.email_ortu || '',
-              nisn: s.nisn,
-              kelas: studentClass,
-              typeLabel: 'Orang Tua',
-              groupName: defaultGroupName,
-              raw: s
-            })
-          }
+        if (Array.isArray(s.kontak_ortu) && s.kontak_ortu.length > 0) {
+          s.kontak_ortu.forEach(k => {
+            const formatted = formatPhoneNumberE164(k.nomor)
+            if (formatted && !studentParentPhoneSet.has(formatted)) {
+              studentParentPhoneSet.add(formatted)
+              parentEntries.push({
+                phone: formatted,
+                nama: k.nama || s.nama_ortu,
+                tag: k.tag || 'Orang Tua'
+              })
+            }
+          })
         }
 
-        // Siswa Contact - HANYA jika memiliki nomor HP siswa
+        // Fallback jika belum ada atau ada nomor di no_hp_ortu yang belum masuk
+        const primaryHpOrtu = formatPhoneNumberE164(s.no_hp_ortu)
+        if (primaryHpOrtu && !studentParentPhoneSet.has(primaryHpOrtu)) {
+          studentParentPhoneSet.add(primaryHpOrtu)
+          parentEntries.push({
+            phone: primaryHpOrtu,
+            nama: s.nama_ortu,
+            tag: 'Orang Tua'
+          })
+        }
+
+        // Ortu Contact
+        if (targetType === 'ortu' || targetType === 'all') {
+          parentEntries.forEach((pe, pIdx) => {
+            if (pe.phone && !usedPhones.has(pe.phone)) {
+              let fn = generateContactName({
+                type: 'ortu',
+                studentName: s.nama_lengkap,
+                parentName: pe.nama || s.nama_ortu,
+                kelas: studentClass,
+                taShort: taShort,
+                formatOrtu: formatOrtu,
+                formatSiswa: formatSiswa,
+                nameStyle: nameStyle,
+              })
+
+              // Jika orang tua lebih dari satu (misal Ayah & Ibu), tambahkan label peran agar tidak bentrok
+              if (parentEntries.length > 1 && pe.tag) {
+                fn = `${fn} (${pe.tag})`
+              }
+
+              contacts.push({
+                id: `ortu-${s.nisn}-${pIdx}`,
+                fullName: fn,
+                phone: pe.phone,
+                email: s.email_ortu || '',
+                nisn: s.nisn,
+                kelas: studentClass,
+                typeLabel: `Orang Tua (${pe.tag})`,
+                groupName: defaultGroupName,
+                raw: s
+              })
+              usedPhones.add(pe.phone)
+            }
+          })
+        }
+
+        // Siswa Contact - HANYA jika nomor siswa valid, belum dipakai, DAN BUKAN nomor orang tua
         if (targetType === 'siswa' || targetType === 'all') {
-          if (studentPhone) {
+          const studentPhone = formatPhoneNumberE164(s.no_whatsapp)
+          const isActuallyParentPhone = studentPhone && studentParentPhoneSet.has(studentPhone)
+
+          if (studentPhone && !isActuallyParentPhone && !usedPhones.has(studentPhone)) {
             const fn = generateContactName({
               type: 'siswa',
               studentName: s.nama_lengkap,
@@ -310,6 +352,7 @@ export default function ExportKontakModal({
               groupName: defaultGroupName,
               raw: s
             })
+            usedPhones.add(studentPhone)
           }
         }
       })
@@ -319,7 +362,7 @@ export default function ExportKontakModal({
     if (!hideGuru && (targetType === 'guru' || targetType === 'all')) {
       gurusData.forEach(g => {
         const guruPhone = formatPhoneNumberE164(g.no_hp)
-        if (guruPhone) {
+        if (guruPhone && !usedPhones.has(guruPhone)) {
           let gName = g.nama_guru || ''
           const words = gName.trim().split(/\s+/)
           const firstName = words[0] || ''
@@ -348,15 +391,16 @@ export default function ExportKontakModal({
             nisn: g.kode || '-',
             kelas: 'Guru & Staff',
             typeLabel: 'Guru / Staff',
-            groupName: targetType === 'all' ? defaultGroupName : `Guru Staff BM ${taShort}`,
+            groupName: groupLabelCustom || (targetType === 'all' ? defaultGroupName : (taShort ? `Guru & Staff BM ${taShort}` : 'Guru & Staff BM')),
             raw: g
           })
+          usedPhones.add(guruPhone)
         }
       })
     }
 
     return contacts
-  }, [filteredStudents, gurusData, targetType, formatOrtu, formatSiswa, formatGuru, taShort, nameStyle, defaultGroupName, hideGuru])
+  }, [filteredStudents, gurusData, targetType, formatOrtu, formatSiswa, formatGuru, taShort, nameStyle, defaultGroupName, hideGuru, groupLabelCustom])
 
   const isIOS = useMemo(() => {
     if (typeof navigator === 'undefined') return false

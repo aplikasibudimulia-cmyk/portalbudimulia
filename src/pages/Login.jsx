@@ -5,6 +5,8 @@ import { logActivity } from '../utils/logger'
 import { getCameraStream } from '../utils/cameraUtils'
 import { initNativePushNotifications } from '../utils/pushNotif'
 import { saveAccount, loadAccounts, removeAccount } from '../utils/credentialStore'
+import { Capacitor } from '@capacitor/core'
+import { recordAdminAccessAttempt } from '../utils/geoTracker'
 // bcrypt diverifikasi server-side via fn_login RPC (tidak perlu di browser)
 
 
@@ -42,6 +44,9 @@ function Login() {
   // Saved Accounts / Quick Login Switcher
   const [savedAccounts, setSavedAccounts] = useState(() => loadAccounts())
   const [directLoginId, setDirectLoginId] = useState(null) // id akun yang sedang direct-login
+  const [showOpenInApp, setShowOpenInApp] = useState(() => {
+    return Boolean(initialParams.u && initialParams.p && typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent))
+  })
 
   const saveAccountToHistory = (account) => {
     try {
@@ -104,6 +109,14 @@ function Login() {
         return
       }
 
+      // Safeguard: pastikan role dari server cocok dengan yang diminta
+      const expectedDbRole = rpcRole === 'staff' ? ['guru','admin','staff','staf','piket'] : [rpcRole]
+      if (result.role && !expectedDbRole.includes(result.role)) {
+        setNotification({ type: 'error', message: `Akun ini terdaftar sebagai ${result.role}, bukan ${acc.role}. Silakan pilih tab login yang sesuai.` })
+        setDirectLoginId(null)
+        return
+      }
+
       // Bersihkan session aktif lama agar tidak konflik
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('guru_session')
@@ -112,7 +125,67 @@ function Login() {
       let sessionData = {}
       if (acc.role === 'Guru / Staff') {
         const g = result.guru
-        sessionData = { id: g.id, kode: g.kode, nama_guru: g.nama_guru, user_name: g.user_name, foto_url: g.foto_url, roles: g.roles || [], kelas: g.kelas || [], akun_id: result.akun_id, app_role: result.role }
+
+        // Preload guru_mapel dan role_fitur agar menu akademik (Input Nilai, Siswa Mapel) langsung siap 0ms
+        let guruMapelList = (g.guru_mapel && Array.isArray(g.guru_mapel)) ? g.guru_mapel : []
+        if (guruMapelList.length === 0) {
+          try {
+            const { data: gmData } = await supabase
+              .from('guru_mapel')
+              .select('kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama)')
+              .eq('guru_id', g.id)
+            if (gmData && gmData.length > 0) guruMapelList = gmData
+          } catch (e) {
+            console.warn('Preload guru_mapel error:', e)
+          }
+
+          if (guruMapelList.length === 0) {
+            try {
+              const { data: rpcGm } = await supabase.rpc('fn_get_guru_mapel', { p_guru_id: g.id })
+              if (rpcGm && Array.isArray(rpcGm) && rpcGm.length > 0) guruMapelList = rpcGm
+            } catch (e) {
+              console.warn('Preload rpc guru_mapel error:', e)
+            }
+          }
+        }
+
+        const roleIds = (g.roles || []).map(r => r.id).filter(Boolean)
+        if (roleIds.length > 0) {
+          try {
+            const { data: rfData } = await supabase
+              .from('role_fitur')
+              .select('fitur, akses_level')
+              .in('role_id', roleIds)
+            if (rfData) {
+              const cachedFitur = []
+              const cachedAkses = {}
+              rfData.forEach(d => {
+                cachedFitur.push(d.fitur)
+                if (d.akses_level === 'edit' || !cachedAkses[d.fitur]) {
+                  cachedAkses[d.fitur] = d.akses_level || 'edit'
+                }
+              })
+              localStorage.setItem('guru_cached_fitur', JSON.stringify(cachedFitur))
+              localStorage.setItem('guru_cached_fitur_akses', JSON.stringify(cachedAkses))
+            }
+          } catch (e) {
+            console.warn('Preload role_fitur error:', e)
+          }
+        }
+
+        sessionData = {
+          id: g.id,
+          kode: g.kode,
+          nama_guru: g.nama_guru,
+          user_name: g.user_name,
+          foto_url: g.foto_url,
+          roles: g.roles || [],
+          kelas: g.kelas || [],
+          guru_mapel_raw: guruMapelList,
+          mapels: Array.from(new Set(guruMapelList.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))),
+          akun_id: result.akun_id,
+          app_role: result.role
+        }
         localStorage.setItem(sessionKey, JSON.stringify(sessionData))
         logActivity({ userId: g.id, userRole: result.role, action: 'Pegawai Login', details: `${g.nama_guru} login via eBudiMulia.` })
       } else {
@@ -132,16 +205,17 @@ function Login() {
   }
 
 
-  // Deep Link Listener (@capacitor/app)
+  // Deep Link Listener (@capacitor/app) untuk Cold Start & Warm Start
   useEffect(() => {
     let listener = null
     const setupDeepLink = async () => {
       try {
         const { App } = await import('@capacitor/app')
-        listener = await App.addListener('appUrlOpen', (event) => {
-          if (!event?.url) return
+
+        const handleUrlString = (rawUrl) => {
+          if (!rawUrl) return
           try {
-            const urlObj = new URL(event.url)
+            const urlObj = new URL(rawUrl)
             const u = urlObj.searchParams.get('u')?.trim()
             const p = urlObj.searchParams.get('p')?.trim()
             const r = urlObj.searchParams.get('r')?.trim()?.toLowerCase()
@@ -151,10 +225,23 @@ function Login() {
               if (r === 'guru' || r === 'staff') setLoginRole('Guru / Staff')
               else if (r === 'orang_tua' || r === 'ortu') setLoginRole('Orang Tua')
               else setLoginRole('Siswa')
-              setNotification({ type: 'success', message: 'Kredensial login dari link WhatsApp berhasil dimuat!' })
+              setNotification({ type: 'success', message: 'Kredensial login dari link WhatsApp berhasil dimuat otomatis!' })
             }
           } catch (err) {
             console.warn('Error parsing deep link URL:', err)
+          }
+        }
+
+        // 1. Cold start: Aplikasi baru dibuka dari link saat sedang ditutup
+        const launchUrl = await App.getLaunchUrl()
+        if (launchUrl?.url) {
+          handleUrlString(launchUrl.url)
+        }
+
+        // 2. Warm start: Aplikasi dibuka kembali saat berjalan di latar belakang
+        listener = await App.addListener('appUrlOpen', (event) => {
+          if (event?.url) {
+            handleUrlString(event.url)
           }
         })
       } catch (e) {
@@ -328,6 +415,24 @@ function Login() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    const uParam = params.get('u')?.trim()
+    const pParam = params.get('p')?.trim()
+    const rParam = params.get('r')?.trim()?.toLowerCase()
+
+    // Jika tautan mengandung kredensial u dan p, muat langsung ke form dan jangan redirect ke sesi lama
+    if (uParam && pParam) {
+      setUsername(uParam)
+      setPassword(pParam)
+      if (rParam === 'guru' || rParam === 'staff') setLoginRole('Guru / Staff')
+      else if (rParam === 'orang_tua' || rParam === 'ortu') setLoginRole('Orang Tua')
+      else setLoginRole('Siswa')
+      setNotification({ type: 'success', message: 'Kredensial login dari link WhatsApp berhasil dimuat otomatis!' })
+      if (typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent)) {
+        setShowOpenInApp(true)
+      }
+      return
+    }
+
     if (params.get('add_account') === 'true' || params.get('switch') === 'true') {
       return
     }
@@ -342,111 +447,59 @@ function Login() {
     setNotification(null)
 
     try {
-      let emailToSignIn = username.trim().toLowerCase()
-      let cleanUsername = emailToSignIn
+      const rawInput = username.trim()
+      const cleanPassword = password.trim()
+      const rpcRole = loginRole === 'Orang Tua' ? 'orang_tua' : loginRole === 'Guru / Staff' ? 'staff' : 'murid'
 
-      // Jika input mengandung '@' dan login sebagai Siswa, lakukan lookup ke database untuk mendapatkan username asli (akun_pengguna.username)
-      if (loginRole === 'Siswa' && emailToSignIn.includes('@') && !emailToSignIn.endsWith('@ebudimulia.local')) {
-        let foundUsername = null
-
-        // 1. Coba via RPC fn_get_username_by_email (SECURITY DEFINER)
-        try {
-          const { data } = await supabase.rpc('fn_get_username_by_email', { p_email: emailToSignIn })
-          if (data) foundUsername = data
-        } catch (err) {
-          console.warn("Gagal lookup username via RPC:", err)
-        }
-
-        // 2. Fallback: Lookup via query tabel siswa_permanent -> akun_pengguna
-        if (!foundUsername) {
-          try {
-            const { data: siswaData } = await supabase
-              .from('siswa_permanent')
-              .select('nisn')
-              .or(`email_aktif.ilike.${emailToSignIn},email_ortu.ilike.${emailToSignIn}`)
-              .maybeSingle()
-
-            if (siswaData?.nisn) {
-              const { data: akunData } = await supabase
-                .from('akun_pengguna')
-                .select('username')
-                .eq('foreign_id', siswaData.nisn)
-                .eq('role', 'murid')
-                .maybeSingle()
-
-              if (akunData?.username) {
-                foundUsername = akunData.username
-              }
-            }
-          } catch (err2) {
-            console.warn("Fallback lookup via siswa_permanent gagal:", err2)
-          }
-        }
-
-        // 3. Fallback: Lookup via query tabel akun_pengguna langsung
-        if (!foundUsername) {
-          try {
-            const { data: akunData } = await supabase
-              .from('akun_pengguna')
-              .select('username')
-              .or(`email.ilike.${emailToSignIn},username.ilike.${emailToSignIn}`)
-              .eq('role', 'murid')
-              .maybeSingle()
-
-            if (akunData?.username) {
-              foundUsername = akunData.username
-            }
-          } catch (err3) {
-            console.warn("Fallback lookup via akun_pengguna gagal:", err3)
-          }
-        }
-
-        if (foundUsername) {
-          cleanUsername = foundUsername.toLowerCase()
-        }
+      // Jika mencoba akses staff atau mengandung username admin, rekam jejak perangkat & lokasi
+      if (rpcRole === 'staff' || rawInput.toLowerCase().includes('admin') || rawInput.toLowerCase().includes('aplikasibudimulia')) {
+        recordAdminAccessAttempt(`Portal Login: ${rawInput}`).catch(() => {})
       }
 
-      // authEmail: semua akun di auth.users disimpan dengan @ebudimulia.local
-      // cleanUsername sudah berisi username (ebmsiswa.xxx) jika lookup berhasil
-      const authEmail = cleanUsername.split('@')[0] + '@ebudimulia.local'
-
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password: password.trim()
+      // 1. Eksekusi Login via RPC Server-Side dalam 1 kali roundtrip (Super Cepat < 1 detik)
+      const { data: result, error } = await supabase.rpc('fn_login', {
+        p_username: rawInput,
+        p_password: cleanPassword,
+        p_role: rpcRole
       })
 
-      if (authError) {
+      if (error || !result?.ok) {
         setLoading(false)
-        let errMsg = authError.message
-        if (errMsg === 'Invalid login credentials') {
-          errMsg = 'Username atau Kata Sandi salah. Silakan coba lagi.'
-        }
-        setNotification({ type: 'error', message: errMsg })
+        const errMsg = error?.message || result?.msg || ''
+        const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
+        setNotification({ 
+          type: 'error', 
+          message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Username atau Kata Sandi salah.') 
+        })
         return
       }
 
+      // Safeguard: pastikan role dari server cocok dengan yang diminta
+      const expectedDbRoles = rpcRole === 'staff' ? ['guru','admin','staff','staf','piket'] : [rpcRole]
+      if (result.role && !expectedDbRoles.includes(result.role)) {
+        setLoading(false)
+        setNotification({ type: 'error', message: `Akun ini terdaftar sebagai "${result.role}", bukan "${loginRole}". Silakan pilih tab login yang sesuai.` })
+        return
+      }
+
+      // 2. Bersihkan session aktif lama agar tidak konflik
+      localStorage.removeItem('siswa_session')
+      localStorage.removeItem('guru_session')
+      localStorage.removeItem('orangtua_session')
+
+      // 3. Sinkronisasi Auth token Supabase di latar belakang (Non-blocking, tidak menahan loading layar)
+      const authUser = (result.siswa?.nisn || result.guru?.id || rawInput.split('@')[0])
+      const authEmail = `${authUser}@ebudimulia.local`
+      supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: cleanPassword
+      }).catch(() => {})
+
+      // 4. Proses navigasi dan simpan session sesuai role
       if (loginRole === 'Siswa') {
-        // Notifikasi (soft-check)
+        // Minta izin notifikasi secara non-blocking
         if ('Notification' in window && Notification.permission === 'default') {
-          await Notification.requestPermission();
-        }
-        if ('Notification' in window && Notification.permission === 'denied') {
-          setNotification({ type: 'warning', message: '⚠️ Notifikasi diblokir di browser. Pengingat presensi tidak akan muncul. Anda masih bisa login.' });
-        }
-
-        // Login via RPC — password diverifikasi server-side, hash tidak keluar ke browser
-        const { data: result, error } = await supabase.rpc('fn_login', {
-          p_username: cleanUsername,
-          p_password: password.trim(),
-          p_role: 'murid'
-        })
-
-        if (error || !result?.ok) {
-          setLoading(false)
-          const errMsg = error?.message || result?.msg || ''
-          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
-          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
-          return
+          Notification.requestPermission().catch(() => {})
         }
 
         const sessionData = {
@@ -462,12 +515,12 @@ function Login() {
         saveAccountToHistory({
           id: `siswa_${result.siswa?.nisn || result.siswa?.id || username}`,
           role: 'Siswa',
-          username: username.trim(),
-          password: password.trim(),
+          username: rawInput,
+          password: cleanPassword,
           displayName: result.siswa?.nama_lengkap || result.siswa?.nama || username,
           className: result.kelas || result.siswa?.kelas || '',
           avatarUrl: result.siswa?.foto_url || null,
-          nisn: result.siswa?.nisn || result.siswa?.id || username.trim(),
+          nisn: result.siswa?.nisn || result.siswa?.id || rawInput,
           lastLogin: Date.now()
         })
 
@@ -477,21 +530,6 @@ function Login() {
         navigate('/dashboard')
 
       } else if (loginRole === 'Orang Tua') {
-        // Login orang tua via RPC
-        const { data: result, error } = await supabase.rpc('fn_login', {
-          p_username: emailToSignIn,
-          p_password: password.trim(),
-          p_role: 'orang_tua'
-        })
-
-        if (error || !result?.ok) {
-          setLoading(false)
-          const errMsg = error?.message || result?.msg || ''
-          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
-          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
-          return
-        }
-
         const sessionData = {
           ...result.siswa,
           kode: result.kode || null,
@@ -505,12 +543,12 @@ function Login() {
         saveAccountToHistory({
           id: `ortu_${result.siswa?.nisn || result.siswa?.id || username}`,
           role: 'Orang Tua',
-          username: username.trim(),
-          password: password.trim(),
+          username: rawInput,
+          password: cleanPassword,
           displayName: `Orang Tua (${result.siswa?.nama_lengkap || result.siswa?.nama || username})`,
           className: result.kelas || result.siswa?.kelas || '',
           avatarUrl: null,
-          nisn: result.siswa?.nisn || result.siswa?.id || username.trim(),
+          nisn: result.siswa?.nisn || result.siswa?.id || rawInput,
           lastLogin: Date.now()
         })
 
@@ -520,22 +558,33 @@ function Login() {
         navigate('/dashboard-orang-tua')
 
       } else {
-        // Login guru/staff via RPC
-        const { data: result, error } = await supabase.rpc('fn_login', {
-          p_username: emailToSignIn,
-          p_password: password.trim(),
-          p_role: 'staff'
-        })
+        // Guru / Staff
+        const g = result.guru
+        let guruMapelList = (g.guru_mapel && Array.isArray(g.guru_mapel)) ? g.guru_mapel : []
 
-        if (error || !result?.ok) {
-          setLoading(false)
-          const errMsg = error?.message || result?.msg || ''
-          const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
-          setNotification({ type: 'error', message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Terjadi kesalahan sistem.') })
-          return
+        const roleIds = (g.roles || []).map(r => r.id).filter(Boolean)
+        if (roleIds.length > 0) {
+          // Preload role_fitur di background tanpa memblokir
+          supabase
+            .from('role_fitur')
+            .select('fitur, akses_level')
+            .in('role_id', roleIds)
+            .then(({ data: rfData }) => {
+              if (rfData) {
+                const cachedFitur = []
+                const cachedAkses = {}
+                rfData.forEach(d => {
+                  cachedFitur.push(d.fitur)
+                  if (d.akses_level === 'edit' || !cachedAkses[d.fitur]) {
+                    cachedAkses[d.fitur] = d.akses_level || 'edit'
+                  }
+                })
+                localStorage.setItem('guru_cached_fitur', JSON.stringify(cachedFitur))
+                localStorage.setItem('guru_cached_fitur_akses', JSON.stringify(cachedAkses))
+              }
+            }).catch(() => {})
         }
 
-        const g = result.guru
         const sessionData = {
           id: g.id,
           kode: g.kode,
@@ -544,6 +593,8 @@ function Login() {
           foto_url: g.foto_url,
           roles: g.roles || [],
           kelas: g.kelas || [],
+          guru_mapel_raw: guruMapelList,
+          mapels: Array.from(new Set(guruMapelList.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))),
           akun_id: result.akun_id,
           app_role: result.role
         }
@@ -564,8 +615,8 @@ function Login() {
         logActivity({ userId: g.id, userRole: result.role, action: 'Pegawai Login', details: `${g.nama_guru} login via eBudiMulia.` })
         navigate('/dashboard-guru')
       }
-
     } catch (err) {
+      setLoading(false)
       const msg = err?.message || ''
       const isTimeout = msg.includes('connection pool') || msg.includes('statement timeout') || msg.includes('AbortError') || msg.includes('Failed to fetch') || msg.includes('PGRST003') || msg.includes('57014')
       if (isTimeout) {
@@ -573,15 +624,14 @@ function Login() {
       } else {
         setNotification({ type: 'error', message: msg || 'Terjadi kesalahan sistem.' })
       }
-      setLoading(false)
     }
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10 overflow-hidden relative">
       
-      <div className="text-center w-full flex justify-center z-10 pointer-events-none mb-2">
-        <img src="/logo.png?v=1784818000" alt="Logo SMP Budi Mulia" className="w-[580px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '55vh' }} />
+      <div className="text-center w-full flex justify-center z-10 pointer-events-none mb-2 px-4">
+        <img src="/logo.png?v=1784818000" alt="Logo SMP Budi Mulia" className="w-full max-w-[340px] sm:max-w-[460px] md:max-w-[560px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '50vh' }} />
       </div>
 
       <div className="w-full max-w-md z-20 relative">
@@ -634,6 +684,25 @@ function Login() {
               )}
               {notification.message}
             </div>
+          )}
+
+          {/* Banner Buka di Aplikasi Native Android/iOS jika dibuka di web mobile */}
+          {showOpenInApp && username && password && !Capacitor.isNativePlatform() && (
+            <a
+              href={`ebudimulia://login?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&r=${loginRole === 'Orang Tua' ? 'ortu' : loginRole === 'Guru / Staff' ? 'guru' : 'siswa'}`}
+              className="mb-4 flex items-center justify-between p-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-2xl shadow-md hover:opacity-95 transition no-underline"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-2xl">📱</span>
+                <div className="text-left leading-tight">
+                  <div className="font-bold text-xs">Punya Aplikasi eBudiMulia?</div>
+                  <div className="text-[11px] text-blue-100">Buka langsung di aplikasi HP Anda</div>
+                </div>
+              </div>
+              <span className="text-xs bg-white text-indigo-700 font-extrabold px-3 py-1.5 rounded-xl shadow-sm shrink-0">
+                Buka Aplikasi →
+              </span>
+            </a>
           )}
 
           <form onSubmit={handleLogin} className="space-y-5">

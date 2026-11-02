@@ -19,7 +19,7 @@ let isChannelInitialized = false
  */
 export async function initNotificationChannels() {
   if (isChannelInitialized) return
-  if (Capacitor.isNativePlatform()) {
+  if (Capacitor.getPlatform() === 'android') {
     try {
       console.log('[Notif] Ensuring notification channel:', CHANNEL_ID)
       // Bersihkan channel versi lama
@@ -402,11 +402,14 @@ export async function requestAllInitialPermissions() {
  * Mendaftarkan FCM device token ke Supabase agar server bisa kirim notifikasi saat aplikasi mati.
  */
 export async function initNativePushNotifications(userData = {}) {
+  // Dukung platform native (Android & iOS)
   if (!Capacitor.isNativePlatform()) return null
 
   try {
-    // 1. Pastikan channel sudah dibuat
-    await initNotificationChannels()
+    // 1. Pastikan channel sudah dibuat (khusus Android)
+    if (Capacitor.getPlatform() === 'android') {
+      await initNotificationChannels()
+    }
 
     // 2. Cek izin push notification (termasuk Android 13+ prompt-with-rationale)
     let permStatus = await PushNotifications.checkPermissions()
@@ -560,13 +563,14 @@ export async function syncMultiAccountPushTokens(tokenValue = null, currentAccou
 
     for (const acc of uniqueAccounts) {
       try {
+        const currentPlatform = Capacitor.getPlatform()
         // Coba upsert dengan composite key (token, nisn, role)
         const { error } = await supabase.from('push_device_tokens').upsert({
           token: token,
           nisn: acc.nisn,
           role: acc.role,
-          platform: 'android',
-          device_info: navigator.userAgent || 'Android APK',
+          platform: currentPlatform,
+          device_info: navigator.userAgent || `${currentPlatform} App`,
           updated_at: new Date().toISOString()
         }, { onConflict: 'token,nisn,role' })
 
@@ -576,8 +580,8 @@ export async function syncMultiAccountPushTokens(tokenValue = null, currentAccou
             token: token,
             nisn: acc.nisn,
             role: acc.role,
-            platform: 'android',
-            device_info: navigator.userAgent || 'Android APK',
+            platform: currentPlatform,
+            device_info: navigator.userAgent || `${currentPlatform} App`,
             updated_at: new Date().toISOString()
           }, { onConflict: 'token' })
         }

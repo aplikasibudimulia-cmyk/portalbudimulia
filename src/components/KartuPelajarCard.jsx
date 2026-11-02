@@ -1,5 +1,6 @@
 import React, { forwardRef, useState, useEffect, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { getPortalBaseUrl } from '../utils/urlHelper'
 
 // Tema warna resmi kartu pelajar SMP Budi Mulia (Merah, Biru, Putih)
 export const CARD_THEMES = {
@@ -607,9 +608,7 @@ const KartuPelajarCard = forwardRef(({
   }
 
   // URL Verifikasi Resmi untuk QR Code (Dapat discan kamera HP kapan pun)
-  const baseUrl = typeof window !== 'undefined' && window.location?.origin 
-    ? window.location.origin 
-    : 'https://ebudimulia.com'
+  const baseUrl = getPortalBaseUrl()
   const verificationUrl = cleanNisn 
     ? `${baseUrl}/validasi-kartu?nisn=${encodeURIComponent(cleanNisn)}`
     : cleanNipd

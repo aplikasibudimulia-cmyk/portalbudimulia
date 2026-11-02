@@ -11,6 +11,8 @@ import { downloadStudentTemplateExcel, parseStudentExcelRows, buildStudentDataba
 import TemplateUpdateNisnModal from './TemplateUpdateNisnModal'
 import ModalKelengkapanDataSiswa from './ModalKelengkapanDataSiswa'
 import SmartPhotoUploadModal from './SmartPhotoUploadModal'
+import { getPortalBaseUrl } from '../utils/urlHelper'
+import { sendWhatsAppMessage } from '../utils/whatsappHelper'
 
 // Icons (Simplified as SVGs to reduce dependencies)
 const IconUsers = ({ className = 'w-5 h-5' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -840,7 +842,29 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     setShowResetModal(true)
   }
 
-  const handleSendDirectWa = (targetPhone, targetTag, targetName) => {
+  const getResetWaMessage = () => {
+    if (!resetData) return ''
+    const { row, generatedPass } = resetData
+    let roleParam = 'siswa'
+    if (activeTab === 'orang_tua') roleParam = 'orang_tua'
+    else if (activeTab === 'guru') roleParam = 'guru'
+    const loginUrl = `${getPortalBaseUrl()}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
+    if (activeTab === 'murid') {
+      return `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Kode Akses:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
+    } else if (activeTab === 'orang_tua') {
+      const recipientTag = resetData.selectedTag || 'Orang Tua'
+      const recipientName = resetData.selectedName ? ` ${resetData.selectedName}` : ''
+      let greeting = `Halo Orang Tua dari ${row.nama}`
+      if (recipientTag === 'Ayah') greeting = `Halo Bapak${recipientName} (Ayah dari ${row.nama})`
+      else if (recipientTag === 'Ibu') greeting = `Halo Ibu${recipientName} (Ibu dari ${row.nama})`
+      else if (recipientTag === 'Wali') greeting = `Halo${recipientName} (Wali dari ${row.nama})`
+      return `${greeting},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
+    } else {
+      return `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
+    }
+  }
+
+  const handleSendDirectWa = async (targetPhone, targetTag, targetName) => {
     if (!resetData) return
     const { row, generatedPass } = resetData
     const cleanNum = formatPhoneNumber(targetPhone) || cleanPhone(targetPhone)
@@ -849,7 +873,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       return
     }
     const roleParam = activeTab === 'orang_tua' ? 'orang_tua' : (activeTab === 'murid' ? 'siswa' : 'guru')
-    const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
+    const loginUrl = `${getPortalBaseUrl()}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
     
     let greeting = `Halo Orang Tua dari ${row.nama}`
     if (targetTag === 'Ayah') greeting = `Halo Bapak ${targetName || ''} (Ayah dari ${row.nama})`.replace('  ', ' ')
@@ -857,8 +881,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     else if (targetTag === 'Wali') greeting = `Halo ${targetName || ''} (Wali dari ${row.nama})`.replace('  ', ' ')
 
     const message = `${greeting},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
-    const waUrl = `https://wa.me/${cleanNum}?text=${encodeURIComponent(message)}`
-    window.open(waUrl, '_blank')
+    await sendWhatsAppMessage(cleanNum, message)
   }
 
   const executeReset = async (sendWa) => {
@@ -906,27 +929,8 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
           return
         }
 
-        let message = ""
-        let roleParam = 'siswa'
-        if (activeTab === 'orang_tua') roleParam = 'orang_tua'
-        else if (activeTab === 'guru') roleParam = 'guru'
-        const loginUrl = `${window.location.origin}/login?u=${row.username}&p=${generatedPass}&r=${roleParam}`
-        if (activeTab === 'murid') {
-          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Kode Akses:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
-        } else if (activeTab === 'orang_tua') {
-          const recipientTag = resetData.selectedTag || 'Orang Tua'
-          const recipientName = resetData.selectedName ? ` ${resetData.selectedName}` : ''
-          let greeting = `Halo Orang Tua dari ${row.nama}`
-          if (recipientTag === 'Ayah') greeting = `Halo Bapak${recipientName} (Ayah dari ${row.nama})`
-          else if (recipientTag === 'Ibu') greeting = `Halo Ibu${recipientName} (Ibu dari ${row.nama})`
-          else if (recipientTag === 'Wali') greeting = `Halo${recipientName} (Wali dari ${row.nama})`
-          message = `${greeting},\n\nBerikut adalah info login Portal Orang Tua untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
-        } else {
-          message = `Halo ${row.nama},\n\nBerikut adalah info login untuk e-BudiMulia:\n\n*Username:* ${row.username}\n*Password:* ${generatedPass}\n\nSilakan masuk melalui tautan login otomatis berikut:\n${loginUrl}\n\nHarap simpan baik-baik informasi ini.`
-        }
-        
-        const waUrl = `https://wa.me/${cleanNum}?text=${encodeURIComponent(message)}`
-        window.open(waUrl, '_blank')
+        const message = getResetWaMessage()
+        await sendWhatsAppMessage(cleanNum, message)
       }
     }
   }
@@ -4900,9 +4904,9 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                             const studentPass = siswaPermanentCredentials[s.foreign_id]?.kode_akses || s.rawStudent?.kode_akses || s.password_text || s.raw_password || ''
                             const ortuUser = siswaPermanentCredentials[s.foreign_id]?.ortu_username || s.rawStudent?.ortu_username || ''
                             const ortuPass = siswaPermanentCredentials[s.foreign_id]?.ortu_password || s.rawStudent?.ortu_password || ''
-                            const studentLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(s.username || '')}&p=${encodeURIComponent(studentPass)}&r=siswa`
+                            const studentLoginUrl = `${getPortalBaseUrl()}/login?u=${encodeURIComponent(s.username || '')}&p=${encodeURIComponent(studentPass)}&r=siswa`
                             const studentQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(studentLoginUrl)}`
-                            const ortuLoginUrl = `${window.location.origin}/login?u=${encodeURIComponent(ortuUser)}&p=${encodeURIComponent(ortuPass)}&r=ortu`
+                            const ortuLoginUrl = `${getPortalBaseUrl()}/login?u=${encodeURIComponent(ortuUser)}&p=${encodeURIComponent(ortuPass)}&r=ortu`
                             const ortuQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(ortuLoginUrl)}`
 
                             return (
@@ -5297,18 +5301,34 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
                 </div>
               </div>
 
-              {/* Fast Auto-login Copy Button (1-line) */}
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(`${resetData.row.username}|${resetData.generatedPass}`)
-                  alert("Format Auto-Login berhasil disalin! Tempelkan (paste) langsung ke kolom Username di halaman login untuk langsung mengisi kedua kolom.")
-                }}
-                className="w-full py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
-              >
-                <span>📋</span>
-                <span>Salin Cepat (Format Auto-Login)</span>
-              </button>
+              {/* Copy Action Buttons */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${resetData.row.username}|${resetData.generatedPass}`)
+                    alert("Format Auto-Login berhasil disalin! Tempelkan (paste) langsung ke kolom Username di halaman login untuk langsung mengisi kedua kolom.")
+                  }}
+                  className="w-full py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 rounded-lg transition-all flex items-center justify-center gap-1.5 text-[11px]"
+                  title="Format username|password untuk autofill login"
+                >
+                  <span>📋</span>
+                  <span>Salin Auto-Login</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const msg = getResetWaMessage()
+                    navigator.clipboard.writeText(msg)
+                    alert("Teks pesan WhatsApp lengkap berhasil disalin ke clipboard!")
+                  }}
+                  className="w-full py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold border border-emerald-200 rounded-lg transition-all flex items-center justify-center gap-1.5 text-[11px]"
+                  title="Salin seluruh isi pesan WhatsApp"
+                >
+                  <span>💬</span>
+                  <span>Salin Pesan WA</span>
+                </button>
+              </div>
               
               {/* WhatsApp Box */}
               <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl space-y-2">

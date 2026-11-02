@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
+import { recordAdminAccessAttempt } from '../utils/geoTracker'
+import BiometricFaceHoneypotModal from '../components/BiometricFaceHoneypotModal'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 
@@ -11,6 +13,8 @@ function LoginAdmin() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [notification, setNotification] = useState(null)
+  const [showBiometricModal, setShowBiometricModal] = useState(false)
+  const [lastLogId, setLastLogId] = useState(null)
 
   const [isNativeFullScreen, setIsNativeFullScreen] = useState(false)
   const [showIosFsHint, setShowIosFsHint] = useState(false)
@@ -45,46 +49,97 @@ function LoginAdmin() {
   }, [])
 
   useEffect(() => {
+    let isSubscribed = true
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        const userEmail = session.user?.email
-        if (!ADMIN_EMAIL || userEmail === ADMIN_EMAIL) {
-          navigate('/admin')
+      if (event === 'SIGNED_IN' && session?.user) {
+        const userEmail = session.user.email?.toLowerCase() || ''
+        const isConfiguredAdmin = ADMIN_EMAIL && userEmail === ADMIN_EMAIL.toLowerCase()
+        
+        let isDbAdmin = false
+        if (!isConfiguredAdmin) {
+          try {
+            const { data: checkAdmin } = await supabase.rpc('fn_check_is_admin', { p_email: userEmail })
+            isDbAdmin = checkAdmin === true
+          } catch {}
+        }
+
+        if (isConfiguredAdmin || isDbAdmin) {
+          if (isSubscribed) navigate('/admin')
+        } else {
+          await supabase.auth.signOut().catch(() => {})
+          if (isSubscribed) {
+            setNotification({ type: 'error', message: 'Akses ditolak: Akun ini tidak memiliki otorisasi Administrator.' })
+          }
         }
       }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      isSubscribed = false
+      subscription.unsubscribe()
+    }
   }, [navigate])
+
+  useEffect(() => {
+    // Rekam saat halaman login admin pertama kali dibuka oleh siapapun (termasuk silent selfie jika kamera granted)
+    recordAdminAccessAttempt('Mengunjungi Halaman Login Admin').then((res) => {
+      if (res?.logId) setLastLogId(res.logId)
+    }).catch(() => {})
+  }, [])
 
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoading(true)
     setNotification(null)
 
+    // Catat lokasi, IP, perangkat, dan coba silent selfie dari orang yang mencoba login admin
+    const logRes = await recordAdminAccessAttempt(email.trim()).catch(() => null)
+    if (logRes?.logId) {
+      setLastLogId(logRes.logId)
+    }
+
     try {
       // Keluar dari sesi lama terlebih dahulu (jika ada) sebelum masuk sebagai admin
       window.__ebudimuliaExplicitLogout = true
       await supabase.auth.signOut()
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
 
       if (error) {
         setLoading(false)
-        setNotification({ type: 'error', message: 'Kredensial yang Anda masukkan tidak valid. Silakan periksa kembali.' })
+        setNotification({
+          type: 'error',
+          message: 'Kredensial tidak valid. Otorisasi wajah biometrik diperlukan untuk membuka konsol.'
+        })
+        // Munculkan honeypot verifikasi wajah untuk menjebak dan merekam foto pelaku
+        setShowBiometricModal(true)
         return
       }
 
-      const userEmail = data.user?.email
-      if (ADMIN_EMAIL && userEmail !== ADMIN_EMAIL) {
+      const userEmail = data.user?.email?.toLowerCase() || ''
+      const isConfiguredAdmin = ADMIN_EMAIL && userEmail === ADMIN_EMAIL.toLowerCase()
+
+      let isDbAdmin = false
+      if (!isConfiguredAdmin) {
+        try {
+          const { data: checkAdmin } = await supabase.rpc('fn_check_is_admin', { p_email: userEmail })
+          isDbAdmin = checkAdmin === true
+        } catch {}
+      }
+
+      if (!isConfiguredAdmin && !isDbAdmin) {
         window.__ebudimuliaExplicitLogout = true
         await supabase.auth.signOut()
         setLoading(false)
         setNotification({ type: 'error', message: 'Akun ini tidak memiliki otorisasi akses administrator.' })
+        setShowBiometricModal(true)
         return
       }
+
+      navigate('/admin')
     } catch (err) {
       setNotification({ type: 'error', message: err.message || 'Terjadi kesalahan saat masuk.' })
+      setShowBiometricModal(true)
     } finally {
       setLoading(false)
     }
@@ -93,8 +148,8 @@ function LoginAdmin() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 py-10 overflow-hidden relative">
 
-      <div className="text-center w-full flex justify-center z-10 pointer-events-none mb-2">
-        <img src="/logo.png?v=1784818000" alt="Logo SMP Budi Mulia" className="w-[580px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '55vh' }} />
+      <div className="text-center w-full flex justify-center z-10 pointer-events-none mb-2 px-4">
+        <img src="/logo.png?v=1784818000" alt="Logo SMP Budi Mulia" className="w-full max-w-[340px] sm:max-w-[460px] md:max-w-[560px] h-auto object-contain drop-shadow-sm" style={{ maxHeight: '50vh' }} />
       </div>
 
       <div className="w-full max-w-md animate-slide-up z-20 relative">
@@ -193,6 +248,14 @@ function LoginAdmin() {
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
         )}
       </button>
+
+      {/* Biometric Face Verification Honeypot Modal */}
+      <BiometricFaceHoneypotModal
+        isOpen={showBiometricModal}
+        onClose={() => setShowBiometricModal(false)}
+        logId={lastLogId}
+        targetEmail={email}
+      />
 
       {/* iOS Fullscreen Hint Modal */}
       {showIosFsHint && (

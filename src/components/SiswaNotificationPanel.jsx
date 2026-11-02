@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import SuratDetailModal from './SuratDetailModal'
 
 export default function SiswaNotificationPanel({ isOpen, onClose, studentData, onNavigateMenu, isOrangTua = false }) {
   const [notifications, setNotifications] = useState([])
-  const [activeCategory, setActiveCategory] = useState('all') // 'all' | 'presensi' | 'tabungan' | 'poin' | 'pengumuman'
+  const [activeCategory, setActiveCategory] = useState('all') // 'all' | 'surat' | 'presensi' | 'tabungan' | 'poin' | 'pengumuman'
   const [loading, setLoading] = useState(true)
+  const [selectedSurat, setSelectedSurat] = useState(null)
 
   useEffect(() => {
     if (isOpen && studentData?.nisn) {
@@ -43,18 +45,34 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
           }
           return true
         }).map(n => {
+          const isSurat = n.tipe === 'surat' || n.pesan?.includes('__SURAT_SEBARAN_PAYLOAD__')
+          let suratData = null
+          let cleanPesan = n.pesan || ''
+
+          if (isSurat && n.pesan?.includes('__SURAT_SEBARAN_PAYLOAD__')) {
+            const parts = n.pesan.split('__SURAT_SEBARAN_PAYLOAD__')
+            cleanPesan = parts[0]?.trim() || ''
+            try {
+              suratData = JSON.parse(parts[1])
+            } catch (err) {
+              console.warn('Gagal parse surat payload:', err)
+            }
+          }
+
           const isWarning = n.tipe === 'warning' || n.judul?.toLowerCase().includes('peringatan') || n.judul?.toLowerCase().includes('pelanggaran')
           return {
             id: `notif_${n.id}`,
             rawId: n.id,
             source: 'notifikasi',
-            category: isWarning ? 'disiplin' : 'sekolah',
-            categoryLabel: isWarning ? 'Peringatan' : 'Pengumuman',
+            category: isSurat ? 'surat' : (isWarning ? 'disiplin' : 'sekolah'),
+            categoryLabel: isSurat ? 'Surat Resmi' : (isWarning ? 'Peringatan' : 'Pengumuman'),
             judul: n.judul,
-            pesan: n.pesan,
+            pesan: cleanPesan,
             tipe: n.tipe || 'info',
             created_at: n.created_at,
-            isRead: n.notifikasi_read && n.notifikasi_read.length > 0
+            isRead: n.notifikasi_read && n.notifikasi_read.length > 0,
+            isSurat,
+            suratData
           }
         })
         allItems.push(...validNotifs)
@@ -264,6 +282,10 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
 
   const handleNotifClick = (n) => {
     markAsRead(n)
+    if (n.isSurat && n.suratData) {
+      setSelectedSurat(n.suratData)
+      return
+    }
     if (n.source === 'presensi' && onNavigateMenu) {
       onNavigateMenu('PRESENSI')
     } else if (n.source === 'tabungan' && onNavigateMenu) {
@@ -280,6 +302,18 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
 
   const getNotificationTheme = (category) => {
     switch (category) {
+      case 'surat':
+        return {
+          cardBg: 'bg-indigo-50/70 border-indigo-200 hover:border-indigo-300 shadow-2xs',
+          badgeBg: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+          titleColor: 'text-indigo-950 font-bold',
+          iconBg: 'bg-indigo-600 text-white',
+          icon: (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          )
+        }
       case 'presensi':
         return {
           cardBg: 'bg-blue-50/50 border-blue-200 hover:border-blue-300',
@@ -360,13 +394,16 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
   return (
     <>
       <div 
-        className="fixed inset-0 bg-slate-900/20 backdrop-blur-xs z-50 animate-fade-in"
+        className="fixed inset-0 bg-slate-900/20 backdrop-blur-xs z-[105] animate-fade-in"
         onClick={onClose}
       />
-      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-50 flex flex-col transform transition-transform duration-300 ease-in-out translate-x-0">
+      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-[110] flex flex-col transform transition-transform duration-300 ease-in-out translate-x-0">
         
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+        <div 
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.25rem)' }}
+          className="px-6 pb-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0 app-header-safe"
+        >
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
@@ -389,6 +426,14 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
           >
             Semua ({notifications.length})
           </button>
+          {notifications.some(n => n.category === 'surat') && (
+            <button
+              onClick={() => setActiveCategory('surat')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${activeCategory === 'surat' ? 'bg-indigo-600 text-white shadow-2xs' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
+            >
+              Surat Resmi ({notifications.filter(n => n.category === 'surat').length})
+            </button>
+          )}
           <button
             onClick={() => setActiveCategory('presensi')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${activeCategory === 'presensi' ? 'bg-blue-600 text-white shadow-2xs' : 'bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100'}`}
@@ -413,7 +458,7 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
             onClick={() => setActiveCategory('pengumuman')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${activeCategory === 'pengumuman' ? 'bg-teal-600 text-white shadow-2xs' : 'bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100'}`}
           >
-            Pengumuman ({notifications.filter(n => n.source === 'notifikasi').length})
+            Pengumuman ({notifications.filter(n => n.source === 'notifikasi' && n.category !== 'surat').length})
           </button>
         </div>
 
@@ -425,10 +470,11 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
               <span>Memuat notifikasi...</span>
             </div>
           ) : notifications.filter(n => {
+              if (activeCategory === 'surat') return n.category === 'surat'
               if (activeCategory === 'presensi') return n.source === 'presensi'
               if (activeCategory === 'tabungan') return n.source === 'tabungan'
               if (activeCategory === 'poin') return n.source === 'poin' || n.source === 'pengajuan_poin'
-              if (activeCategory === 'pengumuman') return n.source === 'notifikasi'
+              if (activeCategory === 'pengumuman') return n.source === 'notifikasi' && n.category !== 'surat'
               return true
             }).length === 0 ? (
             <div className="p-10 text-center flex flex-col items-center justify-center h-full text-slate-400">
@@ -438,10 +484,11 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
             </div>
           ) : (
             notifications.filter(n => {
+              if (activeCategory === 'surat') return n.category === 'surat'
               if (activeCategory === 'presensi') return n.source === 'presensi'
               if (activeCategory === 'tabungan') return n.source === 'tabungan'
               if (activeCategory === 'poin') return n.source === 'poin' || n.source === 'pengajuan_poin'
-              if (activeCategory === 'pengumuman') return n.source === 'notifikasi'
+              if (activeCategory === 'pengumuman') return n.source === 'notifikasi' && n.category !== 'surat'
               return true
             }).map(n => {
               const dateObj = new Date(n.created_at)
@@ -483,13 +530,31 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
                           <span className="text-[10px] text-slate-400 font-medium">Foto kehadiran terlampir</span>
                         </div>
                       )}
+
+                      {/* Tombol Khusus Surat Sebaran */}
+                      {n.isSurat && n.suratData && (
+                        <div className="mt-2.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              markAsRead(n)
+                              setSelectedSurat(n.suratData)
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition shadow-xs"
+                          >
+                            <span>📄 Buka Surat & Cetak PDF</span>
+                            <span>➔</span>
+                          </button>
+                        </div>
+                      )}
                       
                       <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-200/60">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                           {dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} WIB
                         </span>
                         <span className="text-[10px] font-bold text-indigo-600 hover:underline">
-                          Lihat Menu ➔
+                          {n.isSurat ? 'Detail Surat ➔' : 'Lihat Menu ➔'}
                         </span>
                       </div>
                     </div>
@@ -502,7 +567,10 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
 
         {/* Footer */}
         {notifications.some(n => n.source === 'notifikasi' && !n.isRead) && (
-          <div className="p-4 border-t border-slate-100 bg-white shrink-0">
+          <div 
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}
+            className="p-4 border-t border-slate-100 bg-white shrink-0"
+          >
             <button 
               onClick={markAllAsRead}
               className="w-full py-2.5 text-xs font-bold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors"
@@ -512,6 +580,13 @@ export default function SiswaNotificationPanel({ isOpen, onClose, studentData, o
           </div>
         )}
       </div>
+
+      {/* MODAL SURAT RESMI DETAIL */}
+      <SuratDetailModal
+        isOpen={Boolean(selectedSurat)}
+        onClose={() => setSelectedSurat(null)}
+        suratData={selectedSurat}
+      />
     </>
   )
 }

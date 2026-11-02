@@ -1036,6 +1036,18 @@ BEGIN
         END IF;
     END LOOP;
 
+    -- Normalisasi ke skala standar 0 - 100
+    SELECT COALESCE(SUM(s.bobot), 0.0) INTO v_total_bobot_maksimal
+    FROM public.cbt_soal s
+    JOIN public.cbt_sesi_ujian su ON su.bank_soal_id = s.bank_soal_id
+    WHERE su.id = v_peserta.sesi_id;
+
+    IF v_total_bobot_maksimal > 0 THEN
+        v_total_skor := LEAST(100.0, GREATEST(0.0, ROUND((v_total_skor / v_total_bobot_maksimal) * 100.0, 2)));
+    ELSE
+        v_total_skor := 0.0;
+    END IF;
+
     -- Update total nilai akhir
     UPDATE public.cbt_peserta_ujian SET nilai_akhir = v_total_skor WHERE id = p_peserta_id;
     RETURN v_total_skor;

@@ -98,16 +98,13 @@ export function generateVCardString(contacts) {
       'VERSION:3.0',
       'PRODID:-//SMP Budi Mulia//eBudiMulia Contacts//EN',
       `FN:${fn}`,
-      `N:${fn};;;;`,
-      tel ? `TEL;TYPE=CELL,VOICE;TYPE=pref:${tel}` : '',
+      `N:;${fn};;;`,
+      tel ? `TEL;TYPE=CELL,VOICE,PREF:${tel}` : '',
       `ORG:${org};${c.kelas ? 'Kelas ' + c.kelas : ''}`,
       c.kelas ? `TITLE:Kelas ${c.kelas}` : '',
       `NOTE:${note}`,
       `CATEGORIES:${groupName},SMP Budi Mulia`,
       `X-ABGroup:${groupName}`,
-      `X-GROUP-MEMBERSHIP:${groupName}`,
-      `X-APPLE-SUBGENRE:${groupName}`,
-      `X-ANDROID-CUSTOM:vnd.android.cursor.item/group;${groupName};;;;;;;;;;;;;;`,
       'END:VCARD'
     ].filter(Boolean)
 

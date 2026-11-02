@@ -49,6 +49,17 @@ const fetchWithRetry = (url, options = {}) => {
         }
       }
 
+      // Tangani 401 (Invalid / Expired JWT): bersihkan stale auth token agar tidak loop 401
+      if (response.status === 401) {
+        try {
+          const authKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
+          if (authKey) {
+            console.warn('[Supabase] Auth token kadaluarsa (401), membersihkan sesi auth lokal...')
+            localStorage.removeItem(authKey)
+          }
+        } catch (_) {}
+      }
+
       const dateHeader = response.headers?.get ? response.headers.get('date') : null
       if (dateHeader) {
         updateServerTimeOffset(dateHeader)
