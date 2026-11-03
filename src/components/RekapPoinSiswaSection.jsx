@@ -155,6 +155,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [addPointSelectedKatalogs, setAddPointSelectedKatalogs] = useState([])
   const [addPointKeterangan, setAddPointKeterangan] = useState('')
   const [addPointSaving, setAddPointSaving] = useState(false)
+  const [addPointError, setAddPointError] = useState('')
 
   // KHUSUS GURU BK: Mode Pemulihan Poin (Bisa input poin manual di luar katalog)
   const [addPointMode, setAddPointMode] = useState('katalog') // 'katalog' | 'pemulihan_bk'
@@ -487,6 +488,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
     setAddPointMode('katalog')
     setAddPointPemulihanJudul('Pemulihan Poin Siswa (Tugas Khusus BK)')
     setAddPointManualPoin('10')
+    setAddPointError('')
     setShowAddPointModal(true)
   }
 
@@ -662,7 +664,12 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
       setShowAddPointModal(false)
     } catch (err) {
-      alert('Gagal menyimpan poin: ' + err.message)
+      console.error('Error simpan poin:', err)
+      setAddPointError(
+        err.message?.includes('violates row-level security')
+          ? 'Izin database ditolak (RLS). Harap jalankan patch SQL fix_point_records_and_guidance_rls.sql di Supabase SQL Editor.'
+          : (err.message || 'Gagal menyimpan catatan poin.')
+      )
     } finally {
       setAddPointSaving(false)
     }
@@ -2558,6 +2565,12 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
             {/* Form Body */}
             <form onSubmit={handleSaveAddPoint} className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+              {addPointError && (
+                <div className="p-3 bg-rose-50 border border-rose-300 rounded-2xl text-xs text-rose-700 font-bold flex items-start justify-between gap-2 animate-fade-in">
+                  <span>{addPointError}</span>
+                  <button type="button" onClick={() => setAddPointError('')} className="text-rose-400 hover:text-rose-700 font-black">✕</button>
+                </div>
+              )}
               {/* Pilih / Tampilkan Siswa */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">Siswa yang Dituju *</label>

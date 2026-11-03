@@ -327,15 +327,21 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
 
   const handleSave = async (e) => {
     e.preventDefault()
-    if (!selectedStudent) { alert('Pilih siswa terlebih dahulu.'); return }
-    if (!activeTa?.id) { alert('Tahun Ajaran aktif tidak ditemukan.'); return }
+    if (!selectedStudent) {
+      setAlert({ type: 'error', title: 'Data Belum Lengkap', message: 'Silakan pilih siswa terlebih dahulu.' })
+      return
+    }
+    if (!activeTa?.id) {
+      setAlert({ type: 'error', title: 'Data Belum Lengkap', message: 'Tahun Ajaran aktif tidak ditemukan.' })
+      return
+    }
     
     const activePetugas = isPiket
       ? (isManualPetugas ? customPetugas.trim() : selectedPetugas.trim())
       : (session?.nama_guru || session?.email || 'Guru BK')
 
     if (isPiket && !activePetugas) {
-      alert('Sebagai Petugas Piket, Anda wajib memilih atau mengetik nama guru/staff yang bertugas mengisi.')
+      setAlert({ type: 'error', title: 'Data Belum Lengkap', message: 'Sebagai Petugas Piket, Anda wajib memilih atau mengetik nama guru/staff yang bertugas mengisi.' })
       return
     }
 
@@ -345,157 +351,159 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     if (catatMode === 'pemulihan_bk') {
       const pVal = parseInt(manualPoin)
       if (isNaN(pVal) || pVal <= 0) {
-        alert('Masukkan jumlah poin pemulihan yang valid (angka positif).')
+        setAlert({ type: 'error', title: 'Validasi Poin', message: 'Masukkan jumlah poin pemulihan yang valid (angka positif).' })
         return
       }
       if (!keterangan || !keterangan.trim()) {
-        alert('Keterangan tugas pemulihan wajib diisi oleh Guru BK.')
+        setAlert({ type: 'error', title: 'Validasi Keterangan', message: 'Keterangan tugas pemulihan wajib diisi oleh Guru BK.' })
         return
       }
       poinNum = Math.abs(pVal)
     } else {
-      if (selectedKatalogs.length === 0) { alert('Pilih poin dari katalog terlebih dahulu.'); return }
+      if (selectedKatalogs.length === 0) {
+        setAlert({ type: 'error', title: 'Katalog Belum Dipilih', message: 'Silakan pilih poin dari katalog terlebih dahulu.' })
+        return
+      }
       poinNum = parseInt(poinDiberikan)
     }
 
     setSaving(true)
     setAlert(null)
 
-    const finalPetugas = activePetugas
-    const nowIso = new Date().toISOString()
-
-    if (catatMode === 'pemulihan_bk') {
-      recordsToInsert = [{
-        nisn: selectedStudent.nisn,
-        nama_siswa: selectedStudent.nama_lengkap,
-        kelas: selectedStudent.kelas,
-        tahun_ajaran_id: activeTa.id,
-        semester,
-        catalog_id: null,
-        kode_katalog: 'PEMULIHAN',
-        jenis: pemulihanJudul.trim() || 'Pemulihan Poin Siswa (Tugas Khusus BK)',
-        poin_diberikan: poinNum,
-        keterangan: keterangan.trim(),
-        dicatat_oleh: finalPetugas,
-        tanggal,
-        created_at: nowIso,
-      }]
-    } else {
-      recordsToInsert = selectedKatalogs.map(k => ({
-        nisn: selectedStudent.nisn,
-        nama_siswa: selectedStudent.nama_lengkap,
-        kelas: selectedStudent.kelas,
-        tahun_ajaran_id: activeTa.id,
-        semester,
-        catalog_id: k.id,
-        kode_katalog: k.kode,
-        jenis: k.jenis,
-        poin_diberikan: k.poin,
-        keterangan,
-        dicatat_oleh: finalPetugas,
-        tanggal,
-        created_at: nowIso,
-      }))
-    }
-
-    const { error: recErr } = await supabase.from('point_records').insert(recordsToInsert)
-    if (recErr) { alert('Gagal menyimpan: ' + recErr.message); setSaving(false); return }
-
-    // 2. Upsert student_points — get current then update
-    const { data: spData } = await supabase.from('student_points')
-      .select('*').eq('nisn', selectedStudent.nisn).eq('tahun_ajaran_id', activeTa.id).eq('semester', semester).maybeSingle()
-
-    const defaultPoin = spData?.poin_default ?? 100
-    const currentPoin = spData?.total_poin ?? defaultPoin
-    const newPoin = currentPoin + poinNum
-
-    const { data: spUpsert, error: spErr } = await supabase.from('student_points').upsert({
-      nisn: selectedStudent.nisn,
-      tahun_ajaran_id: activeTa.id,
-      semester,
-      total_poin: newPoin,
-      poin_default: defaultPoin,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'nisn,tahun_ajaran_id,semester' }).select().single()
-
-    if (spErr) console.error('Gagal update poin:', spErr)
-
-    // 3. Check guidance stage threshold
-    const newStage = getActiveStage(newPoin)
-    const oldStage = getActiveStage(currentPoin)
-
-    if (newStage && newStage.id !== oldStage?.id) {
-      // Siswa masuk tahap baru — update student_points dan catat log
-      await supabase.from('student_points').update({ tahap_pembinaan_aktif: newStage.id })
-        .eq('nisn', selectedStudent.nisn).eq('tahun_ajaran_id', activeTa.id).eq('semester', semester)
-      await supabase.from('guidance_logs').insert([{
-        nisn: selectedStudent.nisn,
-        nama_siswa: selectedStudent.nama_lengkap,
-        tahun_ajaran_id: activeTa.id,
-        semester,
-        stage_id: newStage.id,
-        nama_tahap: newStage.nama_tahap,
-        poin_saat_trigger: newPoin,
-        status: 'aktif',
-      }])
-      setAlert({
-        type: 'warning',
-        message: `⚠️ ${selectedStudent.nama_lengkap} kini masuk ke ${newStage.nama_tahap} (Poin: ${newPoin})!\nTindakan: ${newStage.tindakan}\nPenanggung Jawab: ${newStage.penanggung_jawab}`
-      })
-    } else {
-      setSuccessMsg(`✓ Poin ${poinNum > 0 ? '+' : ''}${poinNum} berhasil dicatat untuk ${selectedStudent.nama_lengkap}. Total poin: ${newPoin}`)
-      setTimeout(() => setSuccessMsg(''), 4000)
-    }
-
-    // 4. Kirim notifikasi lonceng, realtime broadcast, dan Google FCM push ke HP Siswa & Orang Tua
     try {
-      const isPrestasi = poinNum > 0
-      const detailInfo = selectedKatalogs.length > 0 
-        ? selectedKatalogs.map(k => k.nama).join(', ') 
-        : (keterangan || (isPrestasi ? 'Poin Prestasi' : 'Pelanggaran Tata Tertib'))
-      
-      const notifJudul = isPrestasi 
-        ? `⭐ Catatan Poin Prestasi (+${poinNum})` 
-        : `⚠️ Catatan Poin Pelanggaran (${poinNum})`
-      
-      const notifPesan = isPrestasi
-        ? `Selamat! Anda mendapatkan catatan prestasi: "${detailInfo}" (+${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
-        : `Peringatan: Anda mendapatkan catatan pelanggaran: "${detailInfo}" (${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
+      const finalPetugas = activePetugas
+      const nowIso = new Date().toISOString()
 
-      // Simpan ke database notifikasi agar muncul di menu lonceng notifikasi siswa
-      supabase.from('notifikasi').insert({
-        judul: notifJudul,
-        pesan: notifPesan,
-        tipe: isPrestasi ? 'poin' : 'warning',
-        target_nisn: selectedStudent.nisn,
-        target_kelas: selectedStudent.kelas || null,
-        dibuat_oleh: finalPetugas,
-        created_at: nowIso
-      }).then(() => {}).catch(err => console.warn('[Notifikasi DB] Error:', err))
+      if (catatMode === 'pemulihan_bk') {
+        recordsToInsert = [{
+          nisn: selectedStudent.nisn,
+          nama_siswa: selectedStudent.nama_lengkap,
+          kelas: selectedStudent.kelas,
+          tahun_ajaran_id: activeTa.id,
+          semester,
+          catalog_id: null,
+          kode_katalog: 'PEMULIHAN',
+          jenis: pemulihanJudul.trim() || 'Pemulihan Poin Siswa (Tugas Khusus BK)',
+          poin_diberikan: poinNum,
+          keterangan: keterangan.trim(),
+          dicatat_oleh: finalPetugas,
+          tanggal,
+          created_at: nowIso,
+        }]
+      } else {
+        recordsToInsert = selectedKatalogs.map(k => ({
+          nisn: selectedStudent.nisn,
+          nama_siswa: selectedStudent.nama_lengkap,
+          kelas: selectedStudent.kelas,
+          tahun_ajaran_id: activeTa.id,
+          semester,
+          catalog_id: k.id,
+          kode_katalog: k.kode,
+          jenis: k.jenis,
+          poin_diberikan: k.poin,
+          keterangan,
+          dicatat_oleh: finalPetugas,
+          tanggal,
+          created_at: nowIso,
+        }))
+      }
 
-      // Realtime broadcast ke HP Siswa yang sedang membuka aplikasi
-      const targetChannels = [
-        `dashboard-siswa-live-${selectedStudent.nisn}`,
-        `app-notif-${selectedStudent.nisn}`
-      ]
-      targetChannels.forEach(chName => {
-        const notifChannel = supabase.channel(chName, { config: { broadcast: { self: true } } })
-        if (notifChannel.state === 'joined') {
-          notifChannel.send({
-            type: 'broadcast',
-            event: 'catat_poin_update',
-            payload: {
-              judul: notifJudul,
-              pesan: notifPesan,
-              poin: poinNum,
-              totalPoin: newPoin,
-              nisn: selectedStudent.nisn
-            }
-          })
-        } else {
-          notifChannel.subscribe(async (status) => {
-            if (status === 'SUBSCRIBED') {
-              await notifChannel.send({
+      const { error: recErr } = await supabase.from('point_records').insert(recordsToInsert)
+      if (recErr) {
+        console.error('Error insert point_records:', recErr)
+        setAlert({
+          type: 'error',
+          title: 'Gagal Menyimpan Catatan Poin',
+          message: recErr.message?.includes('violates row-level security') 
+            ? 'Akses simpan ditolak oleh database (RLS). Harap jalankan script patch SQL fix_point_records_and_guidance_rls.sql di Supabase SQL Editor.'
+            : (recErr.message || 'Terjadi kesalahan database saat menyimpan point_records.')
+        })
+        return
+      }
+
+      // 2. Upsert student_points — get current then update
+      const { data: spData } = await supabase.from('student_points')
+        .select('*').eq('nisn', selectedStudent.nisn).eq('tahun_ajaran_id', activeTa.id).eq('semester', semester).maybeSingle()
+
+      const defaultPoin = spData?.poin_default ?? 100
+      const currentPoin = spData?.total_poin ?? defaultPoin
+      const newPoin = currentPoin + poinNum
+
+      const { data: spUpsert, error: spErr } = await supabase.from('student_points').upsert({
+        nisn: selectedStudent.nisn,
+        tahun_ajaran_id: activeTa.id,
+        semester,
+        total_poin: newPoin,
+        poin_default: defaultPoin,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'nisn,tahun_ajaran_id,semester' }).select().single()
+
+      if (spErr) console.error('Gagal update poin:', spErr)
+
+      // 3. Check guidance stage threshold
+      const newStage = getActiveStage(newPoin)
+      const oldStage = getActiveStage(currentPoin)
+
+      if (newStage && newStage.id !== oldStage?.id) {
+        // Siswa masuk tahap baru — update student_points dan catat log
+        await supabase.from('student_points').update({ tahap_pembinaan_aktif: newStage.id })
+          .eq('nisn', selectedStudent.nisn).eq('tahun_ajaran_id', activeTa.id).eq('semester', semester)
+        await supabase.from('guidance_logs').insert([{
+          nisn: selectedStudent.nisn,
+          nama_siswa: selectedStudent.nama_lengkap,
+          tahun_ajaran_id: activeTa.id,
+          semester,
+          stage_id: newStage.id,
+          nama_tahap: newStage.nama_tahap,
+          poin_saat_trigger: newPoin,
+          status: 'aktif',
+        }]).catch(gErr => console.warn('[Guidance Log] Error:', gErr))
+        setAlert({
+          type: 'warning',
+          title: 'Peringatan Tahap Pembinaan!',
+          message: `⚠️ ${selectedStudent.nama_lengkap} kini masuk ke ${newStage.nama_tahap} (Poin: ${newPoin})!\nTindakan: ${newStage.tindakan}\nPenanggung Jawab: ${newStage.penanggung_jawab}`
+        })
+      } else {
+        setSuccessMsg(`✓ Poin ${poinNum > 0 ? '+' : ''}${poinNum} berhasil dicatat untuk ${selectedStudent.nama_lengkap}. Total poin: ${newPoin}`)
+        setTimeout(() => setSuccessMsg(''), 4000)
+      }
+
+      // 4. Kirim notifikasi lonceng, realtime broadcast, dan Google FCM push ke HP Siswa & Orang Tua
+      try {
+        const isPrestasi = poinNum > 0
+        const detailInfo = selectedKatalogs.length > 0 
+          ? selectedKatalogs.map(k => k.nama).join(', ') 
+          : (keterangan || (isPrestasi ? 'Poin Prestasi' : 'Pelanggaran Tata Tertib'))
+        
+        const notifJudul = isPrestasi 
+          ? `⭐ Catatan Poin Prestasi (+${poinNum})` 
+          : `⚠️ Catatan Poin Pelanggaran (${poinNum})`
+        
+        const notifPesan = isPrestasi
+          ? `Selamat! Anda mendapatkan catatan prestasi: "${detailInfo}" (+${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
+          : `Peringatan: Anda mendapatkan catatan pelanggaran: "${detailInfo}" (${poinNum} poin) oleh ${finalPetugas}. Total poin Anda sekarang: ${newPoin}.`
+
+        // Simpan ke database notifikasi agar muncul di menu lonceng notifikasi siswa
+        supabase.from('notifikasi').insert({
+          judul: notifJudul,
+          pesan: notifPesan,
+          tipe: isPrestasi ? 'poin' : 'warning',
+          target_nisn: selectedStudent.nisn,
+          target_kelas: selectedStudent.kelas || null,
+          dibuat_oleh: finalPetugas,
+          created_at: nowIso
+        }).then(() => {}).catch(err => console.warn('[Notifikasi DB] Error:', err))
+
+        // Realtime broadcast ke HP Siswa yang sedang membuka aplikasi
+        const targetChannels = [
+          `dashboard-siswa-live-${selectedStudent.nisn}`,
+          `app-notif-${selectedStudent.nisn}`
+        ]
+        targetChannels.forEach(chName => {
+          try {
+            const notifChannel = supabase.channel(chName, { config: { broadcast: { self: true } } })
+            if (notifChannel.state === 'joined') {
+              notifChannel.send({
                 type: 'broadcast',
                 event: 'catat_poin_update',
                 payload: {
@@ -506,58 +514,84 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
                   nisn: selectedStudent.nisn
                 }
               })
-              setTimeout(() => supabase.removeChannel(notifChannel), 3000)
+            } else {
+              notifChannel.subscribe(async (status) => {
+                if (status === 'SUBSCRIBED') {
+                  await notifChannel.send({
+                    type: 'broadcast',
+                    event: 'catat_poin_update',
+                    payload: {
+                      judul: notifJudul,
+                      pesan: notifPesan,
+                      poin: poinNum,
+                      totalPoin: newPoin,
+                      nisn: selectedStudent.nisn
+                    }
+                  })
+                  setTimeout(() => supabase.removeChannel(notifChannel), 3000)
+                }
+              })
             }
-          })
-        }
-      })
+          } catch (chErr) {
+            console.warn('[Broadcast Channel] Error:', chErr)
+          }
+        })
 
-      // Kirim Google FCM Push Notification ke HP Siswa (muncul di status bar & layar usap HP)
-      sendFCMPushNotification({
-        nisn: selectedStudent.nisn,
-        role: 'Siswa',
-        title: notifJudul,
-        body: notifPesan,
-        targetMenu: 'POIN_PELANGGARAN',
-        data: {
-          type: 'CATAT_POIN',
-          poin: String(poinNum),
-          totalPoin: String(newPoin)
-        }
-      }).catch(err => console.warn('[FCM Catat Poin Siswa] Error:', err))
-
-      // Jika pelanggaran (poin negatif), kirim juga ke HP Orang Tua
-      if (!isPrestasi) {
+        // Kirim Google FCM Push Notification ke HP Siswa (muncul di status bar & layar usap HP)
         sendFCMPushNotification({
           nisn: selectedStudent.nisn,
-          role: 'Orang Tua',
-          title: `⚠️ Pelanggaran Siswa (${selectedStudent.nama_lengkap})`,
-          body: `Catatan pelanggaran: "${detailInfo}" (${poinNum} poin). Total poin saat ini: ${newPoin}.`,
+          role: 'Siswa',
+          title: notifJudul,
+          body: notifPesan,
           targetMenu: 'POIN_PELANGGARAN',
           data: {
             type: 'CATAT_POIN',
             poin: String(poinNum),
             totalPoin: String(newPoin)
           }
-        }).catch(err => console.warn('[FCM Catat Poin Ortu] Error:', err))
-      }
-    } catch (notifErr) {
-      console.warn('[Catat Poin] Gagal kirim notifikasi:', notifErr)
-    }
+        }).catch(err => console.warn('[FCM Catat Poin Siswa] Error:', err))
 
-    // Reset form
-    setSelectedStudent(null)
-    setStudentSearch('')
-    setSelectedKatalogs([])
-    setPoinDiberikan('')
-    setKeterangan('')
-    if (isPiket) {
-      setSelectedPetugas('')
-      setCustomPetugas('')
-      setIsManualPetugas(false)
+        // Jika pelanggaran (poin negatif), kirim juga ke HP Orang Tua
+        if (!isPrestasi) {
+          sendFCMPushNotification({
+            nisn: selectedStudent.nisn,
+            role: 'Orang Tua',
+            title: `⚠️ Pelanggaran Siswa (${selectedStudent.nama_lengkap})`,
+            body: `Catatan pelanggaran: "${detailInfo}" (${poinNum} poin). Total poin saat ini: ${newPoin}.`,
+            targetMenu: 'POIN_PELANGGARAN',
+            data: {
+              type: 'CATAT_POIN',
+              poin: String(poinNum),
+              totalPoin: String(newPoin)
+            }
+          }).catch(err => console.warn('[FCM Catat Poin Ortu] Error:', err))
+        }
+      } catch (notifErr) {
+        console.warn('[Catat Poin] Gagal kirim notifikasi:', notifErr)
+      }
+
+      // Reset form
+      setSelectedStudent(null)
+      setStudentSearch('')
+      setSelectedKatalogs([])
+      setPoinDiberikan('')
+      setKeterangan('')
+      if (isPiket) {
+        setSelectedPetugas('')
+        setCustomPetugas('')
+        setIsManualPetugas(false)
+      }
+      fetchRecords()
+    } catch (saveErr) {
+      console.error('Unhandled save error:', saveErr)
+      setAlert({
+        type: 'error',
+        title: 'Terjadi Kesalahan',
+        message: saveErr.message || 'Gagal menyimpan catatan poin siswa.'
+      })
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
-    fetchRecords()
   }
 
   // ─── EXPORT LAPORAN ───────────────────────────────────────
@@ -865,12 +899,14 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
         </div>
       </div>
 
-      {/* Alert threshold */}
+      {/* Alert threshold / Error notification */}
       {alert && (
-        <div className="bg-red-50 border border-red-300 rounded-xl p-3.5 relative text-xs">
-          <p className="font-bold text-red-800 mb-0.5">Peringatan Tahap Pembinaan!</p>
-          <p className="text-red-700 whitespace-pre-line">{alert.message}</p>
-          <button onClick={() => setAlert(null)} className="absolute top-2.5 right-2.5 p-1 text-red-400 hover:text-red-600 rounded-lg">
+        <div className={`${alert.type === 'error' ? 'bg-rose-50 border-rose-300' : 'bg-red-50 border-red-300'} border rounded-xl p-3.5 relative text-xs animate-fade-in`}>
+          <p className={`font-bold ${alert.type === 'error' ? 'text-rose-800' : 'text-red-800'} mb-0.5`}>
+            {alert.title || 'Peringatan Tahap Pembinaan!'}
+          </p>
+          <p className={`${alert.type === 'error' ? 'text-rose-700' : 'text-red-700'} whitespace-pre-line`}>{alert.message}</p>
+          <button onClick={() => setAlert(null)} className="absolute top-2.5 right-2.5 p-1 text-slate-400 hover:text-slate-600 rounded-lg">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
