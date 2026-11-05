@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 
 const MONTH_NAMES = [
@@ -102,10 +103,14 @@ export default function MonthlyDisciplineRewardModal({
       }
 
       // B. Ambil catatan point_records untuk mendeteksi apakah siswa sudah pernah dapat reward di bulan ini
+      //    (baik dari proses massal ini MAUPUN dari pengajuan poin mandiri oleh siswa yang sudah disetujui)
       const namaBulan = MONTH_NAMES[selectedMonth - 1]
+      const monthStr2 = String(selectedMonth).padStart(2, '0')
+
+      // Cari semua point_records dengan kode_katalog POS-PKET-1
       const { data: existingRecords, error: recErr } = await supabase
         .from('point_records')
-        .select('nisn, keterangan')
+        .select('nisn, keterangan, tanggal, created_at')
         .eq('kode_katalog', 'POS-PKET-1')
 
       if (recErr) console.warn('Gagal membaca existing point_records:', recErr)
@@ -114,7 +119,19 @@ export default function MonthlyDisciplineRewardModal({
       if (existingRecords) {
         for (const r of existingRecords) {
           const ketLower = (r.keterangan || '').toLowerCase()
-          if (ketLower.includes(namaBulan.toLowerCase()) && ketLower.includes(String(selectedYear))) {
+          const tanggal = r.tanggal || ''
+
+          // Deteksi 1: Reward bulanan massal (keterangan mengandung nama bulan + tahun)
+          const matchByKeterangan = ketLower.includes(namaBulan.toLowerCase()) && ketLower.includes(String(selectedYear))
+
+          // Deteksi 2: Pengajuan mandiri siswa yang tanggalnya jatuh di bulan yang sama
+          const matchByTanggal = tanggal.startsWith(`${selectedYear}-${monthStr2}`)
+
+          // Deteksi 3: created_at jatuh di bulan yang sama (fallback jika tanggal kosong)
+          const createdMonth = (r.created_at || '').slice(0, 7) // "2026-10"
+          const matchByCreated = createdMonth === `${selectedYear}-${monthStr2}`
+
+          if (matchByKeterangan || matchByTanggal || matchByCreated) {
             claimedNisnSet.add(r.nisn)
           }
         }
@@ -296,8 +313,8 @@ export default function MonthlyDisciplineRewardModal({
   const unclaimableEligibleCount = eligibleList.filter(s => !s.isClaimed).length
   const alreadyClaimedCount = eligibleList.filter(s => s.isClaimed).length
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/50 backdrop-blur-md animate-in fade-in duration-150">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
       <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
         
         {/* Header */}
@@ -556,8 +573,8 @@ export default function MonthlyDisciplineRewardModal({
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               {s.isClaimed ? (
-                                <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-md">
-                                  Sudah Diberikan
+                                <span className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-md" title="Siswa ini sudah mendapat reward POS-PKET-1 di bulan ini (bisa dari pengajuan mandiri atau proses sebelumnya)">
+                                  ✅ Sudah Diterima
                                 </span>
                               ) : tabFilter === 'eligible' ? (
                                 <span className="inline-block px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md">
@@ -614,7 +631,8 @@ export default function MonthlyDisciplineRewardModal({
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
