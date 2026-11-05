@@ -1781,6 +1781,26 @@ export default function SiswaPresensiSection({ studentData }) {
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">Presensi Hari Ini Ditutup</h3>
               <p className="text-sm text-slate-500 max-w-sm">Waktu presensi hari ini telah berakhir pada pukul <strong>{jamBatasPulang} WIB</strong>. Sampai jumpa besok.</p>
+
+              <button
+                onClick={async () => {
+                  try {
+                    sessionStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem('ebm_cached_pengaturan_sekolah')
+                  } catch {}
+                  await syncServerTime()
+                  loadStatus(false)
+                }}
+                disabled={loadingStatus}
+                className="mt-5 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 border border-slate-200 shadow-xs cursor-pointer"
+              >
+                <svg className={`w-4 h-4 ${loadingStatus ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {loadingStatus ? 'Memeriksa...' : 'Cek Status Sesi / Muat Ulang'}
+              </button>
+
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}
@@ -1804,7 +1824,27 @@ export default function SiswaPresensiSection({ studentData }) {
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">Presensi Belum Dimulai</h3>
-              <p className="text-sm text-slate-500 max-w-sm">Sesi presensi otomatis dijadwalkan mulai pukul <strong>{jamMulaiPresensi} WIB</strong>. Silakan tunggu.</p>
+              <p className="text-sm text-slate-500 max-w-sm">Sesi presensi otomatis dijadwalkan mulai pukul <strong>{jamMulaiPresensi} WIB</strong>. Silakan tunggu atau periksa ulang status sesi.</p>
+
+              <button
+                onClick={async () => {
+                  try {
+                    sessionStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem('ebm_cached_pengaturan_sekolah')
+                  } catch {}
+                  await syncServerTime()
+                  loadStatus(false)
+                }}
+                disabled={loadingStatus}
+                className="mt-5 px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 text-indigo-700 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 border border-indigo-200 shadow-xs cursor-pointer"
+              >
+                <svg className={`w-4 h-4 ${loadingStatus ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {loadingStatus ? 'Memeriksa...' : 'Cek Status Sesi Sekarang'}
+              </button>
+
               {import.meta.env.DEV && (
                 <button onClick={handleResetTesting} className="mt-5 text-[10px] text-slate-400 hover:text-red-500 underline underline-offset-2">Reset Data (Mode Dev)</button>
               )}
@@ -1819,8 +1859,13 @@ export default function SiswaPresensiSection({ studentData }) {
               <p className="text-sm text-slate-500 max-w-sm">Presensi hari ini belum dibuka oleh Petugas Piket atau sedang memuat jadwal. Silakan klik tombol di bawah untuk memeriksa ulang status sesi.</p>
               
               <button
-                onClick={() => {
-                  try { sessionStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today)) } catch {}
+                onClick={async () => {
+                  try {
+                    sessionStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem(getPresensiCacheKey(studentData?.nisn, today))
+                    localStorage.removeItem('ebm_cached_pengaturan_sekolah')
+                  } catch {}
+                  await syncServerTime()
                   loadStatus(false)
                 }}
                 disabled={loadingStatus}

@@ -40,9 +40,9 @@ CREATE POLICY "student_points_write_portal"
 -- CABUT hak DELETE student_points dari anon (Saldo poin tidak boleh dihapus)
 REVOKE DELETE ON public.student_points FROM anon;
 
--- Trigger Integritas Poin:
+-- Trigger Integritas Poin & Honeypot Peretasan:
 -- Berapapun angka total_poin yang dikirim klien (misal Edward kirim 9999),
--- database akan OTOMATIS menimpa dengan hasil hitungan matematis riil dari point_records!
+-- database akan OTOMATIS menimpa dengan kalkulasi riil dari point_records DAN mencatat peretasan ke activity_log!
 CREATE OR REPLACE FUNCTION public.fn_sync_student_points_integrity()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -51,6 +51,7 @@ AS $$
 DECLARE
   v_sum_delta INTEGER := 0;
   v_default INTEGER := 100;
+  v_calculated INTEGER := 100;
 BEGIN
   -- Hitung total poin riil dari seluruh record sah di point_records
   SELECT COALESCE(SUM(poin_diberikan), 0)
@@ -61,7 +62,24 @@ BEGIN
     AND (semester = NEW.semester OR NEW.semester IS NULL);
 
   v_default := COALESCE(NEW.poin_default, 100);
-  NEW.total_poin := v_default + v_sum_delta;
+  v_calculated := v_default + v_sum_delta;
+
+  -- DETEKSI PERETASAN: Jika klien mencoba mengirim angka total_poin yang berbeda dari kalkulasi riil
+  IF TG_OP = 'UPDATE' AND NEW.total_poin IS DISTINCT FROM v_calculated THEN
+    BEGIN
+      INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+      VALUES (
+        NEW.nisn,
+        'SUSPECT_HACKER',
+        '🚨 Percobaan Manipulasi Poin Terdeteksi',
+        'Siswa (NISN: ' || COALESCE(NEW.nisn, '-') || ') mencoba mengubah total_poin dari ' || COALESCE(OLD.total_poin, 100) || ' menjadi ' || NEW.total_poin || '. Nilai berhasil dinetralisir kembali ke kalkulasi sah (' || v_calculated || ').',
+        NOW()
+      );
+    EXCEPTION WHEN OTHERS THEN
+    END;
+  END IF;
+
+  NEW.total_poin := v_calculated;
   NEW.updated_at := NOW();
 
   RETURN NEW;
@@ -271,12 +289,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
-  -- Jika status diubah menjadi LUNAS
-  IF NEW.status = 'LUNAS' AND (OLD.status IS DISTINCT FROM 'LUNAS') THEN
-    IF NEW.nominal_dibayar IS NULL OR NEW.nominal_dibayar <= 0 THEN
-      RAISE EXCEPTION 'Pelunasan SPP tidak valid: Nominal dibayar belum diisi!';
-    END IF;
-    NEW.tanggal_bayar := COALESCE(NEW.tanggal_bayar, NOW()::date);
+  -- Jika status dicoba diubah menjadi LUNAS tanpa nominal dibayar sah
+  IF NEW.status = 'LUNAS' AND (OLD.status IS DISTINCT FROM 'LUNAS') AND (NEW.nominal_dibayar IS NULL OR NEW.nominal_dibayar <= 0) THEN
+    BEGIN
+      INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+      VALUES (
+        NEW.siswa_nisn,
+        'SUSPECT_HACKER',
+        '🚨 Percobaan Manipulasi SPP Terdeteksi',
+        'Percobaan mengubah status tagihan SPP ' || COALESCE(NEW.bulan, '-') || '/' || COALESCE(NEW.tahun, 0) || ' (NISN: ' || COALESCE(NEW.siswa_nisn, '-') || ') menjadi LUNAS tanpa bukti bayar sah. Aksi dinetralisir.',
+        NOW()
+      );
+    EXCEPTION WHEN OTHERS THEN
+    END;
+
+    -- Netralisir kembali ke status asli
+    NEW.status := OLD.status;
+    NEW.nominal_dibayar := OLD.nominal_dibayar;
+    NEW.tanggal_bayar := OLD.tanggal_bayar;
   END IF;
 
   NEW.updated_at := NOW();
@@ -367,12 +397,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
-  -- Jika ada perubahan status pada absensi tanggal yang sudah lewat lebih dari 2 hari
-  -- dan tidak dicatat oleh petugas/admin yang sah
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.tanggal < (CURRENT_DATE - INTERVAL '2 days') THEN
+    IF OLD.tanggal < (CURRENT_DATE - INTERVAL '1 day') THEN
       IF (NEW.status IS DISTINCT FROM OLD.status) AND (NEW.diedit_oleh IS NULL OR TRIM(NEW.diedit_oleh) = '') THEN
-        RAISE EXCEPTION 'Akses ditolak: Pengubahan status presensi lampau wajib menyertakan identitas petugas (diedit_oleh)!';
+        BEGIN
+          INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+          VALUES (
+            NEW.siswa_nisn,
+            'SUSPECT_HACKER',
+            '🚨 Percobaan Manipulasi Absensi Lampau Terdeteksi',
+            'Siswa (NISN: ' || COALESCE(NEW.siswa_nisn, '-') || ') mencoba mengubah status absensi tanggal ' || OLD.tanggal || ' dari ' || OLD.status || ' menjadi ' || NEW.status || '. Aksi dinetralisir.',
+            NOW()
+          );
+        EXCEPTION WHEN OTHERS THEN
+        END;
+
+        -- Kembalikan ke status asli
+        NEW.status := OLD.status;
+        NEW.waktu := OLD.waktu;
       END IF;
     END IF;
   END IF;
@@ -536,11 +578,24 @@ SECURITY DEFINER
 AS $$
 BEGIN
   IF TG_OP = 'UPDATE' THEN
-    -- Jika role diubah menjadi admin atau staff dari role selain admin
     IF NEW.role IN ('admin', 'staff', 'guru') AND OLD.role NOT IN ('admin', 'staff', 'guru') THEN
-      RAISE EXCEPTION 'Akses Ditolak: Peningkatan hak akses role dilarang melalui jalur publik!';
+      BEGIN
+        INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+        VALUES (
+          NEW.username,
+          'SUSPECT_HACKER',
+          '🚨 Percobaan Pembajakan Hak Akses Admin Terdeteksi',
+          'Akun (' || COALESCE(NEW.username, '-') || ') mencoba menaikkan role dari ' || OLD.role || ' menjadi ' || NEW.role || '. Aksi dibatalkan dan dinetralisir.',
+          NOW()
+        );
+      EXCEPTION WHEN OTHERS THEN
+      END;
+
+      -- Netralisir kembali ke role asal
+      NEW.role := OLD.role;
     END IF;
   END IF;
+
   NEW.updated_at := NOW();
   RETURN NEW;
 END;
