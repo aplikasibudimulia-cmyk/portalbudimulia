@@ -149,6 +149,22 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
   const [resubmitError, setResubmitError]         = useState('')
   const [resubmitSaving, setResubmitSaving]       = useState(false)
 
+  // ─── Keranjang Pengajuan Poin (Multi-Item Checkout ala Shopee/Tokopedia) ───
+  const [cart, setCart]                           = useState({}) // { [catalogId]: { item, qty } }
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
+  const [checkoutTanggalKegiatan, setCheckoutTanggalKegiatan] = useState(new Date().toISOString().slice(0, 10))
+  const [checkoutAlasan, setCheckoutAlasan]       = useState('')
+  const [checkoutLink, setCheckoutLink]           = useState('')
+  const [checkoutFiles, setCheckoutFiles]         = useState([])
+  const [checkoutFileError, setCheckoutFileError] = useState('')
+  const [checkoutSaving, setCheckoutSaving]       = useState(false)
+  const [checkoutError, setCheckoutError]         = useState('')
+  const checkoutFileInputRef                      = useRef()
+
+  const cartList = Object.values(cart)
+  const totalCartQty = cartList.reduce((sum, c) => sum + c.qty, 0)
+  const totalCartPoints = cartList.reduce((sum, c) => sum + (c.qty * (c.item.poin || 0)), 0)
+
   const fileInputRef = useRef()
 
   useEffect(() => {
@@ -181,7 +197,8 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
   const fetchKatalog = async () => {
     setKatalogLoading(true)
     const { data } = await supabase.from('point_catalog').select('*').gt('poin', 0)
-    const list = data || []
+    // Sembunyikan POS-PKET-1 (Reward Tidak Pernah Terlambat Bulanan diproses otomatis oleh sekolah)
+    const list = (data || []).filter(k => k.kode !== 'POS-PKET-1')
     
     // Group per Kategori
     const grouped = {}
@@ -362,19 +379,168 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
     }
   }
 
-  // ─── Submit pengajuan ───
+  // ─── Keranjang Pengajuan Handlers (Ala Shopee / Tokopedia) ───
+  const handleToggleCart = (item) => {
+    if (banInfo) return
+    setCart(prev => {
+      const next = { ...prev }
+      if (next[item.id]) {
+        delete next[item.id]
+      } else {
+        next[item.id] = { item, qty: 1 }
+      }
+      return next
+    })
+  }
+
+  const handleUpdateCartQty = (itemId, delta) => {
+    setCart(prev => {
+      const current = prev[itemId]
+      if (!current) return prev
+      const newQty = current.qty + delta
+      const next = { ...prev }
+      if (newQty <= 0) {
+        delete next[itemId]
+      } else {
+        next[itemId] = { ...current, qty: Math.min(newQty, 20) }
+      }
+      return next
+    })
+  }
+
+  const handleCheckoutFileChange = async e => {
+    const selected = Array.from(e.target.files || [])
+    setCheckoutFileError('')
+    if (checkoutFiles.length + selected.length > MAX_FILES) {
+      setCheckoutFileError(`Maksimal ${MAX_FILES} file.`)
+      return
+    }
+    const newFiles = []
+    for (const f of selected) {
+      if (!ALLOWED_TYPES.includes(f.type)) {
+        setCheckoutFileError(`Format tidak didukung: ${f.name}`)
+        continue
+      }
+      let processed = f.type.startsWith('image/') ? await compressImage(f, MAX_FILE_SIZE) : f
+      if (processed.size > MAX_FILE_SIZE) {
+        setCheckoutFileError(`File "${f.name}" terlalu besar (maks 1 MB).`)
+        continue
+      }
+      let preview = null
+      if (f.type.startsWith('image/')) preview = URL.createObjectURL(processed)
+      newFiles.push({ file: processed, name: f.name, type: f.type, size: processed.size, preview })
+    }
+    setCheckoutFiles(prev => [...prev, ...newFiles])
+  }
+
+  const removeCheckoutFile = i => {
+    setCheckoutFiles(prev => {
+      const removed = prev[i]
+      if (removed?.preview) URL.revokeObjectURL(removed.preview)
+      return prev.filter((_, idx) => idx !== i)
+    })
+  }
+
+  const handleCheckoutSubmit = async e => {
+    e.preventDefault()
+    if (!activeTa?.id || totalCartQty === 0) return
+    if (!checkoutTanggalKegiatan) {
+      setCheckoutError('Tanggal pelaksanaan wajib diisi.')
+      return
+    }
+    if (checkoutAlasan.trim().length < 20) {
+      setCheckoutError('Alasan / rincian pengajuan minimal 20 karakter.')
+      return
+    }
+
+    setCheckoutError('')
+    setCheckoutSaving(true)
+
+    try {
+      const batchSessionId = crypto.randomUUID()
+      const buktiFiles = []
+
+      // Upload file bukti jika ada
+      for (const f of checkoutFiles) {
+        const ext = f.name.split('.').pop()
+        const path = `pengajuan-poin/${nisn}/${batchSessionId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: uploadErr } = await supabase.storage
+          .from('bukti-pengajuan')
+          .upload(path, f.file, { contentType: f.type })
+        if (uploadErr) throw new Error('Gagal upload file bukti: ' + uploadErr.message)
+        buktiFiles.push({ path, name: f.name, type: f.type, size: f.size })
+      }
+
+      // Link pendukung
+      if (checkoutLink.trim()) {
+        let formattedUrl = checkoutLink.trim()
+        if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = 'https://' + formattedUrl
+        buktiFiles.push({ type: 'link', url: formattedUrl, name: 'Link Pendukung (YouTube/Drive/dll)' })
+      }
+
+      // Batch insert pengajuan ke tabel pengajuan_poin_positif
+      const rowsToInsert = cartList.map(c => {
+        const itemQty = c.qty
+        const totalPoinItem = c.item.poin * itemQty
+        const jenisLabel = itemQty > 1 ? `${c.item.jenis} (${itemQty}x)` : c.item.jenis
+        const keteranganAlasan = itemQty > 1
+          ? `${checkoutAlasan.trim()}\n[Kuantitas: ${itemQty}x (${itemQty} × ${c.item.poin} = +${totalPoinItem} Poin)]`
+          : checkoutAlasan.trim()
+
+        return {
+          id: crypto.randomUUID(),
+          nisn,
+          nama_siswa: studentData?.nama_lengkap,
+          kelas: studentData?.kelas,
+          tahun_ajaran_id: activeTa.id,
+          semester,
+          catalog_id: c.item.id,
+          kode_katalog: c.item.kode,
+          jenis: jenisLabel,
+          kategori: c.item.kategori,
+          poin_diajukan: totalPoinItem,
+          tanggal_kegiatan: checkoutTanggalKegiatan,
+          alasan: keteranganAlasan,
+          bukti_files: buktiFiles,
+          status: 'pending'
+        }
+      })
+
+      const { error: insErr } = await supabase.from('pengajuan_poin_positif').insert(rowsToInsert)
+      if (insErr) throw insErr
+
+      const msg = `🎉 Berhasil mengirim ${cartList.length} jenis pengajuan (Total ${totalCartQty} butir • +${totalCartPoints} Poin)! Menunggu review guru BK.`
+      setSuccessMsg(msg)
+      showLocalNotif(
+        '[Siswa] Pengajuan Poin Berhasil Dikirim',
+        `Pengajuan ${cartList.length} jenis poin (+${totalCartPoints} Poin) telah dikirim ke guru BK.`,
+        {
+          tag: `pengajuan-cart-${batchSessionId}`,
+          data: { url: '/dashboard?menu=AJUKAN_POIN&tab=riwayat', targetMenu: 'AJUKAN_POIN', targetTab: 'riwayat', role: 'Siswa' }
+        }
+      )
+
+      // Bersihkan keranjang & form
+      setCart({})
+      setCheckoutModalOpen(false)
+      setCheckoutAlasan('')
+      setCheckoutLink('')
+      setCheckoutFiles([])
+      setTimeout(() => setSuccessMsg(''), 7000)
+
+      setActiveTab('riwayat')
+      fetchRiwayat()
+    } catch (err) {
+      console.error('Error checkout submit:', err)
+      setCheckoutError(err.message || 'Terjadi kesalahan saat mengirim pengajuan.')
+    } finally {
+      setCheckoutSaving(false)
+    }
+  }
+
+  // ─── Submit pengajuan satuan (langsung) ───
   const openModal = async (katalogItem) => {
     if (banInfo) return
-    // Cek apakah sudah ada pengajuan pending untuk item ini
-    if (activeTa?.id) {
-      const { data: existing } = await supabase.from('pengajuan_poin_positif')
-        .select('id').eq('nisn', nisn).eq('catalog_id', katalogItem.id)
-        .eq('tahun_ajaran_id', activeTa.id).eq('status', 'pending').maybeSingle()
-      if (existing) {
-        alert('Kamu sudah punya pengajuan yang sedang diproses untuk jenis poin ini.')
-        return
-      }
-    }
     setTanggalKegiatan(new Date().toISOString().slice(0, 10))
     setAlasan(''); setLinkPendukung(''); setFiles([]); setFileError(''); setErrorMsg(''); setSuccessMsg('')
     setModal(katalogItem)
@@ -508,7 +674,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
 
       {/* ─── TAB: KATALOG ─── */}
       {activeTab === 'katalog' && (
-        <div className="space-y-3">
+        <div className={`space-y-3 ${totalCartQty > 0 ? 'pb-24 sm:pb-28' : ''}`}>
           {/* Search */}
           <div className="relative">
             <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -533,7 +699,17 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
                 <div className="py-10 text-center text-slate-400 text-sm">Tidak ada hasil yang cocok</div>
               ) : (
                 <div className="divide-y divide-slate-50">
-                  {filtered.map(k => <KatalogItem key={k.id} item={k} onAjukan={openModal} disabled={!!banInfo} />)}
+                  {filtered.map(k => (
+                    <KatalogItem
+                      key={k.id}
+                      item={k}
+                      onAjukan={openModal}
+                      disabled={!!banInfo}
+                      cartQty={cart[k.id]?.qty || 0}
+                      onToggleCart={handleToggleCart}
+                      onUpdateQty={handleUpdateCartQty}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -603,7 +779,16 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
                               {isSubOpen && (
                                 <div className="divide-y divide-slate-100 bg-white animate-fade-in">
                                   {group.items.map(k => (
-                                    <KatalogItem key={k.id} item={k} isNested={true} onAjukan={openModal} disabled={!!banInfo} />
+                                    <KatalogItem
+                                      key={k.id}
+                                      item={k}
+                                      isNested={true}
+                                      onAjukan={openModal}
+                                      disabled={!!banInfo}
+                                      cartQty={cart[k.id]?.qty || 0}
+                                      onToggleCart={handleToggleCart}
+                                      onUpdateQty={handleUpdateCartQty}
+                                    />
                                   ))}
                                 </div>
                               )}
@@ -611,7 +796,16 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
                           )
                         }
                         return (
-                          <KatalogItem key={group.item.id || gIdx} item={group.item} isNested={false} onAjukan={openModal} disabled={!!banInfo} />
+                          <KatalogItem
+                            key={group.item.id || gIdx}
+                            item={group.item}
+                            isNested={false}
+                            onAjukan={openModal}
+                            disabled={!!banInfo}
+                            cartQty={cart[group.item.id]?.qty || 0}
+                            onToggleCart={handleToggleCart}
+                            onUpdateQty={handleUpdateCartQty}
+                          />
                         )
                       })}
                     </div>
@@ -620,6 +814,49 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ─── STICKY CHECKOUT BAR (Ala Shopee / Tokopedia) ─── */}
+      {totalCartQty > 0 && activeTab === 'katalog' && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[92%] sm:w-[95%] max-w-2xl z-40 bg-slate-900/95 backdrop-blur-md text-white p-3 sm:p-4 rounded-2xl shadow-2xl border border-slate-700/60 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl shrink-0 font-bold border border-emerald-500/30">
+              🛒
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-xs sm:text-sm text-white">
+                  {cartList.length} Jenis Poin
+                </span>
+                <span className="text-[10px] sm:text-xs text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded-md border border-emerald-500/30">
+                  {totalCartQty} Item
+                </span>
+              </div>
+              <p className="text-[10px] sm:text-xs text-slate-300 truncate">
+                Estimasi Poin: <strong className="text-emerald-400 font-black">+{totalCartPoints} Poin</strong>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setCart({})}
+              className="px-2.5 sm:px-3 py-2 text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+              title="Bersihkan Keranjang"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onClick={() => setCheckoutModalOpen(true)}
+              className="px-3.5 sm:px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>Ajukan Sekarang</span>
+              <span className="hidden sm:inline">({totalCartQty})</span>
+              <span>➔</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1084,33 +1321,367 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
         </div>,
         document.body
       )}
+
+      {/* ─── MODAL CHECKOUT MULTI-PENGAJUAN (Ala Keranjang Belanja Shopee/Tokopedia) ─── */}
+      {checkoutModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <div className="bg-white w-full max-w-xl max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white flex items-center justify-between shrink-0 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-xl shadow-inner">
+                  🛒
+                </div>
+                <div>
+                  <h3 className="font-black text-sm sm:text-base leading-tight">Checkout Pengajuan Poin</h3>
+                  <p className="text-[11px] text-emerald-100 font-medium">
+                    {cartList.length} jenis poin ({totalCartQty} butir) • Total <strong>+{totalCartPoints} Poin</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCheckoutModalOpen(false)}
+                disabled={checkoutSaving}
+                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center text-sm font-bold transition-all disabled:opacity-50 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleCheckoutSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 bg-slate-50/50">
+              {checkoutError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2">
+                  <span>❌</span>
+                  <span>{checkoutError}</span>
+                </div>
+              )}
+
+              {/* Rincian Item Keranjang */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                    Daftar Poin yang Diajukan
+                  </label>
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                    Total: +{totalCartPoints} Poin
+                  </span>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 shadow-2xs max-h-48 overflow-y-auto">
+                  {cartList.map(c => (
+                    <div key={c.item.id} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded">
+                            {c.item.display_no || c.item.kode}
+                          </span>
+                          <span className="font-bold text-slate-800 text-xs truncate">
+                            {c.item.jenis}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          +{c.item.poin} poin per butir
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Stepper Qty */}
+                        <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateCartQty(c.item.id, -1)}
+                            className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <span className="px-2 text-xs font-black text-slate-800 min-w-5 text-center">
+                            {c.qty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateCartQty(c.item.id, 1)}
+                            className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <span className="text-xs font-black text-emerald-700 min-w-14 text-right">
+                          +{c.qty * c.item.poin} P
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCart(c.item)}
+                          className="w-6 h-6 text-slate-400 hover:text-rose-600 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center"
+                          title="Hapus dari keranjang"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tanggal Pelaksanaan Kegiatan */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Tanggal Pelaksanaan / Kegiatan <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={checkoutTanggalKegiatan}
+                  onChange={e => setCheckoutTanggalKegiatan(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)}
+                  required
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Pilih tanggal kapan kamu melaksanakan kegiatan / ujian ini.</p>
+              </div>
+
+              {/* Alasan / Rincian Pengajuan */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Jelaskan rincian pengajuan ini <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={checkoutAlasan}
+                  onChange={e => setCheckoutAlasan(e.target.value)}
+                  required
+                  rows={4}
+                  placeholder="Contoh: Saya mendapatkan nilai 100 pada asesmen harian untuk 3 mapel yaitu Matematika (100), IPA (100), dan B. Inggris (100). Bukti lembar ujian terlampir."
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none resize-none bg-slate-50/50"
+                />
+                <div className="flex justify-between items-center mt-1">
+                  <p className={`text-[10px] ${checkoutAlasan.trim().length < 20 ? 'text-amber-500 font-bold' : 'text-emerald-600 font-medium'}`}>
+                    {checkoutAlasan.trim().length < 20 ? `${checkoutAlasan.trim().length}/20 karakter minimum` : `✓ ${checkoutAlasan.trim().length} karakter`}
+                  </p>
+                  <span className="text-[10px] text-slate-400">Tuliskan nama mapel / rincian prestasi</span>
+                </div>
+              </div>
+
+              {/* Lampirkan Foto / Dokumen Bukti */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Lampirkan foto / dokumen bukti <span className="text-slate-400 font-normal">(opsional, maks {MAX_FILES} file × 1 MB)</span>
+                </label>
+
+                {checkoutFiles.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {checkoutFiles.map((f, i) => (
+                      <div key={i} className="relative group">
+                        {f.preview ? (
+                          <img
+                            src={f.preview}
+                            alt={f.name}
+                            className="w-full aspect-square object-cover rounded-xl border border-slate-200 cursor-pointer"
+                            onClick={() => setPreviewModal({ url: f.preview, type: f.type || 'image/jpeg', name: f.name })}
+                          />
+                        ) : (
+                          <div className="w-full aspect-square rounded-xl border border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-1 p-1">
+                            <span className="text-xl">📄</span>
+                            <span className="text-[9px] text-slate-500 truncate w-full text-center px-1">{f.name}</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeCheckoutFile(i)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-md hover:bg-red-600 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {checkoutFiles.length < MAX_FILES && (
+                  <div>
+                    <input
+                      ref={checkoutFileInputRef}
+                      type="file"
+                      multiple
+                      accept={ALLOWED_TYPES.join(',')}
+                      onChange={handleCheckoutFileChange}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => checkoutFileInputRef.current?.click()}
+                      className="w-full py-2.5 border-2 border-dashed border-slate-200 hover:border-emerald-400 rounded-xl text-slate-500 hover:text-emerald-700 flex items-center justify-center gap-2 transition-colors cursor-pointer bg-slate-50/50"
+                    >
+                      <span className="text-base">📸</span>
+                      <span className="text-xs font-bold">Tambah foto / dokumen bukti ({checkoutFiles.length}/{MAX_FILES})</span>
+                    </button>
+                  </div>
+                )}
+
+                {checkoutFileError && <p className="text-[10px] text-red-500 mt-1">{checkoutFileError}</p>}
+              </div>
+
+              {/* Link Pendukung */}
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Link / URL Pendukung <span className="text-slate-400 font-normal">(opsional)</span>
+                </label>
+                <input
+                  type="url"
+                  value={checkoutLink}
+                  onChange={e => setCheckoutLink(e.target.value)}
+                  placeholder="https://drive.google.com/... atau https://youtube.com/..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              {/* Footer Modal Actions */}
+              <div className="pt-2 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setCheckoutModalOpen(false)}
+                  disabled={checkoutSaving}
+                  className="px-4 py-2.5 border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={checkoutSaving || totalCartQty === 0}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {checkoutSaving ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Mengirim {totalCartQty} Pengajuan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Kirim Semua Pengajuan (+{totalCartPoints} Poin)</span>
+                      <span>🚀</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
 
-// ─── Sub-komponen: satu baris katalog ───
-function KatalogItem({ item, isNested = false, onAjukan, disabled }) {
+// ─── Sub-komponen: satu baris katalog (Mendukung Checkbox & Stepper Kuantitas Shopee/Tokopedia) ───
+function KatalogItem({
+  item,
+  isNested = false,
+  onAjukan,
+  disabled,
+  cartQty = 0,
+  onToggleCart,
+  onUpdateQty
+}) {
   const displayBadge = item.display_no || item.kode
+  const isInCart = cartQty > 0
+
   return (
-    <div className={`flex items-center gap-3 px-4 sm:px-5 py-3 sm:py-3.5 hover:bg-emerald-50/30 transition-colors ${isNested ? 'pl-6 sm:pl-8' : ''}`}>
+    <div
+      className={`flex items-center gap-2.5 sm:gap-3 px-3.5 sm:px-5 py-3 sm:py-3.5 transition-colors border-l-3 ${
+        isInCart
+          ? 'bg-emerald-50/50 border-l-emerald-500'
+          : 'hover:bg-emerald-50/20 border-l-transparent'
+      } ${isNested ? 'pl-5 sm:pl-8' : ''}`}
+    >
+      {/* Checkbox Keranjang */}
+      <button
+        type="button"
+        onClick={() => onToggleCart && onToggleCart(item)}
+        disabled={disabled}
+        aria-label="Pilih poin untuk diajukan"
+        className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+          isInCart
+            ? 'bg-emerald-600 border-emerald-600 text-white shadow-2xs'
+            : 'border-slate-300 hover:border-emerald-500 bg-white'
+        }`}
+        title={isInCart ? 'Batalkan pilihan' : 'Pilih dan masukkan ke keranjang pengajuan'}
+      >
+        {isInCart && (
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </button>
+
+      {/* Rincian Poin */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-0.5">
           {isNested && <span className="text-emerald-400 font-bold text-xs">↳</span>}
-          <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md shrink-0 shadow-2xs">
+          <span className="font-mono text-[10px] sm:text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 sm:px-2 py-0.5 rounded-md shrink-0 shadow-2xs">
             {displayBadge}
           </span>
-          <span className="font-bold text-slate-800 text-xs sm:text-sm leading-snug">{item.jenis}</span>
+          <span className="font-bold text-slate-800 text-xs sm:text-sm leading-snug">
+            {item.jenis}
+          </span>
         </div>
         {item.keterangan && (
-          <p className={`text-[11px] sm:text-xs text-slate-500 line-clamp-2 mt-0.5 ${isNested ? 'pl-4' : ''}`}>
+          <p className={`text-[11px] sm:text-xs text-slate-500 line-clamp-2 mt-0.5 ${isNested ? 'pl-3 sm:pl-4' : ''}`}>
             {item.keterangan}
           </p>
         )}
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl shadow-2xs">+{item.poin}</span>
-        <button type="button" onClick={() => onAjukan(item)} disabled={disabled}
-          className="px-3 sm:px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition-all shadow-xs shadow-emerald-200">
+
+      {/* Aksi & Kuantitas */}
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <span className="text-xs font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 sm:px-2.5 py-1 rounded-xl shadow-2xs">
+          +{item.poin}
+        </span>
+
+        {isInCart ? (
+          /* Stepper Kuantitas (Shopee Style) */
+          <div className="flex items-center bg-emerald-100/60 border border-emerald-300 rounded-xl p-0.5 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => onUpdateQty && onUpdateQty(item.id, -1)}
+              className="w-5 sm:w-6 h-5 sm:h-6 flex items-center justify-center rounded-lg bg-white text-slate-700 hover:bg-emerald-50 active:scale-95 font-black text-xs transition-colors cursor-pointer"
+              title="Kurangi kuantitas"
+            >
+              -
+            </button>
+            <span className="px-1.5 sm:px-2 text-xs font-black text-emerald-900 min-w-4 sm:min-w-5 text-center">
+              {cartQty}
+            </span>
+            <button
+              type="button"
+              onClick={() => onUpdateQty && onUpdateQty(item.id, 1)}
+              className="w-5 sm:w-6 h-5 sm:h-6 flex items-center justify-center rounded-lg bg-white text-slate-700 hover:bg-emerald-50 active:scale-95 font-black text-xs transition-colors cursor-pointer"
+              title="Tambah kuantitas (misal beberapa mapel/ujian)"
+            >
+              +
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onToggleCart && onToggleCart(item)}
+            disabled={disabled}
+            className="px-2 sm:px-2.5 py-1 sm:py-1.5 bg-white border border-slate-300 hover:border-emerald-500 hover:text-emerald-700 active:scale-95 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 text-xs font-bold rounded-xl transition-all shadow-2xs flex items-center gap-1 cursor-pointer"
+            title="Tambah ke keranjang pengajuan"
+          >
+            <span>+</span>
+            <span className="hidden sm:inline">Pilih</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onAjukan(item)}
+          disabled={disabled}
+          className="px-2.5 sm:px-3 py-1 sm:py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition-all shadow-xs shadow-emerald-200 cursor-pointer"
+          title="Ajukan langsung satu item ini"
+        >
           Ajukan
         </button>
       </div>
