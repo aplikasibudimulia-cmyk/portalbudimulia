@@ -47,6 +47,18 @@ export default function MonthlyDisciplineRewardModal({
     return map
   }, [allStudents])
 
+  // Filtered List for Table — HARUS sebelum early return agar jumlah hooks selalu sama
+  const displayList = useMemo(() => {
+    const list = tabFilter === 'eligible' ? eligibleList : disqualifiedList
+    if (!searchQuery.trim()) return list
+    const q = searchQuery.toLowerCase().trim()
+    return list.filter(s =>
+      s.nama_lengkap.toLowerCase().includes(q) ||
+      s.nisn.includes(q) ||
+      (s.kelas || '').toLowerCase().includes(q)
+    )
+  }, [tabFilter, eligibleList, disqualifiedList, searchQuery])
+
   if (!isOpen) return null
 
   // 1. Hitung & Pratinjau Siswa Lolos Disiplin Bulanan
@@ -279,18 +291,6 @@ export default function MonthlyDisciplineRewardModal({
       setProcessing(false)
     }
   }
-
-  // Filtered List for Table
-  const displayList = useMemo(() => {
-    const list = tabFilter === 'eligible' ? eligibleList : disqualifiedList
-    if (!searchQuery.trim()) return list
-    const q = searchQuery.toLowerCase().trim()
-    return list.filter(s =>
-      s.nama_lengkap.toLowerCase().includes(q) ||
-      s.nisn.includes(q) ||
-      (s.kelas || '').toLowerCase().includes(q)
-    )
-  }, [tabFilter, eligibleList, disqualifiedList, searchQuery])
 
   const namaBulanAktif = MONTH_NAMES[selectedMonth - 1]
   const unclaimableEligibleCount = eligibleList.filter(s => !s.isClaimed).length
@@ -617,3 +617,4 @@ export default function MonthlyDisciplineRewardModal({
     </div>
   )
 }
+
