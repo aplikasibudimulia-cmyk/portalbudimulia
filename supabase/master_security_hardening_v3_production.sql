@@ -137,7 +137,7 @@ DROP TRIGGER IF EXISTS trg_validate_point_author ON public.point_records;
 CREATE TRIGGER trg_validate_point_author
 BEFORE INSERT ON public.point_records
 FOR EACH ROW
-EXECUTE FUNCTION public.fn_validate_point_author();
+EXECUTE FUNCTION public.fn_validate_point_record_author();
 
 -- Trigger Otomatis Rekalkulasi Saldo Poin ketika ada Record Baru/Diedit/Dihapus
 CREATE OR REPLACE FUNCTION public.fn_after_point_records_change()
@@ -643,3 +643,4 @@ REVOKE UPDATE, DELETE ON public.impersonate_tokens FROM anon;
 -- SELESAI & RELOAD SCHEMA CACHE POSTGREST
 -- ==============================================================================
 NOTIFY pgrst, 'reload schema';
+
