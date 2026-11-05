@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import HallOfFameModal from './HallOfFameModal'
+import MonthlyDisciplineRewardModal from './MonthlyDisciplineRewardModal'
 import { downloadFile } from '../utils/fileDownloader'
 import { useConfirm } from '../utils/useConfirm'
 import {
@@ -85,6 +86,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [showcaseModalOpen, setShowcaseModalOpen] = useState(false)
   const [showcaseTopChoice, setShowcaseTopChoice] = useState('10')
   const [showcaseCustomInput, setShowcaseCustomInput] = useState('')
+  const [monthlyRewardModalOpen, setMonthlyRewardModalOpen] = useState(false)
 
   // Dashboard Data
   const [loading, setLoading] = useState(false)
@@ -1215,6 +1217,14 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           <p className="text-slate-500 text-sm mt-0.5">Analisis tren perilaku, prestasi, dan pembinaan siswa secara menyeluruh</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setMonthlyRewardModalOpen(true)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl shadow-xs transition-all cursor-pointer"
+          >
+            <span className="text-base">🏆</span>
+            <span>Reward Disiplin Bulanan (+4)</span>
+          </button>
           <button
             onClick={() => setShowcaseModalOpen(true)}
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-xs transition-all cursor-pointer"
@@ -3098,6 +3108,18 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
       {/* Confirm Modal Dialog */}
       {ConfirmModalComponent}
+
+      {/* Modal Kredit Poin Disiplin Bulanan (Opsi 2) */}
+      <MonthlyDisciplineRewardModal
+        isOpen={monthlyRewardModalOpen}
+        onClose={() => setMonthlyRewardModalOpen(false)}
+        activeTa={activeTa}
+        semester={semester}
+        allStudents={allStudentsList}
+        onSuccess={() => {
+          fetchAllStudentsWithPoints()
+        }}
+      />
 
     </div>
   )

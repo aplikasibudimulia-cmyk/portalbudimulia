@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
 import { downloadFile } from '../utils/fileDownloader'
 import { sendFCMPushNotification } from '../utils/fcmSender'
+import MonthlyDisciplineRewardModal from './MonthlyDisciplineRewardModal'
 
 const getPoinColor = (p) => {
   if (p > 75) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
@@ -68,6 +69,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const [poinDiberikan, setPoinDiberikan] = useState('')
   const [keterangan, setKeterangan] = useState('')
   const [saving, setSaving] = useState(false)
+  const [monthlyRewardOpen, setMonthlyRewardOpen] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [alert, setAlert] = useState(null) // { type, message }
 
@@ -872,6 +874,16 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
             <>
               <button
                 type="button"
+                onClick={() => setMonthlyRewardOpen(true)}
+                title="Proses reward poin +4 serentak untuk siswa yang tidak pernah terlambat / alfa dalam 1 bulan"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer"
+              >
+                <span>🏆</span>
+                <span>Reward Disiplin Bulanan (+4)</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handleRekalkulasiPoin}
                 disabled={rekalkulasiLoading}
                 title="Hitung ulang total poin semua siswa berdasarkan catatan yang masih ada"
@@ -1488,6 +1500,19 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
           </div>
         </div>
       )}
+
+      {/* Modal Kredit Poin Disiplin Bulanan (Opsi 2) */}
+      <MonthlyDisciplineRewardModal
+        isOpen={monthlyRewardOpen}
+        onClose={() => setMonthlyRewardOpen(false)}
+        activeTa={activeTa}
+        semester={semester}
+        currentUser={session?.guru || session}
+        allStudents={[]}
+        onSuccess={() => {
+          fetchRecords()
+        }}
+      />
     </>
   )
 }
