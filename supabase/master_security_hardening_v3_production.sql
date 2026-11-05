@@ -24,13 +24,13 @@
 ALTER TABLE public.student_points ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_student_points" ON public.student_points;
 DROP POLICY IF EXISTS "student_points_read_all" ON public.student_points;
-DROP POLICY IF EXISTS "student_points_write_portal" ON public.student_points;
-
+DROP POLICY IF EXISTS "student_points_read_all" ON public.student_points;
 CREATE POLICY "student_points_read_all"
   ON public.student_points FOR SELECT
   TO anon, authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "student_points_write_portal" ON public.student_points;
 CREATE POLICY "student_points_write_portal"
   ON public.student_points FOR ALL
   TO anon, authenticated
@@ -86,13 +86,13 @@ DROP POLICY IF EXISTS "staff_write_point_records" ON public.point_records;
 DROP POLICY IF EXISTS "point_records_select_all" ON public.point_records;
 DROP POLICY IF EXISTS "point_records_insert_portal" ON public.point_records;
 DROP POLICY IF EXISTS "point_records_update_portal" ON public.point_records;
-DROP POLICY IF EXISTS "point_records_delete_portal" ON public.point_records;
-
+DROP POLICY IF EXISTS "point_records_select_all" ON public.point_records;
 CREATE POLICY "point_records_select_all"
   ON public.point_records FOR SELECT
   TO anon, authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "point_records_insert_portal" ON public.point_records;
 CREATE POLICY "point_records_insert_portal"
   ON public.point_records FOR INSERT
   TO anon, authenticated
@@ -101,12 +101,14 @@ CREATE POLICY "point_records_insert_portal"
     dicatat_oleh IS NOT NULL AND TRIM(dicatat_oleh) <> ''
   );
 
+DROP POLICY IF EXISTS "point_records_update_portal" ON public.point_records;
 CREATE POLICY "point_records_update_portal"
   ON public.point_records FOR UPDATE
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "point_records_delete_portal" ON public.point_records;
 CREATE POLICY "point_records_delete_portal"
   ON public.point_records FOR DELETE
   TO anon, authenticated
@@ -193,20 +195,21 @@ ALTER TABLE public.pengajuan_poin_positif ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_pengajuan_poin_positif" ON public.pengajuan_poin_positif;
 DROP POLICY IF EXISTS "pengajuan_poin_select" ON public.pengajuan_poin_positif;
 DROP POLICY IF EXISTS "pengajuan_poin_insert" ON public.pengajuan_poin_positif;
-DROP POLICY IF EXISTS "pengajuan_poin_update" ON public.pengajuan_poin_positif;
-
+DROP POLICY IF EXISTS "pengajuan_poin_select" ON public.pengajuan_poin_positif;
 CREATE POLICY "pengajuan_poin_select"
   ON public.pengajuan_poin_positif FOR SELECT
   TO anon, authenticated
   USING (true);
 
 -- Siswa boleh mengajukan
+DROP POLICY IF EXISTS "pengajuan_poin_insert" ON public.pengajuan_poin_positif;
 CREATE POLICY "pengajuan_poin_insert"
   ON public.pengajuan_poin_positif FOR INSERT
   TO anon, authenticated
   WITH CHECK (true);
 
 -- Guru/Admin boleh memproses (approve/reject)
+DROP POLICY IF EXISTS "pengajuan_poin_update" ON public.pengajuan_poin_positif;
 CREATE POLICY "pengajuan_poin_update"
   ON public.pengajuan_poin_positif FOR UPDATE
   TO anon, authenticated
@@ -244,13 +247,13 @@ EXECUTE FUNCTION public.fn_guard_pengajuan_poin_status();
 ALTER TABLE public.tagihan_spp ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_tagihan_spp" ON public.tagihan_spp;
 DROP POLICY IF EXISTS "tagihan_spp_select" ON public.tagihan_spp;
-DROP POLICY IF EXISTS "tagihan_spp_write_admin" ON public.tagihan_spp;
-
+DROP POLICY IF EXISTS "tagihan_spp_select" ON public.tagihan_spp;
 CREATE POLICY "tagihan_spp_select"
   ON public.tagihan_spp FOR SELECT
   TO anon, authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "tagihan_spp_write_admin" ON public.tagihan_spp;
 CREATE POLICY "tagihan_spp_write_admin"
   ON public.tagihan_spp FOR ALL
   TO anon, authenticated
@@ -290,11 +293,12 @@ EXECUTE FUNCTION public.fn_guard_tagihan_spp();
 
 -- 2.2 Tabel tarif_spp_siswa & transaksi_bca_log
 ALTER TABLE public.tarif_spp_siswa ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_tarif_spp_siswa" ON public.tarif_spp_siswa;
+DROP POLICY IF EXISTS "tarif_spp_select_all" ON public.tarif_spp_siswa;
 CREATE POLICY "tarif_spp_select_all"
   ON public.tarif_spp_siswa FOR SELECT
   TO anon, authenticated
   USING (true);
+DROP POLICY IF EXISTS "tarif_spp_write_admin" ON public.tarif_spp_siswa;
 CREATE POLICY "tarif_spp_write_admin"
   ON public.tarif_spp_siswa FOR ALL
   TO anon, authenticated
@@ -304,11 +308,12 @@ CREATE POLICY "tarif_spp_write_admin"
 REVOKE DELETE ON public.tarif_spp_siswa FROM anon;
 
 ALTER TABLE public.transaksi_bca_log ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_transaksi_bca_log" ON public.transaksi_bca_log;
+DROP POLICY IF EXISTS "transaksi_bca_select_all" ON public.transaksi_bca_log;
 CREATE POLICY "transaksi_bca_select_all"
   ON public.transaksi_bca_log FOR SELECT
   TO anon, authenticated
   USING (true);
+DROP POLICY IF EXISTS "transaksi_bca_insert_admin" ON public.transaksi_bca_log;
 CREATE POLICY "transaksi_bca_insert_admin"
   ON public.transaksi_bca_log FOR INSERT
   TO anon, authenticated
@@ -329,13 +334,13 @@ DROP POLICY IF EXISTS "presensi open" ON public.presensi_harian;
 DROP POLICY IF EXISTS "presensi_read_all" ON public.presensi_harian;
 DROP POLICY IF EXISTS "presensi_write_authenticated_users" ON public.presensi_harian;
 DROP POLICY IF EXISTS "presensi_update_own" ON public.presensi_harian;
-DROP POLICY IF EXISTS "presensi_delete_admin_only" ON public.presensi_harian;
-
+DROP POLICY IF EXISTS "presensi_read_all" ON public.presensi_harian;
 CREATE POLICY "presensi_read_all"
   ON public.presensi_harian FOR SELECT
   TO anon, authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "presensi_insert_portal" ON public.presensi_harian;
 CREATE POLICY "presensi_insert_portal"
   ON public.presensi_harian FOR INSERT
   TO anon, authenticated
@@ -344,6 +349,7 @@ CREATE POLICY "presensi_insert_portal"
     tanggal IS NOT NULL
   );
 
+DROP POLICY IF EXISTS "presensi_update_portal" ON public.presensi_harian;
 CREATE POLICY "presensi_update_portal"
   ON public.presensi_harian FOR UPDATE
   TO anon, authenticated
@@ -387,18 +393,19 @@ EXECUTE FUNCTION public.fn_guard_presensi_harian();
 ALTER TABLE public.sesi_presensi ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "sesi_presensi_read_all" ON public.sesi_presensi;
 DROP POLICY IF EXISTS "sesi_presensi_write" ON public.sesi_presensi;
-DROP POLICY IF EXISTS "sesi_presensi_update" ON public.sesi_presensi;
-
+DROP POLICY IF EXISTS "sesi_presensi_read_all" ON public.sesi_presensi;
 CREATE POLICY "sesi_presensi_read_all" ON public.sesi_presensi FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "sesi_presensi_write" ON public.sesi_presensi;
 CREATE POLICY "sesi_presensi_write" ON public.sesi_presensi FOR INSERT TO anon, authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "sesi_presensi_update" ON public.sesi_presensi;
 CREATE POLICY "sesi_presensi_update" ON public.sesi_presensi FOR UPDATE TO anon, authenticated USING (true);
 REVOKE DELETE ON public.sesi_presensi FROM anon;
 
 ALTER TABLE public.laporan_kendala_presensi ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "laporan_kendala_select" ON public.laporan_kendala_presensi;
-DROP POLICY IF EXISTS "laporan_kendala_write" ON public.laporan_kendala_presensi;
-
+DROP POLICY IF EXISTS "laporan_kendala_select" ON public.laporan_kendala_presensi;
 CREATE POLICY "laporan_kendala_select" ON public.laporan_kendala_presensi FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "laporan_kendala_write" ON public.laporan_kendala_presensi;
 CREATE POLICY "laporan_kendala_write" ON public.laporan_kendala_presensi FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 REVOKE DELETE ON public.laporan_kendala_presensi FROM anon;
 
@@ -426,8 +433,9 @@ CREATE POLICY "allow_read_nilai_komponen" ON public.nilai_komponen FOR SELECT TO
 REVOKE DELETE ON public.nilai_komponen FROM anon;
 
 ALTER TABLE public.nilai_akhir_config ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_nilai_akhir_config" ON public.nilai_akhir_config;
+DROP POLICY IF EXISTS "allow_read_nilai_akhir_config" ON public.nilai_akhir_config;
 CREATE POLICY "allow_read_nilai_akhir_config" ON public.nilai_akhir_config FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "allow_write_nilai_akhir_config" ON public.nilai_akhir_config;
 CREATE POLICY "allow_write_nilai_akhir_config" ON public.nilai_akhir_config FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 REVOKE DELETE ON public.nilai_akhir_config FROM anon;
 
@@ -453,15 +461,17 @@ GRANT ALL ON public.cbt_soal_kunci TO service_role;
 -- 5.2 Bank Soal & Soal CBT
 ALTER TABLE public.cbt_bank_soal ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "cbt_bank_soal_read" ON public.cbt_bank_soal;
-DROP POLICY IF EXISTS "cbt_bank_soal_write" ON public.cbt_bank_soal;
+DROP POLICY IF EXISTS "cbt_bank_soal_read" ON public.cbt_bank_soal;
 CREATE POLICY "cbt_bank_soal_read" ON public.cbt_bank_soal FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "cbt_bank_soal_write" ON public.cbt_bank_soal;
 CREATE POLICY "cbt_bank_soal_write" ON public.cbt_bank_soal FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 REVOKE DELETE ON public.cbt_bank_soal FROM anon;
 
 ALTER TABLE public.cbt_soal ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "cbt_soal_read" ON public.cbt_soal;
-DROP POLICY IF EXISTS "cbt_soal_write" ON public.cbt_soal;
+DROP POLICY IF EXISTS "cbt_soal_read" ON public.cbt_soal;
 CREATE POLICY "cbt_soal_read" ON public.cbt_soal FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "cbt_soal_write" ON public.cbt_soal;
 CREATE POLICY "cbt_soal_write" ON public.cbt_soal FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 REVOKE DELETE ON public.cbt_soal FROM anon;
 
@@ -499,9 +509,9 @@ REVOKE UPDATE, DELETE ON public.cbt_audit_logs FROM anon;
 ALTER TABLE public.guru ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_guru" ON public.guru;
 DROP POLICY IF EXISTS "guru_read_all" ON public.guru;
-DROP POLICY IF EXISTS "guru_write_admin" ON public.guru;
-
+DROP POLICY IF EXISTS "guru_read_all" ON public.guru;
 CREATE POLICY "guru_read_all" ON public.guru FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "guru_write_admin" ON public.guru;
 CREATE POLICY "guru_write_admin" ON public.guru FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 REVOKE DELETE ON public.guru FROM anon;
@@ -510,9 +520,9 @@ REVOKE DELETE ON public.guru FROM anon;
 ALTER TABLE public.akun_pengguna ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all_akun_pengguna" ON public.akun_pengguna;
 DROP POLICY IF EXISTS "akun_pengguna_read" ON public.akun_pengguna;
-DROP POLICY IF EXISTS "akun_pengguna_write" ON public.akun_pengguna;
-
+DROP POLICY IF EXISTS "akun_pengguna_read" ON public.akun_pengguna;
 CREATE POLICY "akun_pengguna_read" ON public.akun_pengguna FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "akun_pengguna_write" ON public.akun_pengguna;
 CREATE POLICY "akun_pengguna_write" ON public.akun_pengguna FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 REVOKE DELETE ON public.akun_pengguna FROM anon;
@@ -545,8 +555,9 @@ EXECUTE FUNCTION public.fn_guard_akun_role_tamper();
 -- 6.3 Tabel Siswa Permanent & Pembinaan
 ALTER TABLE public.siswa_permanent ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "siswa_permanent_read" ON public.siswa_permanent;
-DROP POLICY IF EXISTS "siswa_permanent_write" ON public.siswa_permanent;
+DROP POLICY IF EXISTS "siswa_permanent_read" ON public.siswa_permanent;
 CREATE POLICY "siswa_permanent_read" ON public.siswa_permanent FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "siswa_permanent_write" ON public.siswa_permanent;
 CREATE POLICY "siswa_permanent_write" ON public.siswa_permanent FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 REVOKE DELETE ON public.siswa_permanent FROM anon;
 
@@ -625,8 +636,9 @@ REVOKE DELETE ON public.bk_konsultasi_booking FROM anon;
 
 ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "activity_log_read" ON public.activity_log;
-DROP POLICY IF EXISTS "activity_log_insert" ON public.activity_log;
+DROP POLICY IF EXISTS "activity_log_read" ON public.activity_log;
 CREATE POLICY "activity_log_read" ON public.activity_log FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "activity_log_insert" ON public.activity_log;
 CREATE POLICY "activity_log_insert" ON public.activity_log FOR INSERT TO anon, authenticated WITH CHECK (true);
 REVOKE UPDATE, DELETE ON public.activity_log FROM anon;
 
