@@ -18,6 +18,10 @@ DROP POLICY IF EXISTS "anon_rw_point_records" ON public.point_records;
 DROP POLICY IF EXISTS "Akses point_records" ON public.point_records;
 DROP POLICY IF EXISTS "allow_read_point_records_public" ON public.point_records;
 DROP POLICY IF EXISTS "staff_write_point_records" ON public.point_records;
+DROP POLICY IF EXISTS "point_records_select_all" ON public.point_records;
+DROP POLICY IF EXISTS "point_records_insert_portal" ON public.point_records;
+DROP POLICY IF EXISTS "point_records_update_portal" ON public.point_records;
+DROP POLICY IF EXISTS "point_records_delete_portal" ON public.point_records;
 
 -- A. Semua pengguna portal (siswa, ortu, guru, admin) dapat melihat riwayat poin
 CREATE POLICY "point_records_select_all"
