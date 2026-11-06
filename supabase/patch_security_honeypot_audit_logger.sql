@@ -105,31 +105,57 @@ EXECUTE FUNCTION public.fn_guard_tagihan_spp();
 -- 3. HONEYPOT PRESENSI LAMPAU (presensi_harian)
 -- Jika siswa mencoba mengedit absensi tanggal yang sudah lewat menjadi Hadir:
 -- Status dinetralisir kembali DAN dicatat ke log peretasan.
+-- Guru/Admin/Staff yang sah tetap dapat mengoreksi absensi lampau.
 CREATE OR REPLACE FUNCTION public.fn_guard_presensi_harian()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
+DECLARE
+  v_editor_id UUID;
+  v_is_authorized BOOLEAN := FALSE;
 BEGIN
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.tanggal < (CURRENT_DATE - INTERVAL '1 day') THEN
-      IF (NEW.status IS DISTINCT FROM OLD.status) AND (NEW.diedit_oleh IS NULL OR TRIM(NEW.diedit_oleh) = '') THEN
+    -- Hanya periksa jika status berubah pada tanggal lampau (kemarin atau sebelumnya)
+    IF OLD.tanggal < (CURRENT_DATE - INTERVAL '1 day') AND (NEW.status IS DISTINCT FROM OLD.status) THEN
+      
+      -- Tentukan siapa yang melakukan perubahan (diedit_oleh atau diinput_oleh)
+      v_editor_id := COALESCE(NEW.diedit_oleh, NEW.diinput_oleh);
+      
+      -- Validasi apakah editor adalah Guru, Admin, Staff, atau Piket resmi
+      IF v_editor_id IS NOT NULL THEN
+        SELECT EXISTS (
+          SELECT 1 FROM public.guru WHERE id = v_editor_id
+          UNION
+          SELECT 1 FROM public.akun_pengguna WHERE id = v_editor_id AND LOWER(role) IN ('guru', 'admin', 'staff', 'staf', 'piket')
+        ) INTO v_is_authorized;
+      END IF;
+
+      -- Jika TIDAK diubah oleh guru/admin/staf resmi (misal ditembak langsung oleh siswa):
+      IF NOT v_is_authorized THEN
         BEGIN
           INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
           VALUES (
             NEW.siswa_nisn,
             'SUSPECT_HACKER',
             '🚨 Percobaan Manipulasi Absensi Lampau Terdeteksi',
-            'Siswa (NISN: ' || COALESCE(NEW.siswa_nisn, '-') || ') mencoba mengubah status absensi tanggal ' || OLD.tanggal || ' dari ' || OLD.status || ' menjadi ' || NEW.status || '. Aksi dinetralisir kembali.',
+            'Percobaan tanpa hak mengubah status absensi tanggal ' || OLD.tanggal || ' dari ' || OLD.status || ' menjadi ' || NEW.status || ' untuk siswa NISN ' || COALESCE(NEW.siswa_nisn, '-') || '. Aksi dinetralisir kembali.',
             NOW()
           );
         EXCEPTION WHEN OTHERS THEN
         END;
 
-        -- Kembalikan ke status asli
+        -- Kembalikan ke status asli jika tidak berwenang
         NEW.status := OLD.status;
         NEW.waktu := OLD.waktu;
+        RETURN NEW;
       END IF;
+
+      -- Jika sah diubah oleh guru/staf, pastikan diedit_oleh terisi
+      IF NEW.diedit_oleh IS NULL THEN
+        NEW.diedit_oleh := v_editor_id;
+      END IF;
+
     END IF;
   END IF;
 

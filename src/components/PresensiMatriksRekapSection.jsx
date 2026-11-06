@@ -406,6 +406,7 @@ export default function PresensiMatriksRekapSection({
           metode: currentRecord?.metode === 'manual_piket' ? 'koreksi_piket' : 'koreksi_hardfile',
           keterangan: ketStr,
           diinput_oleh: session?.id || null,
+          diedit_oleh: session?.id || null,
           updated_at: new Date().toISOString()
         }
 

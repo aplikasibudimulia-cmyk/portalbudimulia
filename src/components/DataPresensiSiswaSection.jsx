@@ -631,6 +631,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         metode: 'manual',
         tipe,
         diinput_oleh: session.id,
+        diedit_oleh: session.id,
         updated_at: new Date().toISOString()
       }
       const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn,tipe' })
@@ -683,6 +684,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         metode: 'manual',
         tipe,
         diinput_oleh: session.id,
+        diedit_oleh: session.id,
         updated_at: new Date().toISOString()
       }
       const { error } = await supabase.from('presensi_harian').upsert([record], { onConflict: 'tanggal,siswa_nisn,tipe' })
@@ -737,6 +739,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
           metode: 'manual',
           tipe,
           diinput_oleh: session.id,
+        diedit_oleh: session.id,
           updated_at: new Date().toISOString()
         })
       }
@@ -1073,6 +1076,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         metode: 'manual_piket',
         tipe: 'masuk',
         diinput_oleh: session?.id,
+        diedit_oleh: session?.id,
         keterangan: 'Presensi Susulan (Audit Presensi Bolong)',
         updated_at: new Date().toISOString()
       }
@@ -1132,6 +1136,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         metode: 'manual_piket',
         tipe: 'masuk',
         diinput_oleh: session?.id,
+        diedit_oleh: session?.id,
         keterangan: 'Presensi Susulan Massal (Audit Presensi Bolong)',
         updated_at: new Date().toISOString()
       }))
@@ -1415,6 +1420,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
         metode: 'laporan_kendala',
         keterangan: `Hadir divalidasi laporan kendala presensi (${kendalaItem?.deskripsi || '-'})`,
         diinput_oleh: session.id,
+        diedit_oleh: session.id,
         tipe: activeTipe,
         updated_at: nowIso
       }], { onConflict: 'tanggal,siswa_nisn,tipe' })
@@ -1536,6 +1542,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
           metode: 'laporan_kendala',
           keterangan: `Hadir divalidasi laporan kendala presensi`,
           diinput_oleh: session.id,
+        diedit_oleh: session.id,
           tipe: activeTipe,
           updated_at: nowIso
         }
@@ -1609,6 +1616,7 @@ export default function DataPresensiSiswaSection({ session, activeTa, isFullScre
           metode: 'manual_piket',
           keterangan: `Hadir (Sanksi kelalaian presensi mandiri: -${poinNum} poin)`,
           diinput_oleh: session.id,
+        diedit_oleh: session.id,
           tipe: activeTipe,
           updated_at: nowIso
         }
