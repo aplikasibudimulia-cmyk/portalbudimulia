@@ -150,20 +150,14 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
   const [resubmitSaving, setResubmitSaving]       = useState(false)
 
   // ─── Keranjang Pengajuan Poin (Multi-Item Checkout ala Shopee/Tokopedia) ───
-  const [cart, setCart]                           = useState({}) // { [catalogId]: { item, qty } }
+  const [cart, setCart]                           = useState({}) // { [catalogId]: { item, qty, tanggal_kegiatan, alasan, link, files, fileError } }
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
-  const [checkoutTanggalKegiatan, setCheckoutTanggalKegiatan] = useState(new Date().toISOString().slice(0, 10))
-  const [checkoutAlasan, setCheckoutAlasan]       = useState('')
-  const [checkoutLink, setCheckoutLink]           = useState('')
-  const [checkoutFiles, setCheckoutFiles]         = useState([])
-  const [checkoutFileError, setCheckoutFileError] = useState('')
   const [checkoutSaving, setCheckoutSaving]       = useState(false)
   const [checkoutError, setCheckoutError]         = useState('')
-  const checkoutFileInputRef                      = useRef()
 
   const cartList = Object.values(cart)
-  const totalCartQty = cartList.reduce((sum, c) => sum + c.qty, 0)
-  const totalCartPoints = cartList.reduce((sum, c) => sum + (c.qty * (c.item.poin || 0)), 0)
+  const totalCartQty = cartList.reduce((sum, c) => sum + (c.qty || 1), 0)
+  const totalCartPoints = cartList.reduce((sum, c) => sum + ((c.qty || 1) * (c.item.poin || 0)), 0)
 
   const fileInputRef = useRef()
 
@@ -379,7 +373,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
     }
   }
 
-  // ─── Keranjang Pengajuan Handlers (Ala Shopee / Tokopedia) ───
+  // ─── Keranjang Pengajuan Handlers (Ala Shopee / Tokopedia - Rinci Per Butir) ───
   const handleToggleCart = (item) => {
     if (banInfo) return
     setCart(prev => {
@@ -387,7 +381,15 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
       if (next[item.id]) {
         delete next[item.id]
       } else {
-        next[item.id] = { item, qty: 1 }
+        next[item.id] = {
+          item,
+          qty: 1,
+          tanggal_kegiatan: new Date().toISOString().slice(0, 10),
+          alasan: '',
+          link: '',
+          files: [],
+          fileError: ''
+        }
       }
       return next
     })
@@ -397,7 +399,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
     setCart(prev => {
       const current = prev[itemId]
       if (!current) return prev
-      const newQty = current.qty + delta
+      const newQty = (current.qty || 1) + delta
       const next = { ...prev }
       if (newQty <= 0) {
         delete next[itemId]
@@ -408,49 +410,73 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
     })
   }
 
-  const handleCheckoutFileChange = async e => {
+  const handleUpdateCartItemField = (itemId, field, value) => {
+    setCart(prev => {
+      const current = prev[itemId]
+      if (!current) return prev
+      return {
+        ...prev,
+        [itemId]: { ...current, [field]: value }
+      }
+    })
+  }
+
+  const handleItemFileChange = async (itemId, e) => {
     const selected = Array.from(e.target.files || [])
-    setCheckoutFileError('')
-    if (checkoutFiles.length + selected.length > MAX_FILES) {
-      setCheckoutFileError(`Maksimal ${MAX_FILES} file.`)
+    const current = cart[itemId]
+    if (!current) return
+
+    const currentFiles = current.files || []
+    if (currentFiles.length + selected.length > MAX_FILES) {
+      handleUpdateCartItemField(itemId, 'fileError', `Maksimal ${MAX_FILES} file per butir poin.`)
       return
     }
+
+    handleUpdateCartItemField(itemId, 'fileError', '')
     const newFiles = []
     for (const f of selected) {
       if (!ALLOWED_TYPES.includes(f.type)) {
-        setCheckoutFileError(`Format tidak didukung: ${f.name}`)
+        handleUpdateCartItemField(itemId, 'fileError', `Format tidak didukung: ${f.name}`)
         continue
       }
       let processed = f.type.startsWith('image/') ? await compressImage(f, MAX_FILE_SIZE) : f
       if (processed.size > MAX_FILE_SIZE) {
-        setCheckoutFileError(`File "${f.name}" terlalu besar (maks 1 MB).`)
+        handleUpdateCartItemField(itemId, 'fileError', `File "${f.name}" terlalu besar (maks 1 MB).`)
         continue
       }
       let preview = null
       if (f.type.startsWith('image/')) preview = URL.createObjectURL(processed)
       newFiles.push({ file: processed, name: f.name, type: f.type, size: processed.size, preview })
     }
-    setCheckoutFiles(prev => [...prev, ...newFiles])
+
+    handleUpdateCartItemField(itemId, 'files', [...currentFiles, ...newFiles])
   }
 
-  const removeCheckoutFile = i => {
-    setCheckoutFiles(prev => {
-      const removed = prev[i]
-      if (removed?.preview) URL.revokeObjectURL(removed.preview)
-      return prev.filter((_, idx) => idx !== i)
-    })
+  const handleItemRemoveFile = (itemId, fileIndex) => {
+    const current = cart[itemId]
+    if (!current) return
+    const currentFiles = current.files || []
+    const removed = currentFiles[fileIndex]
+    if (removed?.preview) URL.revokeObjectURL(removed.preview)
+    const updated = currentFiles.filter((_, idx) => idx !== fileIndex)
+    handleUpdateCartItemField(itemId, 'files', updated)
   }
 
   const handleCheckoutSubmit = async e => {
     e.preventDefault()
     if (!activeTa?.id || totalCartQty === 0) return
-    if (!checkoutTanggalKegiatan) {
-      setCheckoutError('Tanggal pelaksanaan wajib diisi.')
-      return
-    }
-    if (checkoutAlasan.trim().length < 20) {
-      setCheckoutError('Alasan / rincian pengajuan minimal 20 karakter.')
-      return
+
+    // Validasi setiap item di keranjang harus memiliki tanggal & alasan >= 20 karakter
+    for (let i = 0; i < cartList.length; i++) {
+      const c = cartList[i]
+      if (!c.tanggal_kegiatan) {
+        setCheckoutError(`Tanggal pelaksanaan pada butir #${i + 1} ("${c.item.jenis}") wajib diisi.`)
+        return
+      }
+      if ((c.alasan || '').trim().length < 20) {
+        setCheckoutError(`Rincian penjelasan pada butir #${i + 1} ("${c.item.jenis}") minimal 20 karakter.`)
+        return
+      }
     }
 
     setCheckoutError('')
@@ -458,36 +484,40 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
 
     try {
       const batchSessionId = crypto.randomUUID()
-      const buktiFiles = []
+      const rowsToInsert = []
 
-      // Upload file bukti jika ada
-      for (const f of checkoutFiles) {
-        const ext = f.name.split('.').pop()
-        const path = `pengajuan-poin/${nisn}/${batchSessionId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-        const { error: uploadErr } = await supabase.storage
-          .from('bukti-pengajuan')
-          .upload(path, f.file, { contentType: f.type })
-        if (uploadErr) throw new Error('Gagal upload file bukti: ' + uploadErr.message)
-        buktiFiles.push({ path, name: f.name, type: f.type, size: f.size })
-      }
-
-      // Link pendukung
-      if (checkoutLink.trim()) {
-        let formattedUrl = checkoutLink.trim()
-        if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = 'https://' + formattedUrl
-        buktiFiles.push({ type: 'link', url: formattedUrl, name: 'Link Pendukung (YouTube/Drive/dll)' })
-      }
-
-      // Batch insert pengajuan ke tabel pengajuan_poin_positif
-      const rowsToInsert = cartList.map(c => {
-        const itemQty = c.qty
+      // Upload file bukti spesifik per butir dan siapkan row pengajuan
+      for (let i = 0; i < cartList.length; i++) {
+        const c = cartList[i]
+        const itemQty = c.qty || 1
         const totalPoinItem = c.item.poin * itemQty
         const jenisLabel = itemQty > 1 ? `${c.item.jenis} (${itemQty}x)` : c.item.jenis
-        const keteranganAlasan = itemQty > 1
-          ? `${checkoutAlasan.trim()}\n[Kuantitas: ${itemQty}x (${itemQty} × ${c.item.poin} = +${totalPoinItem} Poin)]`
-          : checkoutAlasan.trim()
+        const buktiFiles = []
 
-        return {
+        // Upload bukti files untuk item ini
+        for (const f of (c.files || [])) {
+          const ext = f.name.split('.').pop()
+          const safeKode = (c.item.kode || `item_${i}`).replace(/[^a-zA-Z0-9_-]/g, '_')
+          const path = `pengajuan-poin/${nisn}/${batchSessionId}/${safeKode}_${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+          const { error: uploadErr } = await supabase.storage
+            .from('bukti-pengajuan')
+            .upload(path, f.file, { contentType: f.type })
+          if (uploadErr) throw new Error(`Gagal upload bukti untuk "${c.item.jenis}": ` + uploadErr.message)
+          buktiFiles.push({ path, name: f.name, type: f.type, size: f.size })
+        }
+
+        // Link pendukung spesifik untuk item ini
+        if ((c.link || '').trim()) {
+          let formattedUrl = c.link.trim()
+          if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = 'https://' + formattedUrl
+          buktiFiles.push({ type: 'link', url: formattedUrl, name: 'Link Pendukung' })
+        }
+
+        const keteranganAlasan = itemQty > 1
+          ? `${c.alasan.trim()}\n[Kuantitas: ${itemQty}x (${itemQty} × ${c.item.poin} = +${totalPoinItem} Poin)]`
+          : c.alasan.trim()
+
+        rowsToInsert.push({
           id: crypto.randomUUID(),
           nisn,
           nama_siswa: studentData?.nama_lengkap,
@@ -499,12 +529,12 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
           jenis: jenisLabel,
           kategori: c.item.kategori,
           poin_diajukan: totalPoinItem,
-          tanggal_kegiatan: checkoutTanggalKegiatan,
+          tanggal_kegiatan: c.tanggal_kegiatan,
           alasan: keteranganAlasan,
           bukti_files: buktiFiles,
           status: 'pending'
-        }
-      })
+        })
+      }
 
       const { error: insErr } = await supabase.from('pengajuan_poin_positif').insert(rowsToInsert)
       if (insErr) throw insErr
@@ -520,12 +550,9 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
         }
       )
 
-      // Bersihkan keranjang & form
+      // Bersihkan keranjang & modal
       setCart({})
       setCheckoutModalOpen(false)
-      setCheckoutAlasan('')
-      setCheckoutLink('')
-      setCheckoutFiles([])
       setTimeout(() => setSuccessMsg(''), 7000)
 
       setActiveTab('riwayat')
@@ -1322,10 +1349,10 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
         document.body
       )}
 
-      {/* ─── MODAL CHECKOUT MULTI-PENGAJUAN (Ala Keranjang Belanja Shopee/Tokopedia) ─── */}
+      {/* ─── MODAL CHECKOUT MULTI-PENGAJUAN (Rinci Per Butir Poin ala Shopee/Tokopedia) ─── */}
       {checkoutModalOpen && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
-          <div className="bg-white w-full max-w-xl max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white w-full max-w-2xl sm:max-w-3xl max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white flex items-center justify-between shrink-0 shadow-xs">
               <div className="flex items-center gap-3">
@@ -1335,7 +1362,7 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
                 <div>
                   <h3 className="font-black text-sm sm:text-base leading-tight">Checkout Pengajuan Poin</h3>
                   <p className="text-[11px] text-emerald-100 font-medium">
-                    {cartList.length} jenis poin ({totalCartQty} butir) • Total <strong>+{totalCartPoints} Poin</strong>
+                    Lengkapi tanggal, rincian penjelasan, dan bukti untuk setiap butir ({cartList.length} jenis • Total <strong>+{totalCartPoints} Poin</strong>)
                   </p>
                 </div>
               </div>
@@ -1350,220 +1377,245 @@ export default function SiswaPengajuanPoinSection({ studentData, activeTa, initi
             </div>
 
             {/* Modal Body */}
-            <form onSubmit={handleCheckoutSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 bg-slate-50/50">
+            <form onSubmit={handleCheckoutSubmit} className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1 bg-slate-50/60">
               {checkoutError && (
-                <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2">
-                  <span>❌</span>
-                  <span>{checkoutError}</span>
+                <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2 shadow-2xs">
+                  <span className="text-base shrink-0">❌</span>
+                  <span className="leading-relaxed">{checkoutError}</span>
                 </div>
               )}
 
-              {/* Rincian Item Keranjang */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-black text-slate-700 uppercase tracking-wider">
-                    Daftar Poin yang Diajukan
-                  </label>
-                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                    Total: +{totalCartPoints} Poin
-                  </span>
-                </div>
+              {/* Rincian Setiap Pengajuan (Card Per Butir) */}
+              <div className="space-y-4">
+                {cartList.map((c, idx) => {
+                  const itemFiles = c.files || []
+                  const itemQty = c.qty || 1
+                  const subtotalPoin = c.item.poin * itemQty
+                  const inputId = `file-input-${c.item.id}`
 
-                <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 shadow-2xs max-h-48 overflow-y-auto">
-                  {cartList.map(c => (
-                    <div key={c.item.id} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded">
-                            {c.item.display_no || c.item.kode}
+                  return (
+                    <div
+                      key={c.item.id}
+                      className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden transition-all hover:border-emerald-300"
+                    >
+                      {/* Card Header */}
+                      <div className="p-3.5 sm:p-4 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-lg bg-emerald-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                            {idx + 1}
                           </span>
-                          <span className="font-bold text-slate-800 text-xs truncate">
-                            {c.item.jenis}
-                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-md shrink-0">
+                                {c.item.display_no || c.item.kode}
+                              </span>
+                              <span className="font-black text-slate-800 text-xs sm:text-sm truncate">
+                                {c.item.jenis}
+                              </span>
+                            </div>
+                            <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5">
+                              {c.item.kategori}
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          +{c.item.poin} poin per butir
-                        </p>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Stepper Kuantitas */}
+                          <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateCartQty(c.item.id, -1)}
+                              className="w-5 h-5 flex items-center justify-center rounded bg-slate-50 text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
+                              title="Kurangi kuantitas"
+                            >
+                              -
+                            </button>
+                            <span className="px-2 text-xs font-black text-slate-800 min-w-5 text-center">
+                              {itemQty}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateCartQty(c.item.id, 1)}
+                              className="w-5 h-5 flex items-center justify-center rounded bg-slate-50 text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
+                              title="Tambah kuantitas"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-xl shadow-2xs">
+                            +{subtotalPoin} Poin
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCart(c.item)}
+                            className="w-7 h-7 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center"
+                            title="Hapus butir ini dari pengajuan"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Stepper Qty */}
-                        <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateCartQty(c.item.id, -1)}
-                            className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="px-2 text-xs font-black text-slate-800 min-w-5 text-center">
-                            {c.qty}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateCartQty(c.item.id, 1)}
-                            className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-emerald-50 font-black text-xs transition-colors cursor-pointer"
-                          >
-                            +
-                          </button>
+                      {/* Card Body (Form Rinci Khusus untuk butir ini) */}
+                      <div className="p-4 sm:p-5 space-y-4">
+                        {/* 1. Tanggal Pelaksanaan */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Tanggal Pelaksanaan / Kegiatan <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={c.tanggal_kegiatan || ''}
+                            onChange={e => handleUpdateCartItemField(c.item.id, 'tanggal_kegiatan', e.target.value)}
+                            max={new Date().toISOString().slice(0, 10)}
+                            required
+                            className="w-full sm:w-64 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none shadow-2xs"
+                          />
                         </div>
 
-                        <span className="text-xs font-black text-emerald-700 min-w-14 text-right">
-                          +{c.qty * c.item.poin} P
-                        </span>
+                        {/* 2. Rincian / Alasan Penjelasan */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Rincian / Keterangan Penjelasan <span className="text-red-500">*</span>
+                          </label>
+                          <textarea
+                            value={c.alasan || ''}
+                            onChange={e => handleUpdateCartItemField(c.item.id, 'alasan', e.target.value)}
+                            required
+                            rows={3}
+                            placeholder={`Tuliskan rincian lengkap untuk "${c.item.jenis}" (misal: nama mapel, nomor SK, kronologi, dll)...`}
+                            className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none resize-none bg-slate-50/50"
+                          />
+                          <div className="flex justify-between items-center mt-1">
+                            <p className={`text-[10px] ${(c.alasan || '').trim().length < 20 ? 'text-amber-500 font-bold' : 'text-emerald-600 font-medium'}`}>
+                              {(c.alasan || '').trim().length < 20
+                                ? `${(c.alasan || '').trim().length}/20 karakter minimum`
+                                : `✓ ${(c.alasan || '').trim().length} karakter`}
+                            </p>
+                            <span className="text-[10px] text-slate-400">Jelaskan kegiatan secara detail</span>
+                          </div>
+                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleToggleCart(c.item)}
-                          className="w-6 h-6 text-slate-400 hover:text-rose-600 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center"
-                          title="Hapus dari keranjang"
-                        >
-                          ✕
-                        </button>
+                        {/* 3. Foto / Dokumen Bukti Khusus Butir Ini */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                            Lampiran Foto / Dokumen Bukti <span className="text-slate-400 font-normal">(opsional, maks {MAX_FILES} file × 1 MB)</span>
+                          </label>
+
+                          {itemFiles.length > 0 && (
+                            <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 mb-2.5">
+                              {itemFiles.map((f, fileIdx) => (
+                                <div key={fileIdx} className="relative group">
+                                  {f.preview ? (
+                                    <img
+                                      src={f.preview}
+                                      alt={f.name}
+                                      className="w-full aspect-square object-cover rounded-xl border border-slate-200 cursor-pointer shadow-2xs"
+                                      onClick={() => setPreviewModal({ url: f.preview, type: f.type || 'image/jpeg', name: f.name })}
+                                    />
+                                  ) : (
+                                    <div className="w-full aspect-square rounded-xl border border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-1 p-1 shadow-2xs">
+                                      <span className="text-xl">📄</span>
+                                      <span className="text-[9px] text-slate-500 truncate w-full text-center px-1 font-mono">{f.name}</span>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleItemRemoveFile(c.item.id, fileIdx)}
+                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-md hover:bg-red-600 cursor-pointer"
+                                    title="Hapus file"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {itemFiles.length < MAX_FILES && (
+                            <div>
+                              <input
+                                id={inputId}
+                                type="file"
+                                multiple
+                                accept={ALLOWED_TYPES.join(',')}
+                                onChange={e => handleItemFileChange(c.item.id, e)}
+                                className="hidden"
+                              />
+                              <label
+                                htmlFor={inputId}
+                                className="w-full py-2 px-3 border-2 border-dashed border-slate-200 hover:border-emerald-400 rounded-xl text-slate-500 hover:text-emerald-700 flex items-center justify-center gap-2 transition-colors cursor-pointer bg-slate-50/50"
+                              >
+                                <span className="text-base">📸</span>
+                                <span className="text-xs font-bold">
+                                  Tambah bukti untuk butir ini ({itemFiles.length}/{MAX_FILES})
+                                </span>
+                              </label>
+                            </div>
+                          )}
+
+                          {c.fileError && (
+                            <p className="text-[10px] text-red-500 mt-1">{c.fileError}</p>
+                          )}
+                        </div>
+
+                        {/* 4. Link Pendukung Khusus Butir Ini */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Link / URL Pendukung <span className="text-slate-400 font-normal">(opsional)</span>
+                          </label>
+                          <input
+                            type="url"
+                            value={c.link || ''}
+                            onChange={e => handleUpdateCartItemField(c.item.id, 'link', e.target.value)}
+                            placeholder="https://drive.google.com/... atau https://youtube.com/..."
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-slate-50/30"
+                          />
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tanggal Pelaksanaan Kegiatan */}
-              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Tanggal Pelaksanaan / Kegiatan <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={checkoutTanggalKegiatan}
-                  onChange={e => setCheckoutTanggalKegiatan(e.target.value)}
-                  max={new Date().toISOString().slice(0, 10)}
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Pilih tanggal kapan kamu melaksanakan kegiatan / ujian ini.</p>
-              </div>
-
-              {/* Alasan / Rincian Pengajuan */}
-              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Jelaskan rincian pengajuan ini <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  value={checkoutAlasan}
-                  onChange={e => setCheckoutAlasan(e.target.value)}
-                  required
-                  rows={4}
-                  placeholder="Contoh: Saya mendapatkan nilai 100 pada asesmen harian untuk 3 mapel yaitu Matematika (100), IPA (100), dan B. Inggris (100). Bukti lembar ujian terlampir."
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none resize-none bg-slate-50/50"
-                />
-                <div className="flex justify-between items-center mt-1">
-                  <p className={`text-[10px] ${checkoutAlasan.trim().length < 20 ? 'text-amber-500 font-bold' : 'text-emerald-600 font-medium'}`}>
-                    {checkoutAlasan.trim().length < 20 ? `${checkoutAlasan.trim().length}/20 karakter minimum` : `✓ ${checkoutAlasan.trim().length} karakter`}
-                  </p>
-                  <span className="text-[10px] text-slate-400">Tuliskan nama mapel / rincian prestasi</span>
-                </div>
-              </div>
-
-              {/* Lampirkan Foto / Dokumen Bukti */}
-              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Lampirkan foto / dokumen bukti <span className="text-slate-400 font-normal">(opsional, maks {MAX_FILES} file × 1 MB)</span>
-                </label>
-
-                {checkoutFiles.length > 0 && (
-                  <div className="grid grid-cols-4 gap-2 mb-3">
-                    {checkoutFiles.map((f, i) => (
-                      <div key={i} className="relative group">
-                        {f.preview ? (
-                          <img
-                            src={f.preview}
-                            alt={f.name}
-                            className="w-full aspect-square object-cover rounded-xl border border-slate-200 cursor-pointer"
-                            onClick={() => setPreviewModal({ url: f.preview, type: f.type || 'image/jpeg', name: f.name })}
-                          />
-                        ) : (
-                          <div className="w-full aspect-square rounded-xl border border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-1 p-1">
-                            <span className="text-xl">📄</span>
-                            <span className="text-[9px] text-slate-500 truncate w-full text-center px-1">{f.name}</span>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => removeCheckoutFile(i)}
-                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-md hover:bg-red-600 cursor-pointer"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {checkoutFiles.length < MAX_FILES && (
-                  <div>
-                    <input
-                      ref={checkoutFileInputRef}
-                      type="file"
-                      multiple
-                      accept={ALLOWED_TYPES.join(',')}
-                      onChange={handleCheckoutFileChange}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => checkoutFileInputRef.current?.click()}
-                      className="w-full py-2.5 border-2 border-dashed border-slate-200 hover:border-emerald-400 rounded-xl text-slate-500 hover:text-emerald-700 flex items-center justify-center gap-2 transition-colors cursor-pointer bg-slate-50/50"
-                    >
-                      <span className="text-base">📸</span>
-                      <span className="text-xs font-bold">Tambah foto / dokumen bukti ({checkoutFiles.length}/{MAX_FILES})</span>
-                    </button>
-                  </div>
-                )}
-
-                {checkoutFileError && <p className="text-[10px] text-red-500 mt-1">{checkoutFileError}</p>}
-              </div>
-
-              {/* Link Pendukung */}
-              <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Link / URL Pendukung <span className="text-slate-400 font-normal">(opsional)</span>
-                </label>
-                <input
-                  type="url"
-                  value={checkoutLink}
-                  onChange={e => setCheckoutLink(e.target.value)}
-                  placeholder="https://drive.google.com/... atau https://youtube.com/..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
+                  )
+                })}
               </div>
 
               {/* Footer Modal Actions */}
-              <div className="pt-2 flex items-center justify-between gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setCheckoutModalOpen(false)}
-                  disabled={checkoutSaving}
-                  className="px-4 py-2.5 border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Batal
-                </button>
+              <div className="pt-3 sticky bottom-0 bg-slate-50/95 backdrop-blur-xs border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                <div className="text-xs font-bold text-slate-600 text-center sm:text-left">
+                  <span>Total Pengajuan: </span>
+                  <span className="text-emerald-700 font-black text-sm">+{totalCartPoints} Poin</span>
+                  <span className="text-slate-400 text-[11px] font-normal ml-1">({cartList.length} jenis • {totalCartQty} item)</span>
+                </div>
 
-                <button
-                  type="submit"
-                  disabled={checkoutSaving || totalCartQty === 0}
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {checkoutSaving ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>Mengirim {totalCartQty} Pengajuan...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Kirim Semua Pengajuan (+{totalCartPoints} Poin)</span>
-                      <span>🚀</span>
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutModalOpen(false)}
+                    disabled={checkoutSaving}
+                    className="flex-1 sm:flex-none px-4 py-2.5 border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    Kembali
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={checkoutSaving || totalCartQty === 0}
+                    className="flex-2 sm:flex-none px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {checkoutSaving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Mengirim {cartList.length} Pengajuan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Kirim Semua Pengajuan (+{totalCartPoints} Poin)</span>
+                        <span>🚀</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
