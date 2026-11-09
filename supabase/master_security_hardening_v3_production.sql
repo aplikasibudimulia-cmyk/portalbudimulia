@@ -491,21 +491,22 @@ DROP POLICY IF EXISTS "Enable read access for all users" ON public.nilai_siswa;
 DROP POLICY IF EXISTS "allow_read_nilai_siswa" ON public.nilai_siswa;
 
 CREATE POLICY "allow_read_nilai_siswa" ON public.nilai_siswa FOR SELECT TO anon, authenticated USING (true);
--- Cabut write direct: Input nilai wajib lewat RPC fn_simpan_nilai_guru
-REVOKE INSERT, UPDATE, DELETE ON public.nilai_siswa FROM anon;
+GRANT ALL ON public.nilai_siswa TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "allow_all_nilai_siswa" ON public.nilai_siswa;
+CREATE POLICY "allow_all_nilai_siswa" ON public.nilai_siswa FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.nilai_komponen ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public.nilai_komponen TO anon, authenticated, service_role;
 DROP POLICY IF EXISTS "allow_all_nilai_komponen" ON public.nilai_komponen;
 DROP POLICY IF EXISTS "allow_read_nilai_komponen" ON public.nilai_komponen;
-CREATE POLICY "allow_read_nilai_komponen" ON public.nilai_komponen FOR SELECT TO anon, authenticated USING (true);
-REVOKE DELETE ON public.nilai_komponen FROM anon;
+CREATE POLICY "allow_all_nilai_komponen" ON public.nilai_komponen FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.nilai_akhir_config ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public.nilai_akhir_config TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "allow_all_nilai_akhir_config" ON public.nilai_akhir_config;
 DROP POLICY IF EXISTS "allow_read_nilai_akhir_config" ON public.nilai_akhir_config;
-CREATE POLICY "allow_read_nilai_akhir_config" ON public.nilai_akhir_config FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "allow_write_nilai_akhir_config" ON public.nilai_akhir_config;
-CREATE POLICY "allow_write_nilai_akhir_config" ON public.nilai_akhir_config FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-REVOKE DELETE ON public.nilai_akhir_config FROM anon;
+CREATE POLICY "allow_all_nilai_akhir_config" ON public.nilai_akhir_config FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 
 -- ==============================================================================
