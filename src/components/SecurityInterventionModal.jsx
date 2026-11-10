@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import {
   getSecuritySessionId,
+  getStoredDeviceIdentity,
   submitIntruderReply,
   captureSilentSelfieSnapshot,
   updateAdminAccessPhoto
@@ -15,8 +17,15 @@ export default function SecurityInterventionModal() {
   const [submitted, setSubmitted] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [isScreenLocked, setIsScreenLocked] = useState(false)
+  const [isAdminPreview, setIsAdminPreview] = useState(false)
   const [forceBiometricOpen, setForceBiometricOpen] = useState(false)
   const lastHandledTimestampRef = useRef(null)
+
+  // Jangan kunci layar Admin sendiri saat sedang membuka dashboard /admin (kecuali mode Pratinjau Simulasi)
+  const isInsideAdminDashboard = () => {
+    const p = window.location.pathname || ''
+    return p === '/admin' || p.startsWith('/admin/')
+  }
 
   useEffect(() => {
     const sId = getSecuritySessionId()
@@ -24,39 +33,74 @@ export default function SecurityInterventionModal() {
 
     const storageKey = `ebm_active_intervention_${sId}`
 
-    // 1. Pulihkan status intervensi/kunci layar dari LocalStorage (agar tidak hilang saat di-refresh pelaku)
-    try {
-      const savedRaw = localStorage.getItem(storageKey)
-      if (savedRaw) {
-        const saved = JSON.parse(savedRaw)
-        if (saved && (saved.admin_message || saved.status === 'blocked')) {
-          setActiveAlert(saved)
-          setIsScreenLocked(saved.status === 'blocked')
-          setSubmitted(Boolean(saved.hacker_reply))
-          lastHandledTimestampRef.current = saved.timestamp || null
+    // 1. Listener Pratinjau Simulasi untuk Admin ("Lihat Simulasi Tampilan di Layar Pelaku")
+    const handleAdminPreview = (e) => {
+      const detail = e?.detail
+      if (!detail) return
+      setActiveAlert({
+        id: detail.id || null,
+        session_id: detail.session_id || sId,
+        admin_message: detail.admin_message || 'PERINGATAN KEAMANAN: Aktivitas mencurigakan terdeteksi dari perangkat Anda.',
+        city: detail.city || 'Jakarta',
+        region: detail.region || 'Indonesia',
+        isp: detail.isp || 'Jaringan Internet',
+        ip_address: detail.ip_address || 'Tercatat di Server',
+        device: detail.device || 'Smartphone / PC',
+        status: detail.status || 'blocked',
+        hacker_reply: detail.hacker_reply || null,
+        timestamp: new Date().toISOString()
+      })
+      setIsScreenLocked(detail.status === 'blocked')
+      setSubmitted(Boolean(detail.hacker_reply))
+      setDismissed(false)
+      setIsAdminPreview(true)
+    }
+    window.addEventListener('ebm-preview-intervention', handleAdminPreview)
+
+    // 2. Pulihkan status intervensi/kunci layar dari LocalStorage (agar tidak hilang saat di-refresh pelaku)
+    if (!isInsideAdminDashboard()) {
+      try {
+        const savedRaw = localStorage.getItem(storageKey)
+        if (savedRaw) {
+          const saved = JSON.parse(savedRaw)
+          if (saved && (saved.admin_message || saved.status === 'blocked')) {
+            setActiveAlert(saved)
+            setIsScreenLocked(saved.status === 'blocked')
+            setSubmitted(Boolean(saved.hacker_reply))
+            lastHandledTimestampRef.current = saved.timestamp || null
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     const applyPayload = async (payload) => {
       if (!payload) return
+      // Jangan mengunci layar Admin sendiri saat Admin sedang bekerja di /admin
+      if (isInsideAdminDashboard()) return
+
       const targetSession = payload.session_id || payload.sessionId
-      if (targetSession && targetSession !== sId) return
+      const localIdentity = getStoredDeviceIdentity()
+      const isSameDeviceIdentity =
+        Boolean(localIdentity && payload.device_identity && localIdentity === payload.device_identity)
+
+      if (targetSession && targetSession !== sId && !isSameDeviceIdentity) return
 
       // Aksi buka kunci layar dari Admin
-      if (payload.action === 'unlock_screen' || payload.status === 'unlocked') {
+      if (payload.action === 'unlock_screen' || payload.status === 'unlocked' || payload.status === 'active') {
         localStorage.removeItem(storageKey)
         setIsScreenLocked(false)
         setActiveAlert(null)
         setDismissed(true)
+        setIsAdminPreview(false)
         return
       }
 
       // Aksi paksa jepret kamera depan dari Admin
       if (payload.action === 'force_camera') {
         const snap = await captureSilentSelfieSnapshot(true)
-        if (snap && payload.id) {
-          await updateAdminAccessPhoto(payload.id, snap)
+        if (snap && (payload.id || payload.logId)) {
+          const targetLogId = payload.id || payload.logId
+          await updateAdminAccessPhoto(targetLogId, snap)
           try {
             const ch = supabase.channel('ebm-security-command')
             ch.subscribe((st) => {
@@ -64,7 +108,7 @@ export default function SecurityInterventionModal() {
                 ch.send({
                   type: 'broadcast',
                   event: 'photo_captured',
-                  payload: { logId: payload.id, sessionId: sId, photo_url: snap }
+                  payload: { logId: targetLogId, sessionId: sId, photo_url: snap }
                 })
               }
             })
@@ -74,7 +118,7 @@ export default function SecurityInterventionModal() {
           setActiveAlert(prev => prev || payload)
           setForceBiometricOpen(true)
         }
-        if (!payload.admin_message && payload.status !== 'blocked') return
+        if (!payload.admin_message && payload.status !== 'blocked' && payload.action !== 'lock_screen') return
       }
 
       const merged = {
@@ -99,10 +143,12 @@ export default function SecurityInterventionModal() {
       setIsScreenLocked(merged.status === 'blocked')
       setSubmitted(Boolean(merged.hacker_reply))
       setDismissed(false)
+      setIsAdminPreview(false)
     }
 
-    // 2. Cek intervensi via activity_log bridge (100% berhasil untuk anon maupun authenticated)
+    // 3. Cek intervensi via activity_log bridge (100% berhasil untuk anon maupun authenticated)
     const checkInterventionBridge = async () => {
+      if (isInsideAdminDashboard()) return
       try {
         const { data } = await supabase
           .from('activity_log')
@@ -127,16 +173,15 @@ export default function SecurityInterventionModal() {
     checkInterventionBridge()
     const pollInterval = setInterval(checkInterventionBridge, 3500)
 
-    // 3. Realtime Broadcast Listener (< 100ms instan saat Admin klik Kirim Pesan / Kunci Layar / Jepret Kamera)
+    // 4. Realtime Broadcast Listener (< 100ms instan saat Admin klik Kirim Pesan / Kunci Layar / Jepret Kamera)
     const bcChannel = supabase.channel('ebm-security-command')
       .on('broadcast', { event: 'admin_intervention' }, ({ payload }) => {
-        if (payload && (payload.sessionId === sId || payload.session_id === sId)) {
-          applyPayload(payload)
-        }
+        applyPayload(payload)
       })
       .subscribe()
 
     return () => {
+      window.removeEventListener('ebm-preview-intervention', handleAdminPreview)
       clearInterval(pollInterval)
       supabase.removeChannel(bcChannel)
     }
@@ -145,6 +190,12 @@ export default function SecurityInterventionModal() {
   const handleSendReply = async (e) => {
     e.preventDefault()
     if (!replyText.trim()) return
+
+    if (isAdminPreview) {
+      setSubmitted(true)
+      setActiveAlert(prev => prev ? { ...prev, hacker_reply: replyText.trim() } : prev)
+      return
+    }
 
     setSubmitting(true)
     const cleanReply = replyText.trim()
@@ -176,9 +227,32 @@ export default function SecurityInterventionModal() {
         logId={activeAlert?.id}
       />
 
-      {activeAlert && (!dismissed || isScreenLocked) && (
-        <div className="fixed inset-0 z-[999999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fade-in font-sans select-none">
-          <div className={`bg-white rounded-3xl border-2 ${isScreenLocked ? 'border-red-600 shadow-[0_0_50px_rgba(220,38,38,0.5)]' : 'border-red-500 shadow-2xl'} max-w-lg w-full overflow-hidden flex flex-col relative animate-scale-up`}>
+      {activeAlert && (!dismissed || isScreenLocked) && createPortal(
+        <div className="fixed inset-0 z-[999999] bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-4 sm:p-6 animate-fade-in font-sans select-none">
+          
+          {/* Banner Khusus Saat Admin Membuka Mode Simulasi / Pratinjau */}
+          {isAdminPreview && (
+            <div className="mb-3 max-w-lg w-full bg-indigo-600 text-white px-4 py-2.5 rounded-2xl shadow-lg flex items-center justify-between gap-3 border border-indigo-400">
+              <div className="text-[11px] leading-snug">
+                <span className="font-black block uppercase tracking-wider">👁️ Mode Simulasi Layar Pelaku</span>
+                <span className="text-indigo-100">Beginilah tampilan layar HP/Browser pelaku saat Anda menekan Kunci Layar / Kirim Peringatan.</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdminPreview(false)
+                  setIsScreenLocked(false)
+                  setActiveAlert(null)
+                  setDismissed(true)
+                }}
+                className="px-3 py-1.5 bg-white text-indigo-900 hover:bg-indigo-50 rounded-xl text-[11px] font-black shrink-0 transition"
+              >
+                ✕ Tutup Simulasi
+              </button>
+            </div>
+          )}
+
+          <div className={`bg-white rounded-3xl border-2 ${isScreenLocked ? 'border-red-600 shadow-[0_0_60px_rgba(220,38,38,0.55)]' : 'border-red-500 shadow-2xl'} max-w-lg w-full overflow-hidden flex flex-col relative animate-scale-up`}>
             
             {/* Header Merah Keamanan */}
             <div className={`bg-gradient-to-r ${isScreenLocked ? 'from-red-700 via-rose-800 to-slate-900' : 'from-red-600 to-rose-700'} text-white p-5 flex items-start gap-4`}>
@@ -187,27 +261,27 @@ export default function SecurityInterventionModal() {
               </div>
               <div className="min-w-0 flex-1">
                 <span className="text-[10px] font-black tracking-widest uppercase bg-white/20 px-2.5 py-0.5 rounded-full inline-block">
-                  {isScreenLocked ? ' AKSES PERANGKAT DIKUNCI ADMIN' : 'PERINGATAN SISTEM KEAMANAN'}
+                  {isScreenLocked ? 'AKSES PERANGKAT DIKUNCI ADMIN' : 'PERINGATAN SISTEM KEAMANAN'}
                 </span>
                 <h3 className="text-base font-black tracking-wide mt-1">
                   SMP BUDI MULIA JAKARTA
                 </h3>
                 <p className="text-xs text-red-100 mt-0.5">
                   {isScreenLocked
-                    ? 'Perangkat ini telah dibekukan oleh Administrator Keamanan Sekolah'
+                    ? 'Perangkat ini telah dibekukan dari jarak jauh oleh Administrator Keamanan'
                     : 'Pemberitahuan Khusus Pemantauan Akses & Keamanan Sistem'}
                 </p>
               </div>
             </div>
 
             {/* Isi Modal */}
-            <div className="p-5 sm:p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+            <div className="p-5 sm:p-6 space-y-4 max-h-[78vh] overflow-y-auto">
               
               {isScreenLocked && (
                 <div className="bg-red-600 text-white rounded-2xl p-3.5 text-xs font-bold flex items-center gap-3 shadow-sm">
                   <span className="text-xl shrink-0">🚨</span>
                   <p className="leading-relaxed">
-                    Layar perangkat Anda saat ini <strong>DIKUNCI</strong> oleh Tim IT / Administrator. Anda tidak dapat menggunakan aplikasi sebelum memberikan klarifikasi dan kunci dibuka oleh Admin.
+                    Layar perangkat Anda saat ini <strong>DIKUNCI &amp; DIBEKUKAN</strong> oleh Tim IT / Administrator. Anda tidak dapat menutup layar ini ataupun berpindah halaman sebelum memberikan klarifikasi dan kunci dibuka oleh Admin.
                   </p>
                 </div>
               )}
@@ -294,7 +368,8 @@ export default function SecurityInterventionModal() {
 
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )

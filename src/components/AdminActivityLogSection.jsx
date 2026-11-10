@@ -187,14 +187,74 @@ export default function AdminActivityLogSection() {
 
   const fetchAccessLogs = async () => {
     try {
-      const { data, error } = await supabase
-        .from('admin_access_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(150)
+      const [
+        { data, error },
+        { data: interceptRows }
+      ] = await Promise.all([
+        supabase
+          .from('admin_access_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(150),
+        supabase
+          .from('activity_log')
+          .select('id, aktor, aksi, detail, created_at')
+          .in('aktor', ['SECURITY_INTERCEPT', 'PENYUSUP_KLARIFIKASI'])
+          .order('created_at', { ascending: false })
+          .limit(150)
+      ])
 
       if (data) {
-        setAccessLogs(data)
+        // Gabungkan status kunci layar & pesan intervensi dari jembatan activity_log (terbaru menang)
+        const latestBySession = {}
+        const latestById = {}
+        const replyBySession = {}
+
+        if (Array.isArray(interceptRows)) {
+          for (const row of interceptRows) {
+            if (row.aktor === 'SECURITY_INTERCEPT' && row.detail) {
+              try {
+                const parsed = JSON.parse(row.detail)
+                const sKey = parsed.session_id || parsed.sessionId
+                const idKey = parsed.id || parsed.logId
+                if (sKey && !latestBySession[sKey]) latestBySession[sKey] = parsed
+                if (idKey && !latestById[idKey]) latestById[idKey] = parsed
+              } catch {}
+            } else if (row.aktor === 'PENYUSUP_KLARIFIKASI' && row.aksi?.startsWith('BALASAN:')) {
+              const sKey = row.aksi.replace('BALASAN:', '').trim()
+              if (sKey && !replyBySession[sKey]) {
+                const matchQuote = row.detail?.match(/membalas intervensi Admin:\s*"([\s\S]*)"$/)
+                replyBySession[sKey] = matchQuote ? matchQuote[1] : row.detail
+              }
+            }
+          }
+        }
+
+        const merged = data.map(item => {
+          const ov = latestById[item.id] || (item.session_id ? latestBySession[item.session_id] : null)
+          const rep = item.session_id ? replyBySession[item.session_id] : null
+          let nextStatus = item.status
+          let nextMsg = item.admin_message
+          if (ov) {
+            if (ov.action === 'unlock_screen' || ov.status === 'unlocked') {
+              nextStatus = 'active'
+            } else if (ov.action === 'lock_screen' || ov.status === 'blocked') {
+              nextStatus = 'blocked'
+              if (ov.admin_message) nextMsg = ov.admin_message
+            } else if (ov.admin_message) {
+              if (nextStatus !== 'blocked') nextStatus = 'investigating'
+              nextMsg = ov.admin_message
+            }
+          }
+          return {
+            ...item,
+            status: nextStatus,
+            admin_message: nextMsg,
+            hacker_reply: item.hacker_reply || rep || null
+          }
+        })
+
+        setAccessLogs(merged)
       } else if (error) {
         console.warn('Access logs table error:', error.message)
       }
@@ -307,11 +367,12 @@ export default function AdminActivityLogSection() {
       timestamp: new Date().toISOString()
     }
 
-    // 2. Simpan ke jembatan activity_log agar bertahan saat di-refresh oleh pelaku anon
-    if (target.session_id) {
+    // 2. Simpan ke jembatan activity_log agar bertahan saat di-refresh oleh pelaku anon maupun saat tabel di-refresh Admin
+    const targetKey = target.session_id || target.id
+    if (targetKey) {
       await supabase.from('activity_log').insert({
         aktor: 'SECURITY_INTERCEPT',
-        aksi: `INTERVENSI:${target.session_id}`,
+        aksi: `INTERVENSI:${targetKey}`,
         detail: JSON.stringify(payloadObj)
       }).catch(() => {})
     }
@@ -352,17 +413,25 @@ export default function AdminActivityLogSection() {
       const actionType = lockOnSend ? 'lock_screen' : 'message'
       const statusType = lockOnSend ? 'blocked' : 'investigating'
 
+      const cleanMsg = messagePrompt.trim()
       await dispatchInterventionCommand(selectedTarget, {
-        message: messagePrompt.trim(),
+        message: cleanMsg,
         action: actionType,
         status: statusType
       })
 
+      // Update state tabel secara instan
+      setAccessLogs(prev => prev.map(item =>
+        (item.id === selectedTarget.id || (selectedTarget.session_id && item.session_id === selectedTarget.session_id))
+          ? { ...item, status: statusType, admin_message: cleanMsg }
+          : item
+      ))
+
       setAlertNotification({
         type: 'success',
         text: lockOnSend
-          ? '🔒 Layar penyusup berhasil DIKUNCI & pesan intervensi telah ditampilkan di layarnya!'
-          : '🚀 Pesan peringatan berhasil dikirim langsung ke layar penyusup!'
+          ? '🔒 Layar perangkat pelaku berhasil DIKUNCI & pesan peringatan telah ditampilkan di layarnya!'
+          : '🚀 Pesan peringatan berhasil dikirim langsung ke layar pelaku!'
       })
       setSelectedTarget(null)
       fetchAccessLogs()
@@ -494,6 +563,28 @@ export default function AdminActivityLogSection() {
     } catch (err) {
       setAlertNotification({ type: 'error', text: err.message })
     }
+  }
+
+  const handlePreviewIntruderScreen = (target, customMsg = null, customLocked = null) => {
+    if (!target) return
+    const msg = customMsg || target.admin_message || messagePrompt || `PERINGATAN KEAMANAN: Aktivitas mencurigakan dari ${target.city || 'Jakarta'} (${target.ip_address || '-'}) telah direkam server.`
+    const locked = customLocked !== null ? customLocked : (target.status === 'blocked' || lockOnSend)
+    window.dispatchEvent(
+      new CustomEvent('ebm-preview-intervention', {
+        detail: {
+          id: target.id,
+          session_id: target.session_id,
+          admin_message: msg,
+          city: target.city,
+          region: target.region,
+          isp: target.isp,
+          ip_address: target.ip_address,
+          device: target.device,
+          status: locked ? 'blocked' : 'investigating',
+          hacker_reply: target.hacker_reply || null
+        }
+      })
+    )
   }
 
   // Deduplikasi cerdas & pemfilteran daftar Honeypot
@@ -1051,6 +1142,22 @@ export default function AdminActivityLogSection() {
 
                         {/* Status Komunikasi */}
                         <td className="px-4 py-3.5 max-w-[240px]">
+                          {isLocked && (
+                            <div className="mb-1.5 bg-red-600 text-white rounded-xl px-2.5 py-1.5 text-[10px] font-black flex items-center justify-between gap-1.5 shadow-2xs">
+                              <span className="flex items-center gap-1">
+                                <span>🔒</span>
+                                <span>LAYAR DIKUNCI</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handlePreviewIntruderScreen(item, item.admin_message, true)}
+                                className="px-1.5 py-0.5 bg-white/20 hover:bg-white/30 rounded text-[9px] font-bold transition"
+                                title="Lihat simulasi tampilan layar terkunci di perangkat pelaku"
+                              >
+                                👁️ Lihat
+                              </button>
+                            </div>
+                          )}
                           {hasReply ? (
                             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-[11px] text-emerald-950 space-y-1">
                               <span className="font-black text-emerald-800 flex items-center gap-1 text-[10px]">
@@ -1073,11 +1180,11 @@ export default function AdminActivityLogSection() {
                               <p className="italic text-[10.5px] break-words leading-snug">"{item.admin_message}"</p>
                               <span className="text-[9.5px] text-blue-600 font-semibold block">Menunggu klarifikasi pelaku...</span>
                             </div>
-                          ) : (
+                          ) : !isLocked ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                               Belum Diintervensi
                             </span>
-                          )}
+                          ) : null}
                         </td>
 
                         {/* Tombol Aksi Lengkap */}
@@ -1509,20 +1616,35 @@ export default function AdminActivityLogSection() {
               </div>
 
               {/* Opsi Kunci Layar Sekaligus */}
-              <label className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer select-none transition ${
+              <div className={`p-3.5 rounded-2xl border transition space-y-2.5 ${
                 lockOnSend ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
               }`}>
-                <input
-                  type="checkbox"
-                  checked={lockOnSend}
-                  onChange={(e) => setLockOnSend(e.target.checked)}
-                  className="rounded text-red-600 focus:ring-red-500 w-4 h-4 mt-0.5 shrink-0"
-                />
-                <div className="text-[11px] leading-snug">
-                  <span className="font-extrabold text-slate-900 block">🔒 Kunci &amp; Bekukan Layar Perangkat Pelaku</span>
-                  <span className="text-slate-600">Pelaku tidak bisa menutup jendela peringatan walaupun me-refresh browser sampai Anda membuka kuncinya.</span>
+                <label className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={lockOnSend}
+                    onChange={(e) => setLockOnSend(e.target.checked)}
+                    className="rounded text-red-600 focus:ring-red-500 w-4 h-4 mt-0.5 shrink-0"
+                  />
+                  <div className="text-[11px] leading-snug">
+                    <span className="font-extrabold text-slate-900 block">🔒 Kunci &amp; Bekukan Layar Perangkat Pelaku</span>
+                    <span className="text-slate-600">Pelaku tidak bisa menutup jendela peringatan walaupun me-refresh browser sampai Anda membuka kuncinya.</span>
+                  </div>
+                </label>
+
+                <div className="pt-1 border-t border-slate-200/70 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-slate-500 italic">
+                    Ingin tahu tampilan yang muncul di layar HP/PC pelaku?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handlePreviewIntruderScreen(selectedTarget, messagePrompt, lockOnSend)}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition shrink-0 shadow-2xs"
+                  >
+                    👁️ Lihat Simulasi di Layar Pelaku
+                  </button>
                 </div>
-              </label>
+              </div>
 
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
                 <button
