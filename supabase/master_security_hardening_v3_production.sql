@@ -688,16 +688,32 @@ ALTER TABLE public.school_regulations ENABLE ROW LEVEL SECURITY;
 REVOKE DELETE ON public.school_regulations FROM anon;
 
 ALTER TABLE public.jadwal_pelajaran ENABLE ROW LEVEL SECURITY;
-REVOKE DELETE ON public.jadwal_pelajaran FROM anon;
+GRANT ALL ON public.jadwal_pelajaran TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "jadwal_pelajaran_read_all" ON public.jadwal_pelajaran;
+CREATE POLICY "jadwal_pelajaran_read_all" ON public.jadwal_pelajaran FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "jadwal_pelajaran_write_admin" ON public.jadwal_pelajaran;
+CREATE POLICY "jadwal_pelajaran_write_admin" ON public.jadwal_pelajaran FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.jadwal_slot_waktu ENABLE ROW LEVEL SECURITY;
-REVOKE DELETE ON public.jadwal_slot_waktu FROM anon;
+GRANT ALL ON public.jadwal_slot_waktu TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "jadwal_slot_read" ON public.jadwal_slot_waktu;
+CREATE POLICY "jadwal_slot_read" ON public.jadwal_slot_waktu FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "jadwal_slot_write" ON public.jadwal_slot_waktu;
+CREATE POLICY "jadwal_slot_write" ON public.jadwal_slot_waktu FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.jadwal_piket ENABLE ROW LEVEL SECURITY;
-REVOKE DELETE ON public.jadwal_piket FROM anon;
+GRANT ALL ON public.jadwal_piket TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "jadwal_piket_read" ON public.jadwal_piket;
+CREATE POLICY "jadwal_piket_read" ON public.jadwal_piket FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "jadwal_piket_write" ON public.jadwal_piket;
+CREATE POLICY "jadwal_piket_write" ON public.jadwal_piket FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.jadwal_ekskul ENABLE ROW LEVEL SECURITY;
-REVOKE DELETE ON public.jadwal_ekskul FROM anon;
+GRANT ALL ON public.jadwal_ekskul TO anon, authenticated, service_role;
+DROP POLICY IF EXISTS "jadwal_ekskul_read" ON public.jadwal_ekskul;
+CREATE POLICY "jadwal_ekskul_read" ON public.jadwal_ekskul FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "jadwal_ekskul_write" ON public.jadwal_ekskul;
+CREATE POLICY "jadwal_ekskul_write" ON public.jadwal_ekskul FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE public.ekskul ENABLE ROW LEVEL SECURITY;
 REVOKE DELETE ON public.ekskul FROM anon;
