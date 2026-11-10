@@ -18,7 +18,6 @@ const CbtLockTask = Capacitor.Plugins?.CbtLockTask || registerPlugin('CbtLockTas
  */
 function CbtLockSafetyWatcher() {
   const location = useLocation()
-  const tapHistoryRef = useRef([])
 
   // 1. Matikan AAC / Lock Task setiap kali pengguna berada di luar rute ujian
   useEffect(() => {
@@ -52,36 +51,7 @@ function CbtLockSafetyWatcher() {
     }
   }, [])
 
-  // 3. Emergency Unlock Hotspot (HANYA dirender saat ujian CBT /cbt/ujian di native)
-  const isExamRoute = location.pathname.startsWith('/cbt/ujian')
-  if (!isExamRoute || !Capacitor.isNativePlatform()) {
-    return null
-  }
-
-  const handleGlobalSecretTap = () => {
-    const now = Date.now()
-    const recentTaps = [...tapHistoryRef.current.filter(t => now - t < 2500), now]
-    tapHistoryRef.current = recentTaps
-    if (recentTaps.length >= 5) {
-      tapHistoryRef.current = []
-      if (Capacitor.isNativePlatform()) {
-        CbtLockTask.stopLock()
-          .then(() => {
-            alert('🔓 Mode Terkunci Dibatalkan (Global Emergency Release).\nPerangkat telah kembali normal.')
-          })
-          .catch(() => {})
-      }
-    }
-  }
-
-  return (
-    <div
-      onClick={handleGlobalSecretTap}
-      className="fixed top-0 left-0 w-16 h-16 z-[999999] opacity-0 cursor-default select-none pointer-events-auto"
-      title=""
-      aria-hidden="true"
-    />
-  )
+  return null
 }
 
 // Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)

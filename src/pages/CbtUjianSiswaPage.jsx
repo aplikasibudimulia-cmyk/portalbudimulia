@@ -571,11 +571,6 @@ export default function CbtUjianSiswaPage() {
     try {
       unblockGraceUntilRef.current = Date.now() + 15000
       lastStrikeTimeRef.current = Date.now() + 15000
-      setStrikeCount(0)
-      setIsBlocked(false)
-      setIsLocked(false)
-      setShowStrikeWarning(false)
-      setBlockReason('')
       if (pesertaId) {
         const { error: rpcErr } = await supabase.rpc('fn_cbt_proctor_unlock_peserta', {
           p_peserta_id: pesertaId,
@@ -593,6 +588,12 @@ export default function CbtUjianSiswaPage() {
             .eq('id', pesertaId)
         }
       }
+      setShowAdminUnlockModal(false)
+      setStrikeCount(0)
+      setIsBlocked(false)
+      setIsLocked(false)
+      setShowStrikeWarning(false)
+      setBlockReason('')
       if (Capacitor.isNativePlatform()) {
         try {
           await CbtLockTask.startLock()
@@ -606,8 +607,6 @@ export default function CbtUjianSiswaPage() {
       }
       // Pulihkan kamera selfie
       checkAndRestoreCamera()
-      setShowAdminUnlockModal(false)
-      alert('Pelanggaran telah direset. Siswa dapat melanjutkan ujian.')
     } catch (e) {
       alert('Gagal mereset status peserta: ' + e.message)
     }
@@ -863,6 +862,7 @@ export default function CbtUjianSiswaPage() {
     }
 
     // 4. KASUS BLOKIR / BUKA BLOKIR
+    const wasBlockedOrLocked = Boolean(cur.is_blocked || cur.status === 'terkunci' || isBlocked || isLocked)
     if (latestData.is_blocked !== undefined) {
       setIsBlocked(!!latestData.is_blocked)
       if (latestData.is_blocked) {
@@ -875,18 +875,20 @@ export default function CbtUjianSiswaPage() {
     // 5. KASUS STATUS TERKUNCI / SEDANG MENGERJAKAN
     if (latestData.status === 'terkunci') {
       setIsLocked(true)
-    } else if (latestData.status === 'sedang_mengerjakan') {
+    } else if (latestData.status === 'sedang_mengerjakan' && !latestData.is_blocked) {
       setIsLocked(false)
       setIsBlocked(false)
       setBlockReason('')
-      setStrikeCount(0)
+      if (wasBlockedOrLocked) {
+        setStrikeCount(0)
+      }
     }
 
-    // 6. KASUS BUKA KUNCI: AKTIFKAN GRACE PERIOD 15 DETIK & PULIHKAN PENGUNCIAN & KAMERA
+    // 6. KASUS BUKA KUNCI (TRANSISI DARI BLOCKED/TERKUNCI -> AKTIF): AKTIFKAN GRACE PERIOD & PULIHKAN PENGUNCIAN
     const isNowUnblocked = !latestData.is_blocked && latestData.status !== 'terkunci'
-    if (isNowUnblocked && (latestData.status === 'sedang_mengerjakan' || !latestData.is_blocked)) {
-      unblockGraceUntilRef.current = Date.now() + 15000
-      lastStrikeTimeRef.current = Date.now() + 15000
+    if (wasBlockedOrLocked && isNowUnblocked && latestData.status === 'sedang_mengerjakan') {
+      unblockGraceUntilRef.current = Date.now() + 10000
+      lastStrikeTimeRef.current = Date.now() + 10000
       setIsBlocked(false)
       setIsLocked(false)
       setBlockReason('')
@@ -1327,18 +1329,31 @@ export default function CbtUjianSiswaPage() {
         return
       }
 
-      // Jika siswa sudah pernah mulai mengerjakan sebelumnya (misal refresh browser saat status sedang_mengerjakan)
-      if (pData.waktu_mulai && pData.status !== 'belum_mulai') {
-        initialGraceUntilRef.current = Date.now() + 8000
-        setHasReadInstruction(true)
-        hasReadInstructionRef.current = true
-        calculateRemainingTime(pData, sesiData)
+      // Jika siswa sudah pernah mulai mengerjakan sebelumnya, atau statusnya sedang terkunci/diblokir
+      if ((pData.waktu_mulai && pData.status !== 'belum_mulai') || pData.is_blocked || pData.status === 'terkunci') {
+        initialGraceUntilRef.current = Date.now() + 5000
+        if (pData.waktu_mulai && pData.status !== 'belum_mulai') {
+          setHasReadInstruction(true)
+          hasReadInstructionRef.current = true
+          calculateRemainingTime(pData, sesiData)
+        }
         if (Capacitor.isNativePlatform() && pData.status !== 'selesai') {
           CbtLockTask.isLocked()
             .then(res => {
               const locked = Boolean(res?.locked)
               setIsDeviceLocked(locked)
               hasLockedTaskRef.current = locked
+              if (!locked && !adminUnlockedRef.current) {
+                CbtLockTask.startLock()
+                  .then(() => {
+                    setIsDeviceLocked(true)
+                    hasLockedTaskRef.current = true
+                  })
+                  .catch(() => {
+                    setIsDeviceLocked(false)
+                    hasLockedTaskRef.current = false
+                  })
+              }
             })
             .catch(() => {
               setIsDeviceLocked(false)
@@ -1682,11 +1697,72 @@ export default function CbtUjianSiswaPage() {
     }
   }, [submitResult, peserta?.status, navigate])
 
-  // 3. Deteksi Anti-Curang (Strike System Adaptif & Debounced)
+  // 3A. Proteksi Navigasi Keluar & Deteksi Unpin (TETAP AKTIF Saat Ujian Berlangsung MAUPUN Saat Layar Terkunci / Diblokir!)
+  useEffect(() => {
+    if (loading || submitResult || peserta?.status === 'selesai') return
+    if (!hasReadInstruction && !isLocked && !isBlocked) return
+
+    // Kunci riwayat browser (cegah swipe back / tombol back keluar ke /dashboard)
+    try {
+      window.history.pushState(null, '', window.location.href)
+    } catch {}
+
+    const handlePopState = () => {
+      if (adminUnlockedRef.current || submitResult || pesertaRef.current?.status === 'selesai') return
+      try {
+        window.history.pushState(null, '', window.location.href)
+      } catch {}
+    }
+
+    const handleUnpinAttempt = async () => {
+      if (adminUnlockedRef.current) return
+      console.warn('[CBT Security] Terdeteksi melepas sematan layar Android (Unpin).')
+      setIsLocked(true)
+      setIsBlocked(true)
+      setIsDeviceLocked(false)
+      hasLockedTaskRef.current = false
+      setBlockReason('Akses ujian dinonaktifkan: Terdeteksi melepas sematan layar Android (Unpin). Hanya Pengawas/Admin yang dapat membuka kembali.')
+      if (pesertaId) {
+        try {
+          await supabase
+            .from('cbt_peserta_ujian')
+            .update({
+              status: 'terkunci',
+              is_blocked: true,
+              block_reason: 'Terdeteksi melepas sematan layar Android (Unpin).'
+            })
+            .eq('id', pesertaId)
+        } catch (err) {
+          console.error('[CBT Security] Gagal update status terkunci saat unpin:', err)
+        }
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    window.addEventListener('cbt_unpin_attempt', handleUnpinAttempt)
+
+    let backButtonHandle = null
+    try {
+      backButtonHandle = CapApp.addListener('backButton', () => {
+        // Blokir total tombol/gesture Back selama ujian aktif maupun saat layar terkunci/diblokir
+        console.log('[CBT Security] Tombol/gesture Back ditahan.')
+      })
+    } catch {}
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('cbt_unpin_attempt', handleUnpinAttempt)
+      if (backButtonHandle && typeof backButtonHandle.then === 'function') {
+        backButtonHandle.then(h => h.remove?.())
+      }
+    }
+  }, [loading, hasReadInstruction, isLocked, isBlocked, submitResult, peserta?.status, pesertaId])
+
+  // 3B. Deteksi Anti-Curang (Strike System Adaptif & Debounced)
   useEffect(() => {
     // Abaikan jika proteksi anti_curang dinonaktifkan oleh pembuat ujian
     if (sesi?.anti_curang === false) return
-    // Jangan deteksi jika belum mulai atau sedang terkunci/selesai
+    // Jangan deteksi strike tambahan jika belum mulai atau sedang terkunci/selesai
     if (loading || !hasReadInstruction || isLocked || isBlocked || submitResult) return
 
     const handleVisibilityChange = () => {
@@ -1722,29 +1798,6 @@ export default function CbtUjianSiswaPage() {
       checkAndRestoreCamera()
     }
 
-    const handleUnpinAttempt = async () => {
-      console.warn('[CBT Security] Terdeteksi melepas sematan layar Android (Unpin).')
-      setIsLocked(true)
-      setIsBlocked(true)
-      setIsDeviceLocked(false)
-      hasLockedTaskRef.current = false
-      setBlockReason('Akses ujian dinonaktifkan: Terdeteksi melepas sematan layar Android (Unpin). Hanya Pengawas/Admin yang dapat membuka kembali.')
-      if (pesertaId) {
-        try {
-          await supabase
-            .from('cbt_peserta_ujian')
-            .update({
-              status: 'terkunci',
-              is_blocked: true,
-              block_reason: 'Terdeteksi melepas sematan layar Android (Unpin).'
-            })
-            .eq('id', pesertaId)
-        } catch (err) {
-          console.error('[CBT Security] Gagal update status terkunci saat unpin:', err)
-        }
-      }
-    }
-
     const handleNativeFocusLost = (e) => {
       if (isSecurityGracePeriod()) return
       const reason = e?.detail?.reason || 'Fokus layar teralihkan ke aplikasi melayang / overlay'
@@ -1755,12 +1808,10 @@ export default function CbtUjianSiswaPage() {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('focus', handleWindowFocus)
-    window.addEventListener('cbt_unpin_attempt', handleUnpinAttempt)
     window.addEventListener('cbt_focus_lost', handleNativeFocusLost)
 
     // Capacitor Native Android & iOS Listeners
     let appStateHandle = null
-    let backButtonHandle = null
     let backgroundTimestamp = 0
     try {
       appStateHandle = CapApp.addListener('appStateChange', async (state) => {
@@ -1784,9 +1835,6 @@ export default function CbtUjianSiswaPage() {
           checkAndRestoreCamera()
         }
       })
-      backButtonHandle = CapApp.addListener('backButton', () => {
-        setShowSubmitModal(true)
-      })
     } catch {
       // Browser desktop fallback
     }
@@ -1796,13 +1844,9 @@ export default function CbtUjianSiswaPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('blur', handleWindowBlur)
       window.removeEventListener('focus', handleWindowFocus)
-      window.removeEventListener('cbt_unpin_attempt', handleUnpinAttempt)
       window.removeEventListener('cbt_focus_lost', handleNativeFocusLost)
       if (appStateHandle && typeof appStateHandle.then === 'function') {
         appStateHandle.then(h => h.remove?.())
-      }
-      if (backButtonHandle && typeof backButtonHandle.then === 'function') {
-        backButtonHandle.then(h => h.remove?.())
       }
     }
   }, [loading, hasReadInstruction, isLocked, isBlocked, submitResult, strikeCount, totalPelanggaran, sesi, peserta, pesertaId])
@@ -2343,6 +2387,24 @@ export default function CbtUjianSiswaPage() {
             <p className="text-xs text-rose-800 font-medium">{blockReason || 'Melakukan aktivitas mencurigakan di ruang ujian.'}</p>
           </div>
 
+          {Capacitor.isNativePlatform() && !isDeviceLocked && (
+            <button
+              type="button"
+              onClick={() => {
+                CbtLockTask.startLock()
+                  .then(() => {
+                    setIsDeviceLocked(true)
+                    hasLockedTaskRef.current = true
+                  })
+                  .catch(() => {})
+              }}
+              className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-2xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              <span>🔒</span>
+              <span>Sematkan Layar Kembali (Wajib sebelum Dibuka Pengawas)</span>
+            </button>
+          )}
+
           <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs text-slate-600">
             Silakan <strong>angkat tangan Anda</strong> dan lapor langsung kepada Pengawas Ruang untuk klarifikasi dan pengaktifan kembali.
           </div>
@@ -2393,6 +2455,25 @@ export default function CbtUjianSiswaPage() {
               {blockReason || 'Anda telah terdeteksi keluar dari layar ujian sebanyak 3 kali (Strike 3). Sesuai tata tertib digital sekolah, lembar ujian terkunci otomatis.'}
             </p>
           </div>
+
+          {Capacitor.isNativePlatform() && !isDeviceLocked && (
+            <button
+              type="button"
+              onClick={() => {
+                CbtLockTask.startLock()
+                  .then(() => {
+                    setIsDeviceLocked(true)
+                    hasLockedTaskRef.current = true
+                  })
+                  .catch(() => {})
+              }}
+              className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-2xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              <span>🔒</span>
+              <span>Sematkan Layar Kembali (Wajib sebelum Dibuka Pengawas)</span>
+            </button>
+          )}
+
           <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs text-slate-600">
             Silakan <strong>angkat tangan Anda</strong> dan lapor ke Pengawas Ruang untuk membuka kunci lembar ujian (<em>Remote Unlock</em>).
           </div>
@@ -2763,23 +2844,10 @@ export default function CbtUjianSiswaPage() {
                 </>
               )}
             </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (Capacitor.isNativePlatform()) {
-                  await CbtLockTask.stopLock().catch(() => {})
-                }
-                navigate('/dashboard?menu=CBT')
-              }}
-              className="w-full py-3 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 rounded-2xl font-semibold text-xs transition-all border border-slate-700/80 flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>←</span>
-              <span>Kembali ke Menu Utama Penilaian</span>
-            </button>
           </div>
 
           <div className="text-[11px] text-slate-400">
-            Jika ada kendala pada perangkat, silakan hubungi Pengawas Ruang.
+            Jika ingin keluar atau ada kendala pada perangkat, silakan angkat tangan dan hubungi Pengawas Ruang.
           </div>
         </div>
 
