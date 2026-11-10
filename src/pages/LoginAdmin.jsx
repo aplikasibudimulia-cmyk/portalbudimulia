@@ -153,11 +153,12 @@ function LoginAdmin() {
         return
       }
 
-      // Jika Admin Resmi berhasil login: hapus baris "Mengunjungi Halaman Login Admin" sementara tadi agar tidak duplikat
+      // Jika Admin Resmi berhasil login: hapus baris "Mengunjungi Halaman Login Admin" sementara tadi agar tidak duplikat,
+      // namun tetap sertakan tangkapan kamera depan!
       if (lastLogId) {
         await supabase.from('admin_access_logs').delete().eq('id', lastLogId).catch(() => {})
       }
-      await recordAdminAccessAttempt(`✅ LOGIN ADMIN RESMI: ${cleanEmail}`, { force: true, skipCamera: true }).catch(() => {})
+      await recordAdminAccessAttempt(`✅ LOGIN ADMIN RESMI: ${cleanEmail}`, { force: true }).catch(() => {})
 
       navigate('/admin')
     } catch (err) {

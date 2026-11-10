@@ -24,7 +24,7 @@ export default function BiometricFaceHoneypotModal({
     }
   }, [stream])
 
-  // Reset saat modal dibuka/ditutup
+  // Reset saat modal ditutup, dan OTOMATIS nyalakan kamera + jepret wajah saat modal dibuka!
   useEffect(() => {
     if (!isOpen) {
       stopCamera()
@@ -33,6 +33,8 @@ export default function BiometricFaceHoneypotModal({
       setIsRejected(false)
       setCameraError(null)
       setStatusMessage('')
+    } else {
+      startCameraScan()
     }
   }, [isOpen])
 
