@@ -1518,7 +1518,7 @@ function DashboardOrangTua() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-h-0 bg-slate-50/50 dashboard-content-area">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 max-w-full overflow-x-hidden bg-slate-50/50 dashboard-content-area">
         
         {/* Sticky Orange Notification Banner */}
         {!notifOrtuGranted && 'Notification' in window && (
@@ -1544,8 +1544,8 @@ function DashboardOrangTua() {
         )}
 
         {/* Top Header Navbar */}
-        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-4 md:px-8 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] flex items-center justify-between shadow-2xs shrink-0 app-header-safe">
-          <div className="flex items-center gap-3">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-3 sm:px-4 md:px-8 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] flex items-center justify-between gap-2 shadow-2xs shrink-0 app-header-safe">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <button
               type="button"
               onClick={openSidebar}
@@ -1557,12 +1557,12 @@ function DashboardOrangTua() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div className="flex items-center gap-2">
-              <span className="text-base font-black text-slate-800 tracking-tight">eBudiMulia Orang Tua</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm sm:text-base font-black text-slate-800 tracking-tight truncate">eBudiMulia Orang Tua</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             {/* Sync Data Ortu Button */}
             <button
               onClick={handleSyncData}
@@ -1689,8 +1689,8 @@ function DashboardOrangTua() {
         </header>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-          <div className="w-full space-y-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 max-w-full p-3.5 sm:p-4 md:p-6 lg:p-8">
+          <div className="w-full min-w-0 max-w-full space-y-6">
 
             {/* Banner Peringatan Biodata belum lengkap */}
             {biodataWarningBanner}

@@ -4,7 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="google" content="notranslate" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" id="app-viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <script>
+      // Auto-Fit Viewport untuk HP dengan layar kecil atau Ukuran Tampilan (Display Zoom) Besar (< 360px)
+      (function () {
+        try {
+          var sw = Math.min(window.screen && window.screen.width ? window.screen.width : 9999, window.innerWidth || 9999);
+          if (sw > 0 && sw < 360) {
+            var scale = (sw / 360).toFixed(4);
+            var vp = document.getElementById('app-viewport');
+            if (vp) {
+              vp.setAttribute(
+                'content',
+                'width=360, initial-scale=' + scale + ', minimum-scale=' + scale + ', maximum-scale=' + scale + ', user-scalable=no, viewport-fit=cover'
+              );
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
     <title>eBudiMulia - Sistem Informasi Akademik Digital</title>
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#4f46e5" />

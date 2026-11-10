@@ -2787,8 +2787,8 @@ export default function DashboardGuru() {
           </div>
         </header>
 
-        <div className="flex-1 p-2.5 sm:p-4 lg:p-5 2xl:p-6 flex flex-col dashboard-content-area overflow-y-auto min-h-0">
-          <div className="w-full flex-1 flex flex-col min-h-0 relative">
+        <div className="flex-1 p-2.5 sm:p-4 lg:p-5 2xl:p-6 flex flex-col dashboard-content-area overflow-y-auto overflow-x-hidden min-h-0 min-w-0 max-w-full">
+          <div className="w-full min-w-0 max-w-full flex-1 flex flex-col min-h-0 relative">
             {/* Global Floating Full Screen Button */}
             {activeMenu !== 'data_presensi_siswa' && (
               <div className="absolute top-0 right-0 z-30 hidden md:block">

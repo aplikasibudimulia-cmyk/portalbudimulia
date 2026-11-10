@@ -135,6 +135,22 @@ public class MainActivity extends BridgeActivity {
 
         // Initialize Android Notification Channel for Presensi & Announcements
         createNotificationChannel();
+
+        // Normalisasi WebView TextZoom & Viewport agar tampilan tidak terpotong di HP dengan Ukuran Font/Layar Besar
+        normalizeWebViewDisplay();
+    }
+
+    private void normalizeWebViewDisplay() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                android.webkit.WebSettings ws = getBridge().getWebView().getSettings();
+                ws.setTextZoom(100);
+                ws.setUseWideViewPort(true);
+                ws.setLoadWithOverviewMode(true);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "normalizeWebViewDisplay error: " + e.getMessage());
+        }
     }
 
     public boolean isNativeLockTaskActive() {
@@ -508,6 +524,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        normalizeWebViewDisplay();
         if (isCbtLockActive) {
             applyImmersiveSticky();
             registerBackCallback();

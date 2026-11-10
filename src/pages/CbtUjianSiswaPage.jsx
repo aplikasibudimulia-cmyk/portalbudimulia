@@ -2874,7 +2874,7 @@ export default function CbtUjianSiswaPage() {
   const currentIsRaguVal = currentAnswerItem ? currentAnswerItem.isRagu : false
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col select-none relative">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-50 text-slate-800 flex flex-col select-none relative">
       {/* Toast Alert Tambahan Waktu dari Pengawas */}
       {extraTimeAlert && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] max-w-md w-[92%] bg-emerald-600 text-white px-4 py-3 rounded-2xl shadow-2xl border border-emerald-400 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -2978,9 +2978,9 @@ export default function CbtUjianSiswaPage() {
       </header>
 
       {/* Main Container: Split-Pane Soal + Palet Nomor (Desktop) + Bottom Nav (HP) */}
-      <main className="flex-1 p-3.5 sm:p-4 md:p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-4 gap-6 pb-32 lg:pb-6">
+      <main className="flex-1 p-3 sm:p-4 md:p-6 max-w-7xl mx-auto w-full min-w-0 grid grid-cols-1 lg:grid-cols-4 gap-6 pb-32 lg:pb-6">
         {/* Kolom Kiri / Utama: Renderer Butir Soal */}
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-3 min-w-0 max-w-full">
           <CbtSoalRenderer
             soal={currentQ}
             currentIndex={currentIndex}
