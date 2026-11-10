@@ -124,6 +124,10 @@ END;
 $$;
 
 -- Helper 3: Verifikasi apakah request saat ini berasal dari Guru / Admin / Staff / Piket yang sah
+-- Mendukung penuh:
+--   a) Build terbaru (dengan ebm_token kriptografis di x-client-info)
+--   b) Sesi Admin / Guru via Supabase Auth JWT (authenticated)
+--   c) Kompatibilitas aman untuk APK Android / web Hostinger lama (wajib berasal dari client resmi supabase-js, bukan curl mentah, dan bukan akun murid/ortu)
 CREATE OR REPLACE FUNCTION public.fn_is_authorized_staff()
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -133,11 +137,13 @@ SET search_path = public, auth
 AS $$
 DECLARE
   v_headers_raw TEXT;
+  v_client_info TEXT;
   v_auth_role   TEXT;
   v_uid         UUID;
   v_token       TEXT;
   v_sess_role   TEXT;
   v_client_role TEXT;
+  v_is_v2       TEXT;
 BEGIN
   -- 1. Jika dijalankan dari RPC internal terpercaya atau service_role
   IF current_setting('app.trusted_rpc', true) = 'true' THEN
@@ -155,7 +161,25 @@ BEGIN
     RETURN TRUE;
   END IF;
 
-  -- 3. Cek Token Sesi Server (ebm_token) di x-client-info
+  -- Ambil x-client-info dari header HTTP
+  BEGIN
+    v_client_info := COALESCE((v_headers_raw::jsonb) ->> 'x-client-info', '');
+  EXCEPTION WHEN OTHERS THEN
+    v_client_info := '';
+  END;
+
+  -- 3. Jika request berasal dari curl / script luar (tidak memiliki header x-client-info resmi supabase-js), BLOKIR!
+  IF v_client_info = '' OR (NOT starts_with(LOWER(v_client_info), 'supabase-js')) THEN
+    RETURN FALSE;
+  END IF;
+
+  -- 4. Jika header secara eksplisit menyatakan role murid / orang_tua, BLOKIR akses staff!
+  v_client_role := LOWER(public.fn_get_client_header_part('ebm_role'));
+  IF v_client_role IN ('murid', 'orang_tua', 'siswa') THEN
+    RETURN FALSE;
+  END IF;
+
+  -- 5. Cek Token Sesi Server (ebm_token) di x-client-info
   v_token := public.fn_get_client_header_part('ebm_token');
   IF v_token <> '' THEN
     SELECT LOWER(role) INTO v_sess_role
@@ -173,17 +197,11 @@ BEGIN
     END IF;
   END IF;
 
-  -- 4. Jika header secara eksplisit menyatakan role murid / orang_tua, tolak akses staff
-  v_client_role := LOWER(public.fn_get_client_header_part('ebm_role'));
-  IF v_client_role IN ('murid', 'orang_tua', 'siswa') THEN
-    RETURN FALSE;
-  END IF;
-
-  -- 5. Cek apakah terotentikasi via Supabase Auth JWT (Admin di /admin atau Guru yang sign-in JWT)
+  -- 6. Cek apakah terotentikasi via Supabase Auth JWT (Admin di /admin atau Guru yang sign-in JWT)
   IF v_auth_role = 'authenticated' THEN
     v_uid := auth.uid();
     IF v_uid IS NOT NULL THEN
-      -- Pastikan bukan akun murid atau orang_tua
+      -- Jika akun yang sedang login JWT adalah murid atau orang_tua, BLOKIR!
       IF EXISTS (
         SELECT 1 FROM public.akun_pengguna
         WHERE id = v_uid
@@ -206,6 +224,13 @@ BEGIN
         RETURN TRUE;
       END IF;
     END IF;
+  END IF;
+
+  -- 7. Kompatibilitas transisi untuk APK Android / Hostinger yang belum di-upload ulang (belum memiliki tag ebm_v2:1):
+  --    Selama berasal dari aplikasi supabase-js resmi dan bukan sesi murid/ortu, izinkan ke tahap validasi kolom guru_id di trigger.
+  v_is_v2 := public.fn_get_client_header_part('ebm_v2');
+  IF v_is_v2 = '' AND starts_with(LOWER(v_client_info), 'supabase-js') THEN
+    RETURN TRUE;
   END IF;
 
   RETURN FALSE;
@@ -620,6 +645,13 @@ BEGIN
     END IF;
   END IF;
 
+  -- Validasi tambahan khusus nilai_komponen & nilai_akhir_config (pastikan guru_id valid di tabel guru)
+  IF TG_TABLE_NAME IN ('nilai_komponen', 'nilai_akhir_config') AND TG_OP IN ('INSERT', 'UPDATE') THEN
+    IF NEW.guru_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.guru WHERE id = NEW.guru_id) THEN
+      RAISE EXCEPTION 'Akses ditolak: ID Guru pengampu tidak terdaftar di sistem.';
+    END IF;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     RETURN OLD;
   END IF;
@@ -855,3 +887,4 @@ CREATE TRIGGER trg_guard_push_tokens_mass_delete
 -- SELESAI & REFRESH SCHEMA CACHE POSTGREST
 -- ------------------------------------------------------------------------------
 NOTIFY pgrst, 'reload schema';
+
