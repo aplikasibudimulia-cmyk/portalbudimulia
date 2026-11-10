@@ -21,7 +21,17 @@ export default function SiswaCbtPembahasanModal({
   const fetchReviewData = async () => {
     setLoading(true)
     try {
-      // Ambil seluruh soal untuk bank soal ini
+      // 1. Utamakan RPC aman fn_cbt_get_student_review (sudah menyertakan pembahasan guru & filter jawaban milik siswa ini saja)
+      const { data: rpcReview, error: rpcErr } = await supabase.rpc('fn_cbt_get_student_review', {
+        p_peserta_id: pesertaId
+      })
+
+      if (!rpcErr && Array.isArray(rpcReview) && rpcReview.length > 0) {
+        setReviewItems(rpcReview)
+        return
+      }
+
+      // 2. Fallback: Ambil seluruh soal untuk bank soal ini
       const { data: soalList, error: errSoal } = await supabase
         .from('cbt_soal')
         .select(`
@@ -37,7 +47,7 @@ export default function SiswaCbtPembahasanModal({
 
       if (errSoal) throw errSoal
 
-      // Ambil jawaban siswa
+      // Ambil jawaban siswa khusus peserta ini
       const { data: jawabanList, error: errJwb } = await supabase
         .from('cbt_jawaban_siswa')
         .select(`
@@ -50,10 +60,16 @@ export default function SiswaCbtPembahasanModal({
 
       if (errJwb) throw errJwb
 
-      // Ambil hasil penilaian (jika sudah dishare)
-      const { data: nilaiList } = await supabase
-        .from('cbt_penilaian_jawaban')
-        .select('*')
+      // Ambil hasil penilaian HANYA untuk jawaban milik peserta ini (tidak mengunduh seluruh sekolah)
+      const jawabanIds = (jawabanList || []).map(j => j.id).filter(Boolean)
+      let nilaiList = []
+      if (jawabanIds.length > 0) {
+        const { data: nData } = await supabase
+          .from('cbt_penilaian_jawaban')
+          .select('*')
+          .in('jawaban_id', jawabanIds)
+        nilaiList = nData || []
+      }
 
       // Mapping gabungan
       const jwbMap = {}

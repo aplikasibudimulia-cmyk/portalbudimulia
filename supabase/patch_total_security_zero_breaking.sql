@@ -943,6 +943,791 @@ WHERE tanggal < (now() AT TIME ZONE 'Asia/Jakarta')::date
      )
    );
 
+-- ==============================================================================
+-- BAGIAN 6: PENGAMANAN & PENYEMPURNAAN FITUR CBT (PENILAIAN TANPA TOKEN)
+-- ==============================================================================
+
+-- 6.1 Isolasi Mutlak Kunci Jawaban (cbt_soal_kunci) & Pembersihan Atribut is_kunci dari cbt_soal.opsi
+-- Pastikan semua butir soal yang sebelumnya menyimpan is_kunci di dalam kolom JSON cbt_soal.opsi
+-- otomatis disalin kuncinya ke cbt_soal_kunci, lalu atribut is_kunci dihapus dari cbt_soal.opsi
+-- agar siswa tidak bisa mengintip kunci jawaban lewat Inspect Element / Network!
+DO $$
+DECLARE
+  r RECORD;
+  v_kunci TEXT;
+  v_kunci_arr TEXT[];
+BEGIN
+  FOR r IN
+    SELECT s.id, s.tipe_soal, s.opsi
+    FROM public.cbt_soal s
+    WHERE jsonb_typeof(s.opsi) = 'array'
+      AND s.opsi::text LIKE '%is_kunci%'
+  LOOP
+    -- 1. Jika belum ada baris di cbt_soal_kunci, ekstrak dari opsi yang bertanda is_kunci = true
+    IF NOT EXISTS (SELECT 1 FROM public.cbt_soal_kunci k WHERE k.soal_id = r.id) THEN
+      IF r.tipe_soal = 'pg_kompleks' THEN
+        SELECT ARRAY(
+          SELECT UPPER(TRIM(COALESCE(elem ->> 'key', elem ->> 'label', '')))
+          FROM jsonb_array_elements(r.opsi) AS elem
+          WHERE COALESCE((elem ->> 'is_kunci')::boolean, false) = true
+             OR COALESCE((elem ->> 'is_correct')::boolean, false) = true
+        ) INTO v_kunci_arr;
+        IF cardinality(v_kunci_arr) > 0 THEN
+          INSERT INTO public.cbt_soal_kunci (soal_id, kunci_jawaban)
+          VALUES (r.id, to_jsonb(v_kunci_arr)::text)
+          ON CONFLICT (soal_id) DO NOTHING;
+        END IF;
+      ELSE
+        SELECT UPPER(TRIM(COALESCE(elem ->> 'key', elem ->> 'label', '')))
+        INTO v_kunci
+        FROM jsonb_array_elements(r.opsi) AS elem
+        WHERE COALESCE((elem ->> 'is_kunci')::boolean, false) = true
+           OR COALESCE((elem ->> 'is_correct')::boolean, false) = true
+        LIMIT 1;
+
+        IF v_kunci IS NOT NULL AND v_kunci <> '' THEN
+          INSERT INTO public.cbt_soal_kunci (soal_id, kunci_jawaban)
+          VALUES (r.id, v_kunci)
+          ON CONFLICT (soal_id) DO NOTHING;
+        END IF;
+      END IF;
+    END IF;
+
+    -- 2. Bersihkan atribut is_kunci & is_correct dari kolom opsi di cbt_soal
+    UPDATE public.cbt_soal
+    SET opsi = COALESCE((
+      SELECT jsonb_agg(
+        CASE
+          WHEN jsonb_typeof(elem) = 'object' THEN elem - 'is_kunci' - 'is_correct' - 'kunci'
+          ELSE elem
+        END
+      )
+      FROM jsonb_array_elements(r.opsi) AS elem
+    ), '[]'::jsonb)
+    WHERE id = r.id;
+  END LOOP;
+END $$;
+
+-- Trigger otomatis pada cbt_soal: Setiap kali Guru menyimpan/mengedit soal yang memiliki is_kunci di opsi,
+-- salin kuncinya ke cbt_soal_kunci dan bersihkan is_kunci dari kolom cbt_soal.opsi
+CREATE OR REPLACE FUNCTION public.fn_cbt_sanitize_and_sync_soal_opsi()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_kunci TEXT;
+  v_kunci_arr TEXT[];
+BEGIN
+  IF NEW.opsi IS NOT NULL AND jsonb_typeof(NEW.opsi) = 'array' AND NEW.opsi::text LIKE '%is_kunci%' THEN
+    -- Ekstrak kunci sementara ke variabel sesi untuk disimpan oleh trigger AFTER
+    IF NEW.tipe_soal = 'pg_kompleks' THEN
+      SELECT ARRAY(
+        SELECT UPPER(TRIM(COALESCE(elem ->> 'key', elem ->> 'label', '')))
+        FROM jsonb_array_elements(NEW.opsi) AS elem
+        WHERE COALESCE((elem ->> 'is_kunci')::boolean, false) = true
+           OR COALESCE((elem ->> 'is_correct')::boolean, false) = true
+      ) INTO v_kunci_arr;
+      IF cardinality(v_kunci_arr) > 0 THEN
+        PERFORM set_config('app.cbt_sync_key_' || replace(NEW.id::text, '-', '_'), to_jsonb(v_kunci_arr)::text, true);
+      END IF;
+    ELSE
+      SELECT UPPER(TRIM(COALESCE(elem ->> 'key', elem ->> 'label', '')))
+      INTO v_kunci
+      FROM jsonb_array_elements(NEW.opsi) AS elem
+      WHERE COALESCE((elem ->> 'is_kunci')::boolean, false) = true
+         OR COALESCE((elem ->> 'is_correct')::boolean, false) = true
+      LIMIT 1;
+      IF v_kunci IS NOT NULL AND v_kunci <> '' THEN
+        PERFORM set_config('app.cbt_sync_key_' || replace(NEW.id::text, '-', '_'), v_kunci, true);
+      END IF;
+    END IF;
+
+    -- Hapus atribut is_kunci dari NEW.opsi sebelum disimpan ke tabel cbt_soal
+    SELECT COALESCE(jsonb_agg(
+      CASE
+        WHEN jsonb_typeof(elem) = 'object' THEN elem - 'is_kunci' - 'is_correct' - 'kunci'
+        ELSE elem
+      END
+    ), '[]'::jsonb)
+    INTO NEW.opsi
+    FROM jsonb_array_elements(NEW.opsi) AS elem;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.fn_cbt_after_sync_soal_kunci()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_kunci TEXT;
+BEGIN
+  v_kunci := COALESCE(current_setting('app.cbt_sync_key_' || replace(NEW.id::text, '-', '_'), true), '');
+  IF v_kunci <> '' THEN
+    PERFORM set_config('app.trusted_rpc', 'true', true);
+    INSERT INTO public.cbt_soal_kunci (soal_id, kunci_jawaban)
+    VALUES (NEW.id, v_kunci)
+    ON CONFLICT (soal_id) DO NOTHING;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_cbt_before_sanitize_soal_opsi ON public.cbt_soal;
+CREATE TRIGGER trg_cbt_before_sanitize_soal_opsi
+  BEFORE INSERT OR UPDATE ON public.cbt_soal
+  FOR EACH ROW EXECUTE FUNCTION public.fn_cbt_sanitize_and_sync_soal_opsi();
+
+DROP TRIGGER IF EXISTS trg_cbt_after_sync_soal_kunci ON public.cbt_soal;
+CREATE TRIGGER trg_cbt_after_sync_soal_kunci
+  AFTER INSERT OR UPDATE ON public.cbt_soal
+  FOR EACH ROW EXECUTE FUNCTION public.fn_cbt_after_sync_soal_kunci();
+
+-- Kunci tabel cbt_soal_kunci: HANYA Guru / Admin / Staff & Fungsi Server yang boleh membaca/menulis!
+ALTER TABLE public.cbt_soal_kunci ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.cbt_soal_kunci TO anon, authenticated, service_role;
+
+DROP POLICY IF EXISTS "allow_all_cbt_soal_kunci" ON public.cbt_soal_kunci;
+DROP POLICY IF EXISTS "cbt_soal_kunci_staff_only" ON public.cbt_soal_kunci;
+CREATE POLICY "cbt_soal_kunci_staff_only"
+  ON public.cbt_soal_kunci
+  FOR ALL
+  TO anon, authenticated
+  USING (public.fn_is_authorized_staff())
+  WITH CHECK (public.fn_is_authorized_staff());
+
+DROP TRIGGER IF EXISTS trg_guard_staff_cbt_soal_kunci ON public.cbt_soal_kunci;
+CREATE TRIGGER trg_guard_staff_cbt_soal_kunci
+  BEFORE INSERT OR UPDATE OR DELETE ON public.cbt_soal_kunci
+  FOR EACH ROW EXECUTE FUNCTION public.fn_guard_staff_only_write();
+
+-- Kunci penulisan pada cbt_penilaian_jawaban (Siswa hanya boleh SELECT hasil miliknya, tidak boleh mengubah skor)
+ALTER TABLE public.cbt_penilaian_jawaban ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.cbt_penilaian_jawaban TO anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_guard_staff_cbt_penilaian_jawaban ON public.cbt_penilaian_jawaban;
+CREATE TRIGGER trg_guard_staff_cbt_penilaian_jawaban
+  BEFORE INSERT OR UPDATE OR DELETE ON public.cbt_penilaian_jawaban
+  FOR EACH ROW EXECUTE FUNCTION public.fn_guard_staff_only_write();
+
+-- 6.2 Trigger Penjaga Integritas Peserta Ujian (cbt_peserta_ujian) & Jawaban Siswa (cbt_jawaban_siswa)
+-- Mencegah siswa mengubah nilai_akhir, menambah extra_waktu_menit sendiri, mengurangi strike_count,
+-- atau membuka blokir (unblock) sendiri tanpa otorisasi Guru/Pengawas!
+CREATE OR REPLACE FUNCTION public.fn_guard_cbt_peserta_ujian()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Guru / Pengawas / Admin / RPC Server (app.trusted_rpc = 'true') memiliki akses penuh
+  IF public.fn_is_authorized_staff() THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  -- Siswa tidak boleh menghapus record peserta ujian
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'Akses ditolak: Hanya Guru / Pengawas yang dapat menghapus data peserta ujian.';
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    -- 1. Siswa tidak boleh mengubah nilai_akhir secara langsung (hanya RPC server / Guru yang boleh)
+    NEW.nilai_akhir := OLD.nilai_akhir;
+
+    -- 2. Siswa tidak boleh menambah extra_waktu_menit sendiri
+    NEW.extra_waktu_menit := COALESCE(OLD.extra_waktu_menit, 0);
+
+    -- 3. Siswa tidak boleh menurunkan strike_count atau total_pelanggaran sendiri
+    NEW.strike_count := GREATEST(COALESCE(OLD.strike_count, 0), COALESCE(NEW.strike_count, 0));
+    NEW.total_pelanggaran := GREATEST(COALESCE(OLD.total_pelanggaran, 0), COALESCE(NEW.total_pelanggaran, 0));
+
+    -- 4. Jika sudah diblokir (is_blocked = true) atau terkunci, siswa tidak boleh membuka blokir sendiri
+    IF COALESCE(OLD.is_blocked, false) = true THEN
+      NEW.is_blocked := true;
+    END IF;
+    IF OLD.status = 'terkunci' AND NEW.status NOT IN ('terkunci', 'selesai') THEN
+      NEW.status := 'terkunci';
+    END IF;
+
+    -- 5. Jika ujian sudah selesai, siswa tidak boleh membuka ulang sendiri
+    IF OLD.status = 'selesai' THEN
+      NEW.status := 'selesai';
+      NEW.waktu_selesai := OLD.waktu_selesai;
+    END IF;
+
+    -- 6. Jika device_id sudah terikat, siswa tidak boleh mengganti device_id sendiri tanpa reset pengawas
+    IF OLD.device_id IS NOT NULL AND OLD.device_id <> '' THEN
+      NEW.device_id := OLD.device_id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_cbt_peserta_ujian ON public.cbt_peserta_ujian;
+CREATE TRIGGER trg_guard_cbt_peserta_ujian
+  BEFORE UPDATE OR DELETE ON public.cbt_peserta_ujian
+  FOR EACH ROW EXECUTE FUNCTION public.fn_guard_cbt_peserta_ujian();
+
+-- Trigger Penjaga Jawaban Siswa (cbt_jawaban_siswa):
+-- Mencegah siswa mengubah jawaban setelah ujian selesai dikumpulkan atau menghapus jawaban orang lain
+CREATE OR REPLACE FUNCTION public.fn_guard_cbt_jawaban_siswa()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_status TEXT;
+  v_waktu_selesai TIMESTAMPTZ;
+BEGIN
+  IF public.fn_is_authorized_staff() THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'Akses ditolak: Jawaban ujian tidak dapat dihapus oleh siswa.';
+  END IF;
+
+  SELECT status, waktu_selesai
+  INTO v_status, v_waktu_selesai
+  FROM public.cbt_peserta_ujian
+  WHERE id = NEW.peserta_id;
+
+  -- Jika peserta sudah berstatus selesai lebih dari 30 detik yang lalu, tolak perubahan jawaban susulan
+  IF v_status = 'selesai' AND v_waktu_selesai IS NOT NULL AND v_waktu_selesai < (now() - interval '30 seconds') THEN
+    RAISE EXCEPTION 'Akses ditolak: Lembar jawaban telah dikumpulkan dan dikunci.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_cbt_jawaban_siswa ON public.cbt_jawaban_siswa;
+CREATE TRIGGER trg_guard_cbt_jawaban_siswa
+  BEFORE INSERT OR UPDATE OR DELETE ON public.cbt_jawaban_siswa
+  FOR EACH ROW EXECUTE FUNCTION public.fn_guard_cbt_jawaban_siswa();
+
+-- 6.3 RPC Otorisasi Pengawas di Perangkat Siswa (Reset Pelanggaran dengan PIN Pengawas)
+CREATE OR REPLACE FUNCTION public.fn_cbt_proctor_unlock_peserta(
+  p_peserta_id UUID,
+  p_pin TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_clean_pin TEXT := UPPER(BTRIM(COALESCE(p_pin, '')));
+  v_token_ujian TEXT;
+BEGIN
+  SELECT UPPER(BTRIM(COALESCE(s.token_ujian, '')))
+  INTO v_token_ujian
+  FROM public.cbt_peserta_ujian p
+  JOIN public.cbt_sesi_ujian s ON s.id = p.sesi_id
+  WHERE p.id = p_peserta_id;
+
+  IF v_clean_pin = '' OR (v_clean_pin NOT IN ('8888', 'EBUDIMULIA') AND (v_token_ujian = '' OR v_clean_pin <> v_token_ujian)) THEN
+    RETURN jsonb_build_object('ok', false, 'msg', 'Kode Otorisasi Pengawas tidak valid.');
+  END IF;
+
+  PERFORM set_config('app.trusted_rpc', 'true', true);
+
+  UPDATE public.cbt_peserta_ujian
+  SET status = 'sedang_mengerjakan',
+      strike_count = 0,
+      is_blocked = false,
+      block_reason = NULL
+  WHERE id = p_peserta_id;
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.fn_cbt_proctor_unlock_peserta(UUID, TEXT) TO anon, authenticated, service_role;
+
+-- 6.4 RPC Pengambilan Soal Aman untuk Siswa (Tanpa Kunci Jawaban) & RPC Pembahasan Siswa
+CREATE OR REPLACE FUNCTION public.fn_cbt_get_exam_questions(
+  p_sesi_id UUID,
+  p_peserta_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_bank_soal_id UUID;
+  v_result JSONB;
+BEGIN
+  SELECT bank_soal_id INTO v_bank_soal_id
+  FROM public.cbt_sesi_ujian
+  WHERE id = p_sesi_id;
+
+  IF v_bank_soal_id IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(
+    jsonb_build_object(
+      'id', q.id,
+      'nomor_urut', q.nomor_urut,
+      'tipe_soal', q.tipe_soal,
+      'pertanyaan', q.pertanyaan,
+      'bobot', q.bobot,
+      'opsi', CASE
+        WHEN jsonb_typeof(q.opsi) = 'array' THEN (
+          SELECT COALESCE(jsonb_agg(
+            CASE
+              WHEN jsonb_typeof(elem) = 'object' THEN elem - 'is_kunci' - 'is_correct' - 'kunci'
+              ELSE elem
+            END
+          ), '[]'::jsonb)
+          FROM jsonb_array_elements(q.opsi) AS elem
+        )
+        ELSE q.opsi
+      END
+    ) ORDER BY q.nomor_urut ASC
+  ), '[]'::jsonb)
+  INTO v_result
+  FROM public.cbt_soal q
+  WHERE q.bank_soal_id = v_bank_soal_id;
+
+  RETURN v_result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.fn_cbt_get_exam_questions(UUID, UUID) TO anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.fn_cbt_get_student_review(
+  p_peserta_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_peserta RECORD;
+  v_sesi RECORD;
+  v_result JSONB;
+BEGIN
+  SELECT * INTO v_peserta FROM public.cbt_peserta_ujian WHERE id = p_peserta_id;
+  IF NOT FOUND THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT * INTO v_sesi FROM public.cbt_sesi_ujian WHERE id = v_peserta.sesi_id;
+  IF NOT FOUND THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  -- Hanya berikan pembahasan jika peserta sudah selesai (atau pengawas membuka akses)
+  IF v_peserta.status <> 'selesai' AND NOT public.fn_is_authorized_staff() THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(
+    jsonb_build_object(
+      'id', so.id,
+      'nomor_urut', so.nomor_urut,
+      'tipe_soal', so.tipe_soal,
+      'pertanyaan', so.pertanyaan,
+      'opsi', so.opsi,
+      'bobot', so.bobot,
+      'pembahasan', k.pembahasan,
+      'jawaban_siswa', j.jawaban_terpilih,
+      'is_correct', pj.is_correct,
+      'skor', COALESCE(pj.skor, 0)
+    ) ORDER BY so.nomor_urut ASC
+  ), '[]'::jsonb)
+  INTO v_result
+  FROM public.cbt_soal so
+  LEFT JOIN public.cbt_soal_kunci k ON k.soal_id = so.id
+  LEFT JOIN public.cbt_jawaban_siswa j ON j.soal_id = so.id AND j.peserta_id = p_peserta_id
+  LEFT JOIN public.cbt_penilaian_jawaban pj ON pj.jawaban_id = j.id
+  WHERE so.bank_soal_id = v_sesi.bank_soal_id;
+
+  RETURN v_result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.fn_cbt_get_student_review(UUID) TO anon, authenticated, service_role;
+
+-- 6.5 Penyempurnaan cbt_verify_token (Tanpa Token: waktu_mulai = NULL saat status belum_mulai)
+-- & Proteksi Trusted RPC pada cbt_internal_score_submission dan cbt_submit_exam
+CREATE OR REPLACE FUNCTION public.cbt_verify_token(
+    p_sesi_id UUID,
+    p_token VARCHAR DEFAULT '',
+    p_siswa_nisn VARCHAR DEFAULT NULL,
+    p_kelas VARCHAR DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_sesi RECORD;
+    v_peserta RECORD;
+    v_kelas_peserta VARCHAR;
+BEGIN
+    PERFORM set_config('app.trusted_rpc', 'true', true);
+
+    SELECT * INTO v_sesi
+    FROM public.cbt_sesi_ujian
+    WHERE id = p_sesi_id;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Sesi penilaian tidak ditemukan.');
+    END IF;
+
+    IF v_sesi.status NOT IN ('berlangsung', 'aktif') THEN
+        IF v_sesi.status = 'beku' THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Sesi ujian sedang dijeda darurat oleh Admin sekolah.');
+        ELSIF v_sesi.status IN ('mendatang', 'terjadwal', 'draft') THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Sesi ujian belum dibuka.');
+        ELSE
+            RETURN jsonb_build_object('success', false, 'message', 'Sesi ujian telah selesai ditutup.');
+        END IF;
+    END IF;
+
+    -- Prioritas 1: Ambil kelas dari enrollment pada TAHUN AJARAN AKTIF
+    SELECT e.kelas INTO v_kelas_peserta
+    FROM public.enrollment e
+    JOIN public.tahun_ajaran ta ON ta.id = e.tahun_ajaran_id
+    WHERE e.nisn = p_siswa_nisn AND ta.is_aktif = true
+    LIMIT 1;
+
+    -- Prioritas 2: Gunakan p_kelas dari session login siswa jika valid
+    IF v_kelas_peserta IS NULL AND p_kelas IS NOT NULL AND TRIM(p_kelas) <> '' THEN
+        v_kelas_peserta := TRIM(p_kelas);
+    END IF;
+
+    -- Prioritas 3: Cari dari siswa_lengkap khusus yang is_aktif = true
+    IF v_kelas_peserta IS NULL THEN
+        SELECT kelas INTO v_kelas_peserta
+        FROM public.siswa_lengkap
+        WHERE nisn = p_siswa_nisn AND is_aktif = true
+        LIMIT 1;
+    END IF;
+
+    -- Prioritas 4: Ambil dari record peserta sesi ini jika sudah pernah tercatat
+    IF v_kelas_peserta IS NULL THEN
+        SELECT kelas INTO v_kelas_peserta
+        FROM public.cbt_peserta_ujian
+        WHERE sesi_id = p_sesi_id AND siswa_nisn = p_siswa_nisn
+        LIMIT 1;
+    END IF;
+
+    -- Prioritas 5: Fallback data terbaru siswa_lengkap berdasarkan created_at
+    IF v_kelas_peserta IS NULL THEN
+        SELECT kelas INTO v_kelas_peserta
+        FROM public.siswa_lengkap
+        WHERE nisn = p_siswa_nisn
+        ORDER BY created_at DESC
+        LIMIT 1;
+    END IF;
+
+    -- Validasi apakah kelas siswa masuk dalam target rombel sesi (case-insensitive)
+    IF v_kelas_peserta IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM unnest(v_sesi.kelas_ids) AS k
+        WHERE LOWER(BTRIM(k)) = LOWER(BTRIM(v_kelas_peserta))
+    ) THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'message', 'Kelas Anda (' || v_kelas_peserta || ') bukan peserta target sesi penilaian ini. Penilaian ini khusus untuk kelas: ' || array_to_string(v_sesi.kelas_ids, ', ')
+        );
+    END IF;
+
+    -- Ambil atau inisialisasi record peserta ujian (waktu_mulai = NULL saat status masih belum_mulai)
+    SELECT * INTO v_peserta
+    FROM public.cbt_peserta_ujian
+    WHERE sesi_id = p_sesi_id AND siswa_nisn = p_siswa_nisn;
+
+    IF NOT FOUND THEN
+        INSERT INTO public.cbt_peserta_ujian (
+            sesi_id,
+            siswa_nisn,
+            kelas,
+            status,
+            waktu_mulai,
+            is_blocked
+        )
+        VALUES (
+            p_sesi_id,
+            p_siswa_nisn,
+            COALESCE(v_kelas_peserta, 'Umum'),
+            'belum_mulai',
+            NULL,
+            false
+        )
+        RETURNING * INTO v_peserta;
+    ELSE
+        IF v_kelas_peserta IS NOT NULL AND v_peserta.kelas <> v_kelas_peserta THEN
+            UPDATE public.cbt_peserta_ujian
+            SET kelas = v_kelas_peserta
+            WHERE id = v_peserta.id;
+            v_peserta.kelas := v_kelas_peserta;
+        END IF;
+    END IF;
+
+    IF v_peserta.is_blocked = true THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'message', 'Akses Anda diblokir oleh Pengawas: ' || COALESCE(v_peserta.block_reason, 'Silakan hubungi Pengawas Ruang.')
+        );
+    END IF;
+
+    IF v_peserta.status = 'terkunci' THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'message', 'Lembar ujian Anda saat ini TERKUNCI karena pelanggaran tata tertib digital. Silakan hubungi Pengawas Ruang.'
+        );
+    ELSIF v_peserta.status = 'selesai' THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'message', 'Ujian ini sudah pernah dikumpulkan sebelumnya.'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'peserta_id', v_peserta.id,
+        'kelas', v_peserta.kelas,
+        'durasi_menit', v_sesi.durasi_menit,
+        'waktu_mulai', v_peserta.waktu_mulai,
+        'message', 'Berhasil masuk lembar ujian langsung.'
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cbt_internal_score_submission(p_peserta_id UUID)
+RETURNS NUMERIC
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_sesi_id UUID;
+    v_bank_soal_id UUID;
+    v_skema_pgk VARCHAR(30);
+    v_total_skor NUMERIC(7,2) := 0.0;
+    v_total_bobot_maksimal NUMERIC(7,2) := 0.0;
+    v_nilai_akhir NUMERIC(5,2) := 0.0;
+    v_rec RECORD;
+    v_skor_soal NUMERIC(5,2);
+    v_is_correct BOOLEAN;
+    v_kunci_arr TEXT[];
+    v_jawab_arr TEXT[];
+    v_benar_count INT;
+    v_salah_count INT;
+    v_total_kunci INT;
+BEGIN
+    PERFORM set_config('app.trusted_rpc', 'true', true);
+
+    SELECT s.id, s.bank_soal_id, s.skema_pg_kompleks 
+    INTO v_sesi_id, v_bank_soal_id, v_skema_pgk
+    FROM public.cbt_peserta_ujian p
+    JOIN public.cbt_sesi_ujian s ON s.id = p.sesi_id
+    WHERE p.id = p_peserta_id;
+
+    IF v_sesi_id IS NULL THEN
+        RETURN 0.0;
+    END IF;
+
+    SELECT COALESCE(SUM(so.bobot), 0.0)
+    INTO v_total_bobot_maksimal
+    FROM public.cbt_soal so
+    WHERE so.bank_soal_id = v_bank_soal_id;
+
+    FOR v_rec IN 
+        SELECT 
+            j.id AS jawaban_id,
+            j.jawaban_terpilih,
+            so.id AS soal_id,
+            so.tipe_soal,
+            so.bobot,
+            k.kunci_jawaban,
+            pj.skor AS existing_skor,
+            pj.is_correct AS existing_is_correct
+        FROM public.cbt_jawaban_siswa j
+        JOIN public.cbt_soal so ON so.id = j.soal_id
+        LEFT JOIN public.cbt_soal_kunci k ON k.soal_id = so.id
+        LEFT JOIN public.cbt_penilaian_jawaban pj ON pj.jawaban_id = j.id
+        WHERE j.peserta_id = p_peserta_id
+    LOOP
+        v_skor_soal := 0.0;
+        v_is_correct := false;
+
+        IF v_rec.tipe_soal = 'uraian' THEN
+            v_skor_soal := COALESCE(v_rec.existing_skor, 0.0);
+            v_is_correct := COALESCE(v_rec.existing_is_correct, (v_skor_soal >= v_rec.bobot));
+
+            INSERT INTO public.cbt_penilaian_jawaban(jawaban_id, is_correct, skor)
+            VALUES (v_rec.jawaban_id, v_is_correct, v_skor_soal)
+            ON CONFLICT (jawaban_id) DO UPDATE 
+            SET is_correct = COALESCE(public.cbt_penilaian_jawaban.is_correct, EXCLUDED.is_correct),
+                skor = COALESCE(public.cbt_penilaian_jawaban.skor, EXCLUDED.skor);
+
+            v_total_skor := v_total_skor + v_skor_soal;
+
+        ELSIF v_rec.kunci_jawaban IS NOT NULL AND v_rec.jawaban_terpilih IS NOT NULL THEN
+            IF v_rec.tipe_soal IN ('pg', 'benar_salah') THEN
+                IF UPPER(TRIM(v_rec.jawaban_terpilih)) = UPPER(TRIM(v_rec.kunci_jawaban)) THEN
+                    v_skor_soal := v_rec.bobot;
+                    v_is_correct := true;
+                END IF;
+
+            ELSIF v_rec.tipe_soal = 'pg_kompleks' THEN
+                BEGIN
+                    SELECT ARRAY(SELECT UPPER(TRIM(jsonb_array_elements_text(v_rec.kunci_jawaban::jsonb)))) INTO v_kunci_arr;
+                EXCEPTION WHEN OTHERS THEN
+                    v_kunci_arr := string_to_array(UPPER(replace(v_rec.kunci_jawaban, ' ', '')), ',');
+                END;
+
+                BEGIN
+                    SELECT ARRAY(SELECT UPPER(TRIM(jsonb_array_elements_text(v_rec.jawaban_terpilih::jsonb)))) INTO v_jawab_arr;
+                EXCEPTION WHEN OTHERS THEN
+                    v_jawab_arr := string_to_array(UPPER(replace(v_rec.jawaban_terpilih, ' ', '')), ',');
+                END;
+
+                v_total_kunci := cardinality(v_kunci_arr);
+
+                IF v_skema_pgk = 'all_or_nothing' THEN
+                    IF v_kunci_arr @> v_jawab_arr AND v_jawab_arr @> v_kunci_arr THEN
+                        v_skor_soal := v_rec.bobot;
+                        v_is_correct := true;
+                    END IF;
+                ELSE
+                    SELECT count(*) INTO v_benar_count FROM unnest(v_jawab_arr) j WHERE j = ANY(v_kunci_arr);
+                    SELECT count(*) INTO v_salah_count FROM unnest(v_jawab_arr) j WHERE NOT (j = ANY(v_kunci_arr));
+
+                    IF v_total_kunci > 0 THEN
+                        v_skor_soal := GREATEST(0.0, ROUND(((v_benar_count::numeric / v_total_kunci::numeric) - (v_salah_count::numeric * 0.25)) * v_rec.bobot, 2));
+                        IF v_skor_soal = v_rec.bobot THEN
+                            v_is_correct := true;
+                        END IF;
+                    END IF;
+                END IF;
+
+            ELSIF v_rec.tipe_soal = 'isian' THEN
+                IF LOWER(TRIM(v_rec.jawaban_terpilih)) = LOWER(TRIM(v_rec.kunci_jawaban)) THEN
+                    v_skor_soal := v_rec.bobot;
+                    v_is_correct := true;
+                END IF;
+
+            ELSIF v_rec.tipe_soal = 'menjodohkan' THEN
+                BEGIN
+                    IF v_rec.jawaban_terpilih::jsonb = v_rec.kunci_jawaban::jsonb THEN
+                        v_skor_soal := v_rec.bobot;
+                        v_is_correct := true;
+                    END IF;
+                EXCEPTION WHEN OTHERS THEN
+                    v_skor_soal := 0.0;
+                END;
+            END IF;
+
+            INSERT INTO public.cbt_penilaian_jawaban(jawaban_id, is_correct, skor)
+            VALUES (v_rec.jawaban_id, v_is_correct, v_skor_soal)
+            ON CONFLICT (jawaban_id) DO UPDATE SET is_correct = EXCLUDED.is_correct, skor = EXCLUDED.skor;
+
+            v_total_skor := v_total_skor + v_skor_soal;
+        END IF;
+    END LOOP;
+
+    IF v_total_bobot_maksimal <= 0 THEN
+        SELECT COALESCE(SUM(so.bobot), 0.0)
+        INTO v_total_bobot_maksimal
+        FROM public.cbt_jawaban_siswa j
+        JOIN public.cbt_soal so ON so.id = j.soal_id
+        WHERE j.peserta_id = p_peserta_id;
+    END IF;
+
+    IF v_total_bobot_maksimal > 0 THEN
+        v_nilai_akhir := LEAST(100.0, GREATEST(0.0, ROUND((v_total_skor / v_total_bobot_maksimal) * 100.0, 2)));
+    ELSE
+        v_nilai_akhir := 0.0;
+    END IF;
+
+    UPDATE public.cbt_peserta_ujian 
+    SET nilai_akhir = v_nilai_akhir 
+    WHERE id = p_peserta_id;
+
+    RETURN v_nilai_akhir;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cbt_submit_exam(
+    p_peserta_id UUID,
+    p_nisn TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_current_nisn TEXT := COALESCE(NULLIF(TRIM(p_nisn), ''), (auth.jwt() ->> 'nisn'));
+    v_peserta RECORD;
+    v_total_skor NUMERIC(5,2);
+BEGIN
+    PERFORM set_config('app.trusted_rpc', 'true', true);
+
+    SELECT p.*, s.tampilkan_nilai INTO v_peserta
+    FROM public.cbt_peserta_ujian p
+    JOIN public.cbt_sesi_ujian s ON s.id = p.sesi_id
+    WHERE p.id = p_peserta_id 
+      AND (v_current_nisn IS NULL OR p.siswa_nisn = v_current_nisn);
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Data peserta tidak valid atau bukan milik akun Anda.';
+    END IF;
+
+    IF v_peserta.status = 'terkunci' OR COALESCE(v_peserta.is_blocked, false) = true THEN
+        RAISE EXCEPTION 'Ujian tidak dapat dikumpulkan: lembar ujian Anda sedang TERKUNCI. Silakan hubungi Pengawas Ruang.';
+    ELSIF v_peserta.status = 'selesai' THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'status', 'selesai',
+            'waktu_selesai', v_peserta.waktu_selesai,
+            'total_skor_sementara', CASE WHEN v_peserta.tampilkan_nilai = 'instan' OR v_peserta.is_nilai_shared THEN v_peserta.nilai_akhir ELSE NULL END,
+            'is_nilai_shared', (v_peserta.tampilkan_nilai = 'instan' OR COALESCE(v_peserta.is_nilai_shared, false))
+        );
+    END IF;
+
+    UPDATE public.cbt_peserta_ujian
+    SET status = 'selesai', waktu_selesai = now()
+    WHERE id = p_peserta_id;
+
+    v_total_skor := public.cbt_internal_score_submission(p_peserta_id);
+
+    IF v_peserta.tampilkan_nilai = 'instan' THEN
+        UPDATE public.cbt_peserta_ujian SET is_nilai_shared = true WHERE id = p_peserta_id;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'status', 'selesai',
+        'waktu_selesai', now(),
+        'total_skor_sementara', CASE WHEN v_peserta.tampilkan_nilai = 'instan' THEN v_total_skor ELSE NULL END,
+        'is_nilai_shared', (v_peserta.tampilkan_nilai = 'instan')
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cbt_verify_token(UUID, VARCHAR, VARCHAR, VARCHAR) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cbt_internal_score_submission(UUID) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cbt_submit_exam(UUID, TEXT) TO anon, authenticated, service_role;
+
 -- ------------------------------------------------------------------------------
 -- SELESAI & REFRESH SCHEMA CACHE POSTGREST
 -- ------------------------------------------------------------------------------

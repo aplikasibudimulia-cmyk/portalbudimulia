@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabaseClient'
 import SiswaCbtPembahasanModal from './SiswaCbtPembahasanModal'
 import { getOrCreateDeviceId, detectDeviceInfo } from '../../utils/cbt/cbtDeviceHelper'
+import { getServerNow } from '../../utils/dateUtils'
 
 // Subject styling matcher khas aplikasi eBudimulia
 function getSubjectTheme(mapelName = '') {
@@ -193,7 +194,7 @@ export default function SiswaCbtPortalSection({ student: studentProp }) {
     if (!student?.nisn) return
     setLoading(true)
     try {
-      const now = new Date()
+      const now = getServerNow()
 
       // 1. Ambil Sesi yang tidak berstatus draft
       const { data: sesiList, error: errSesi } = await supabase
@@ -271,7 +272,7 @@ export default function SiswaCbtPortalSection({ student: studentProp }) {
   // Masuk Lembar Ujian Langsung (Siswa Langsung Mengerjakan Sesuai Kelas)
   const handleStartExamFlow = async (sesi) => {
     const waktuTutup = sesi.waktu_tutup ? new Date(sesi.waktu_tutup) : null
-    if ((waktuTutup && new Date() > waktuTutup) || sesi.status === 'selesai') {
+    if ((waktuTutup && getServerNow() > waktuTutup) || sesi.status === 'selesai') {
       alert('Batas waktu pengerjaan untuk penilaian ini telah berakhir.')
       return
     }

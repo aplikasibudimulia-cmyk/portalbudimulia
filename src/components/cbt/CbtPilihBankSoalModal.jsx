@@ -130,14 +130,35 @@ export default function CbtPilihBankSoalModal({
         let pembahasan = ''
         if (Array.isArray(q.cbt_soal_kunci) && q.cbt_soal_kunci.length > 0) {
           pembahasan = q.cbt_soal_kunci[0]?.pembahasan || ''
+        } else if (q.cbt_soal_kunci?.pembahasan) {
+          pembahasan = q.cbt_soal_kunci.pembahasan
         }
+
+        // Pastikan parsedOpsi memiliki properti is_kunci di memori untuk preview guru
+        const enrichedOpsi = parsedOpsi.map((op, opIdx) => {
+          const opKey = String(op?.key || String.fromCharCode(65 + opIdx)).trim().toUpperCase()
+          let isKunci = Boolean(op?.is_kunci)
+          if (key) {
+            if (q.tipe_soal === 'pg_kompleks') {
+              try {
+                const kArr = Array.isArray(key) ? key : JSON.parse(key)
+                isKunci = kArr.map(k => String(k).trim().toUpperCase()).includes(opKey)
+              } catch {
+                isKunci = String(key).toUpperCase().includes(opKey)
+              }
+            } else {
+              isKunci = opKey === String(key).trim().toUpperCase()
+            }
+          }
+          return typeof op === 'object' && op !== null ? { ...op, is_kunci: isKunci } : op
+        })
 
         return {
           id: q.id || `q_${idx}`,
           nomor_urut: q.nomor_urut || idx + 1,
           tipe_soal: q.tipe_soal || 'pg',
           pertanyaan: q.pertanyaan || '',
-          opsi: parsedOpsi,
+          opsi: enrichedOpsi,
           bobot: q.bobot || 1.0,
           kunci_jawaban: key,
           pembahasan: pembahasan

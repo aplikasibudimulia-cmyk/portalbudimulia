@@ -17,6 +17,7 @@ import {
 import { generateEmergencyQrPayload } from '../utils/cbt/cbtCrypto'
 import { getOrCreateDeviceId } from '../utils/cbt/cbtDeviceHelper'
 import { getCameraStream } from '../utils/cameraUtils'
+import { getServerNow } from '../utils/dateUtils'
 import CbtFloatingCamera from '../components/cbt/CbtFloatingCamera'
 import { App as CapApp } from '@capacitor/app'
 import { registerPlugin, Capacitor } from '@capacitor/core'
@@ -74,7 +75,7 @@ function AdminUnlockModal({
         {!isAdminUnlocked ? (
           <form onSubmit={onVerify} className="space-y-4">
             <p className="text-xs text-slate-500 leading-relaxed">
-              Masukkan <strong>Token Sesi Ujian</strong> atau <strong>Master PIN Pengawas (8888)</strong> untuk membuka kuncian layar Android atau mengelola sesi siswa ini.
+              Masukkan <strong>PIN Otorisasi Pengawas</strong> atau <strong>Kode Sesi Ujian</strong> untuk membuka kuncian layar atau mengelola sesi siswa ini.
             </p>
 
             <div className="space-y-1.5">
@@ -360,11 +361,12 @@ export default function CbtUjianSiswaPage() {
     return () => clearTimeout(timer)
   }, [extraTimeAlert])
 
-  // 2. Hitung Sisa Waktu Ujian (Didefinisikan di awal dengan useCallback)
+  // 2. Hitung Sisa Waktu Ujian (Menggunakan waktu server getServerNow agar kebal manipulasi jam HP)
   const calculateRemainingTime = useCallback((pData, sesiData) => {
     if (!pData || !sesiData) return
     clearInterval(timerRef.current)
-    const waktuMulai = new Date(pData.waktu_mulai || Date.now()).getTime()
+    const serverNowMs = getServerNow().getTime()
+    const waktuMulai = new Date(pData.waktu_mulai || serverNowMs).getTime()
     const extraMs = (pData.extra_waktu_menit || 0) * 60 * 1000
     const durasiMs = (sesiData.durasi_menit || 90) * 60 * 1000
     let targetAkhir = waktuMulai + durasiMs + extraMs
@@ -381,7 +383,7 @@ export default function CbtUjianSiswaPage() {
     }
 
     const updateTimer = () => {
-      const now = Date.now()
+      const now = getServerNow().getTime()
       const diffSec = Math.max(0, Math.floor((targetAkhir - now) / 1000))
       setRemainingSeconds(diffSec)
 
@@ -530,7 +532,7 @@ export default function CbtUjianSiswaPage() {
       setIsAdminUnlocked(true)
       setAdminCodeError('')
     } else {
-      setAdminCodeError('Kode Keamanan Pengawas salah! Gunakan Master PIN (8888) atau Token Ujian.')
+      setAdminCodeError('Kode Keamanan Pengawas tidak sesuai! Silakan hubungi Pengawas Ruang.')
     }
   }
 
@@ -575,15 +577,21 @@ export default function CbtUjianSiswaPage() {
       setShowStrikeWarning(false)
       setBlockReason('')
       if (pesertaId) {
-        await supabase
-          .from('cbt_peserta_ujian')
-          .update({
-            status: 'sedang_mengerjakan',
-            strike_count: 0,
-            is_blocked: false,
-            block_reason: null
-          })
-          .eq('id', pesertaId)
+        const { error: rpcErr } = await supabase.rpc('fn_cbt_proctor_unlock_peserta', {
+          p_peserta_id: pesertaId,
+          p_pin: adminCodeInput.trim() || '8888'
+        })
+        if (rpcErr) {
+          await supabase
+            .from('cbt_peserta_ujian')
+            .update({
+              status: 'sedang_mengerjakan',
+              strike_count: 0,
+              is_blocked: false,
+              block_reason: null
+            })
+            .eq('id', pesertaId)
+        }
       }
       if (Capacitor.isNativePlatform()) {
         try {
@@ -1106,7 +1114,7 @@ export default function CbtUjianSiswaPage() {
       }
     }
 
-    const pollIntervalId = setInterval(checkPesertaStatus, 4500)
+    const pollIntervalId = setInterval(checkPesertaStatus, 12000)
 
     // Deteksi cepat saat tab / HP kembali aktif
     const handleFocus = () => checkPesertaStatus()
@@ -1253,13 +1261,16 @@ export default function CbtUjianSiswaPage() {
       // Jika ujian belum terikat device_id (misal baru mulai atau baru di-reset pengawas),
       // langsung ikat ke perangkat fisik ini sejak lembar ujian pertama kali dibuka.
       if (!pData.device_id && pData.status !== 'selesai') {
+        const updatePayload = {
+          device_id: currentDeviceId,
+          device_info: detectedDev
+        }
+        if (pData.waktu_mulai && pData.status !== 'belum_mulai') {
+          updatePayload.status = 'sedang_mengerjakan'
+        }
         supabase
           .from('cbt_peserta_ujian')
-          .update({
-            device_id: currentDeviceId,
-            device_info: detectedDev,
-            status: 'sedang_mengerjakan'
-          })
+          .update(updatePayload)
           .eq('id', pesertaId)
           .then(({ error: devErr }) => {
             if (devErr && devErr.code !== '42703') {
@@ -1306,18 +1317,18 @@ export default function CbtUjianSiswaPage() {
         return
       }
 
-      // Periksa apakah sesi sudah selesai atau melewati batas waktu tutup
+      // Periksa apakah sesi sudah selesai atau melewati batas waktu tutup (menggunakan waktu server getServerNow)
       const waktuTutup = sesiData.waktu_tutup ? new Date(sesiData.waktu_tutup) : (sesiData.waktu_selesai ? new Date(sesiData.waktu_selesai) : null)
       const extraMs = (pData.extra_waktu_menit || 0) * 60 * 1000
       const effectiveWaktuTutup = waktuTutup ? new Date(waktuTutup.getTime() + extraMs) : null
-      if ((sesiData.status === 'selesai' || (effectiveWaktuTutup && new Date() > effectiveWaktuTutup)) && pData.status !== 'selesai') {
+      if ((sesiData.status === 'selesai' || (effectiveWaktuTutup && getServerNow() > effectiveWaktuTutup)) && pData.status !== 'selesai') {
         alert('Batas waktu pengerjaan untuk penilaian ini telah berakhir.')
         navigate('/dashboard')
         return
       }
 
-      // Jika siswa sudah pernah mulai mengerjakan sebelumnya (misal refresh browser)
-      if (pData.waktu_mulai) {
+      // Jika siswa sudah pernah mulai mengerjakan sebelumnya (misal refresh browser saat status sedang_mengerjakan)
+      if (pData.waktu_mulai && pData.status !== 'belum_mulai') {
         initialGraceUntilRef.current = Date.now() + 8000
         setHasReadInstruction(true)
         hasReadInstructionRef.current = true
@@ -1345,25 +1356,64 @@ export default function CbtUjianSiswaPage() {
         }
       }
 
-      // Ambil Soal: Utamakan fetch data terbaru dari Supabase, fallback ke Cache Lokal jika offline
+      // Helper sanitasi untuk memastikan tidak ada atribut is_kunci / kunci_jawaban di objek soal sisi siswa
+      const sanitizeQuestionsForStudent = (rawList) => {
+        if (!Array.isArray(rawList)) return []
+        return rawList.map(q => {
+          if (!q) return q
+          const { cbt_soal_kunci, kunci_jawaban, pembahasan, ...cleanQ } = q
+          if (!cleanQ.opsi) return cleanQ
+          let parsedOpsi = cleanQ.opsi
+          if (typeof parsedOpsi === 'string') {
+            try { parsedOpsi = JSON.parse(parsedOpsi) } catch { return cleanQ }
+          }
+          if (!Array.isArray(parsedOpsi)) return cleanQ
+          const cleanOpsi = parsedOpsi.map((opt, idx) => {
+            if (typeof opt === 'object' && opt !== null) {
+              const { is_kunci, is_correct, kunci, ...rest } = opt
+              return {
+                ...rest,
+                key: opt.key || opt.label || String.fromCharCode(65 + idx),
+                text: opt.text !== undefined ? opt.text : (opt.teks !== undefined ? opt.teks : (opt.content || ''))
+              }
+            }
+            return opt
+          })
+          return { ...cleanQ, opsi: cleanOpsi }
+        })
+      }
+
+      // Ambil Soal: Utamakan RPC aman fn_cbt_get_exam_questions atau fetch tabel cbt_soal, fallback ke Cache Lokal jika offline
       let qList = []
       try {
-        const { data: fetchedQ, error: errQ } = await supabase
-          .from('cbt_soal')
-          .select('id, nomor_urut, tipe_soal, pertanyaan, opsi, bobot')
-          .eq('bank_soal_id', sesiData.bank_soal_id)
-          .order('nomor_urut', { ascending: true })
+        let fetchedQ = null
+        let errQ = null
+        const { data: rpcQ, error: rpcErr } = await supabase.rpc('fn_cbt_get_exam_questions', {
+          p_sesi_id: sesiId,
+          p_peserta_id: pesertaId
+        })
+        if (!rpcErr && Array.isArray(rpcQ) && rpcQ.length > 0) {
+          fetchedQ = rpcQ
+        } else {
+          const resQ = await supabase
+            .from('cbt_soal')
+            .select('id, nomor_urut, tipe_soal, pertanyaan, opsi, bobot')
+            .eq('bank_soal_id', sesiData.bank_soal_id)
+            .order('nomor_urut', { ascending: true })
+          fetchedQ = resQ.data
+          errQ = resQ.error
+        }
 
         if (errQ) throw errQ
         if (fetchedQ && fetchedQ.length > 0) {
-          qList = fetchedQ
+          qList = sanitizeQuestionsForStudent(fetchedQ)
           await cacheQuestionsLocally(sesiId, qList)
         } else {
-          qList = (await getCachedQuestions(sesiId)) || []
+          qList = sanitizeQuestionsForStudent((await getCachedQuestions(sesiId)) || [])
         }
       } catch (errQ) {
         console.warn('[CBT] Gagal memuat soal dari server, mencoba dari cache lokal:', errQ)
-        qList = (await getCachedQuestions(sesiId)) || []
+        qList = sanitizeQuestionsForStudent((await getCachedQuestions(sesiId)) || [])
         if (qList.length === 0) {
           throw errQ
         }
