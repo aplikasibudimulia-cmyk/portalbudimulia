@@ -499,13 +499,15 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
             const detailedCity = rev && rev.street ? `🎯 ${rev.street} (${rev.city})` : `🎯 Titik GPS Presisi (${geo.city})`
             const detailedRegion = rev ? `${rev.region} (±${acc}m GPS)` : `${geo.region} (±${acc}m GPS)`
 
-            await supabase.rpc('fn_update_admin_access_gps', {
-              p_log_id: logId,
-              p_lat: lat,
-              p_lon: lon,
-              p_city: detailedCity,
-              p_region: detailedRegion
-            }).catch(() => {})
+            try {
+              await supabase.rpc('fn_update_admin_access_gps', {
+                p_log_id: logId,
+                p_lat: lat,
+                p_lon: lon,
+                p_city: detailedCity,
+                p_region: detailedRegion
+              })
+            } catch {}
           } catch {}
         },
         () => {},
@@ -539,11 +541,13 @@ export async function submitIntruderReply(replyText) {
 
     // 2. Catat juga di activity_log sebagai backup jejak audit permanen
     const identity = getStoredDeviceIdentity() || sId
-    await supabase.from('activity_log').insert({
-      aktor: 'PENYUSUP_KLARIFIKASI',
-      aksi: `BALASAN:${sId}`,
-      detail: `[Sesi ${sId}] (${identity}) membalas intervensi Admin: "${cleanReply}"`
-    }).catch(() => {})
+    try {
+      await supabase.from('activity_log').insert({
+        aktor: 'PENYUSUP_KLARIFIKASI',
+        aksi: `BALASAN:${sId}`,
+        detail: `[Sesi ${sId}] (${identity}) membalas intervensi Admin: "${cleanReply}"`
+      })
+    } catch {}
 
     // 3. Broadcast realtime instan ke layar Admin
     try {

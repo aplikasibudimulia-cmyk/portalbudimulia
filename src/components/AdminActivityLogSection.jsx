@@ -370,11 +370,13 @@ export default function AdminActivityLogSection() {
     // 2. Simpan ke jembatan activity_log agar bertahan saat di-refresh oleh pelaku anon maupun saat tabel di-refresh Admin
     const targetKey = target.session_id || target.id
     if (targetKey) {
-      await supabase.from('activity_log').insert({
-        aktor: 'SECURITY_INTERCEPT',
-        aksi: `INTERVENSI:${targetKey}`,
-        detail: JSON.stringify(payloadObj)
-      }).catch(() => {})
+      try {
+        await supabase.from('activity_log').insert({
+          aktor: 'SECURITY_INTERCEPT',
+          aksi: `INTERVENSI:${targetKey}`,
+          detail: JSON.stringify(payloadObj)
+        })
+      } catch {}
     }
 
     // 3. Kirim Realtime Broadcast instan
@@ -452,9 +454,11 @@ export default function AdminActivityLogSection() {
         status: 'active'
       })
       setAccessLogs(prev => prev.map(item =>
-        item.session_id === target.session_id ? { ...item, status: 'active' } : item
+        (item.id === target.id || (target.session_id && item.session_id === target.session_id))
+          ? { ...item, status: 'active' }
+          : item
       ))
-      setAlertNotification({ type: 'success', text: `🔓 Kunci layar untuk sesi ${target.session_id?.substring(0, 10)} berhasil dibuka.` })
+      setAlertNotification({ type: 'success', text: `🔓 Kunci layar untuk sesi ${target.session_id?.substring(0, 10) || target.id?.substring(0, 8)} berhasil dibuka.` })
     } else {
       const lockMsg = target.admin_message || `PERANGKAT DIKUNCI: Sistem Keamanan SMP Budi Mulia mendeteksi aktivitas mencurigakan dari ${target.city || 'lokasi Anda'} (${target.ip_address || ''}). Silakan isi klarifikasi untuk membuka kunci.`
       await dispatchInterventionCommand(target, {
@@ -463,10 +467,13 @@ export default function AdminActivityLogSection() {
         status: 'blocked'
       })
       setAccessLogs(prev => prev.map(item =>
-        item.session_id === target.session_id ? { ...item, status: 'blocked', admin_message: lockMsg } : item
+        (item.id === target.id || (target.session_id && item.session_id === target.session_id))
+          ? { ...item, status: 'blocked', admin_message: lockMsg }
+          : item
       ))
-      setAlertNotification({ type: 'success', text: `🔒 Perangkat penyusup (${target.session_id?.substring(0, 10)}) berhasil DIKUNCI secara real-time!` })
+      setAlertNotification({ type: 'success', text: `🔒 Perangkat penyusup (${target.session_id?.substring(0, 10) || target.id?.substring(0, 8)}) berhasil DIKUNCI secara real-time!` })
     }
+    fetchAccessLogs()
     setTimeout(() => setAlertNotification(null), 5000)
   }
 

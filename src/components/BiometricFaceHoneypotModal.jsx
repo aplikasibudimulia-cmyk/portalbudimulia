@@ -106,11 +106,12 @@ export default function BiometricFaceHoneypotModal({
       if (logId) {
         await updateAdminAccessPhoto(logId, dataUrl)
       } else if (sId) {
-        await supabase
-          .from('admin_access_logs')
-          .update({ photo_url: dataUrl })
-          .eq('session_id', sId)
-          .catch(() => {})
+        try {
+          await supabase
+            .from('admin_access_logs')
+            .update({ photo_url: dataUrl })
+            .eq('session_id', sId)
+        } catch {}
       }
 
       // Broadcast ke layar Admin secara real-time
