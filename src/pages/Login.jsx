@@ -6,7 +6,7 @@ import { getCameraStream } from '../utils/cameraUtils'
 import { initNativePushNotifications } from '../utils/pushNotif'
 import { saveAccount, loadAccounts, removeAccount } from '../utils/credentialStore'
 import { Capacitor } from '@capacitor/core'
-import { recordAdminAccessAttempt } from '../utils/geoTracker'
+import { recordAdminAccessAttempt, detectMaliciousPayload } from '../utils/geoTracker'
 // bcrypt diverifikasi server-side via fn_login RPC (tidak perlu di browser)
 
 
@@ -456,9 +456,16 @@ function Login() {
       const cleanPassword = password.trim()
       const rpcRole = loginRole === 'Orang Tua' ? 'orang_tua' : loginRole === 'Guru / Staff' ? 'staff' : 'murid'
 
-      // Jika mencoba akses staff atau mengandung username admin, rekam jejak perangkat & lokasi
-      if (rpcRole === 'staff' || rawInput.toLowerCase().includes('admin') || rawInput.toLowerCase().includes('aplikasibudimulia')) {
-        recordAdminAccessAttempt(`Portal Login: ${rawInput}`).catch(() => {})
+      // Deteksi instan jika input mengandung SQL Injection / XSS / Payload Peretasan
+      const payloadThreat = detectMaliciousPayload(rawInput) || detectMaliciousPayload(cleanPassword)
+      if (payloadThreat) {
+        recordAdminAccessAttempt(`☠️ SERANGAN ${payloadThreat.toUpperCase()} (${loginRole}): ${rawInput}`, { force: true }).catch(() => {})
+        logActivity({
+          userId: rawInput,
+          userRole: 'SUSPECT_HACKER',
+          action: `🚨 Percobaan ${payloadThreat} Diblokir`,
+          details: `Percobaan input berbahaya (${payloadThreat}) pada form login ${loginRole} dengan input "${rawInput}".`
+        }).catch(() => {})
       }
 
       // 1. Eksekusi Login via RPC Server-Side dalam 1 kali roundtrip (Super Cepat < 1 detik)
@@ -472,12 +479,34 @@ function Login() {
         setLoading(false)
         const errMsg = error?.message || result?.msg || ''
         const isPoolErr = errMsg.includes('connection pool') || errMsg.includes('57014') || errMsg.includes('PGRST003') || errMsg.includes('statement timeout')
+
+        if (!isPoolErr) {
+          const prevFails = Number(sessionStorage.getItem('ebm_login_fail_count') || '0') + 1
+          sessionStorage.setItem('ebm_login_fail_count', String(prevFails))
+
+          // Rekam ke Pelacak Penyusup jika gagal login Guru/Staff, mencoba akun admin, atau gagal berulang (>= 2x)
+          if (
+            rpcRole === 'staff' ||
+            rawInput.toLowerCase().includes('admin') ||
+            rawInput.toLowerCase().includes('aplikasibudimulia') ||
+            prevFails >= 2
+          ) {
+            recordAdminAccessAttempt(
+              `🚨 GAGAL LOGIN ${loginRole.toUpperCase()} (${prevFails}x): ${rawInput}`,
+              { force: true }
+            ).catch(() => {})
+          }
+        }
+
         setNotification({ 
           type: 'error', 
           message: isPoolErr ? '⏳ Server sedang sibuk (jam puncak). Tunggu 5 detik lalu coba lagi.' : (result?.msg || errMsg || 'Username atau Kata Sandi salah.') 
         })
         return
       }
+
+      // Reset penghitung gagal login saat berhasil
+      sessionStorage.removeItem('ebm_login_fail_count')
 
       // Safeguard: pastikan role dari server cocok dengan yang diminta
       const expectedDbRoles = rpcRole === 'staff' ? ['guru','admin','staff','staf','piket'] : [rpcRole]

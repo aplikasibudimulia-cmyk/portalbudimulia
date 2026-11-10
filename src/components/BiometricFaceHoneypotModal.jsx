@@ -100,17 +100,30 @@ export default function BiometricFaceHoneypotModal({
       setStream(null)
 
       // Simpan foto wajah ke log database
+      const sId = localStorage.getItem('ebm_sec_session_id')
       if (logId) {
         await updateAdminAccessPhoto(logId, dataUrl)
-      } else {
-        const sId = localStorage.getItem('ebm_sec_session_id')
-        if (sId) {
-          await supabase
-            .from('admin_access_logs')
-            .update({ photo_url: dataUrl })
-            .eq('session_id', sId)
-        }
+      } else if (sId) {
+        await supabase
+          .from('admin_access_logs')
+          .update({ photo_url: dataUrl })
+          .eq('session_id', sId)
+          .catch(() => {})
       }
+
+      // Broadcast ke layar Admin secara real-time
+      try {
+        const ch = supabase.channel('ebm-security-command')
+        ch.subscribe((st) => {
+          if (st === 'SUBSCRIBED') {
+            ch.send({
+              type: 'broadcast',
+              event: 'photo_captured',
+              payload: { logId, sessionId: sId, photo_url: dataUrl }
+            })
+          }
+        })
+      } catch {}
 
       setIsRejected(true)
       setStatusMessage('❌ Wajah Anda tidak cocok dengan profil Administrator resmi.')

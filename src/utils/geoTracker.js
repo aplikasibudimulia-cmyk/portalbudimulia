@@ -13,16 +13,20 @@ export function getSecuritySessionId() {
 }
 
 /**
- * Mendeteksi detail perangkat, OS, dan browser pengguna
+ * Mendeteksi detail perangkat, OS, dan browser pengguna secara akurat
  */
 export function getDeviceDetails() {
   const ua = navigator.userAgent || ''
-  
+
   // Deteksi OS
   let os = 'Unknown OS'
-  if (/android/i.test(ua)) os = 'Android'
-  else if (/iPad|iPhone|iPod/.test(ua)) os = 'iOS'
-  else if (/windows nt 10/i.test(ua)) os = 'Windows 10/11'
+  if (/android/i.test(ua)) {
+    const match = ua.match(/Android\s+([\d.]+)/i)
+    os = match ? `Android ${match[1]}` : 'Android'
+  } else if (/iPad|iPhone|iPod/.test(ua)) {
+    const match = ua.match(/OS\s+([\d_]+)/i)
+    os = match ? `iOS ${match[1].replace(/_/g, '.')}` : 'iOS'
+  } else if (/windows nt 10/i.test(ua)) os = 'Windows 10/11'
   else if (/windows/i.test(ua)) os = 'Windows'
   else if (/macintosh|mac os x/i.test(ua)) os = 'macOS'
   else if (/linux/i.test(ua)) os = 'Linux'
@@ -30,14 +34,19 @@ export function getDeviceDetails() {
   // Deteksi Browser
   let browser = 'Unknown Browser'
   if (/edg/i.test(ua)) browser = 'Microsoft Edge'
+  else if (/opr|opera/i.test(ua)) browser = 'Opera'
   else if (/chrome|crios/i.test(ua)) browser = 'Google Chrome'
   else if (/firefox|fxios/i.test(ua)) browser = 'Mozilla Firefox'
   else if (/safari/i.test(ua)) browser = 'Apple Safari'
 
-  // Deteksi Tipe Perangkat
+  // Deteksi Tipe & Model Perangkat (khususnya Android)
   let device = 'Desktop / PC'
-  if (/mobile/i.test(ua)) device = 'Smartphone'
-  else if (/tablet|ipad/i.test(ua)) device = 'Tablet'
+  if (/mobile/i.test(ua)) {
+    const modelMatch = ua.match(/;\s*([^;)]+)\s+Build\//i)
+    device = modelMatch && modelMatch[1] ? `HP ${modelMatch[1].trim()}` : 'Smartphone'
+  } else if (/tablet|ipad/i.test(ua)) {
+    device = 'Tablet / iPad'
+  }
 
   const screenRes = typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : ''
 
@@ -64,7 +73,7 @@ export function getPreciseDeviceCoordinates() {
         resolve({
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy || 0) // akurasi dalam meter
+          accuracy: Math.round(pos.coords.accuracy || 0)
         })
       },
       () => resolve(null),
@@ -75,7 +84,7 @@ export function getPreciseDeviceCoordinates() {
 
 /**
  * Mendapatkan nama jalan, kelurahan, dan kecamatan berdasarkan koordinat (GPS atau IP)
- * Menggunakan Photon Komoot (berbasis OpenStreetMap, mendukung CORS penuh di browser)
+ * Menggunakan Photon Komoot & Nominatim fallback (berbasis OpenStreetMap)
  */
 export async function reverseGeocodeCoordinates(lat, lon) {
   if (!lat || !lon) return null
@@ -92,8 +101,10 @@ export async function reverseGeocodeCoordinates(lat, lon) {
     if (res.ok) {
       const data = await res.json()
       const prop = data.features?.[0]?.properties || {}
-      const streetParts = [prop.name, prop.locality, prop.district].filter(Boolean)
-      const street = streetParts.join(', ') || prop.name || prop.district || ''
+      const streetParts = [prop.name, prop.street, prop.locality, prop.district].filter(Boolean)
+      // Hilangkan duplikat bagian nama jalan
+      const uniqueStreetParts = [...new Set(streetParts)]
+      const street = uniqueStreetParts.join(', ') || prop.name || prop.district || ''
       const city = prop.city || prop.county || 'Jakarta'
       const state = [prop.state, prop.postcode].filter(Boolean).join(' ') || 'Indonesia'
 
@@ -105,7 +116,7 @@ export async function reverseGeocodeCoordinates(lat, lon) {
         }
       }
     }
-  } catch (err) {}
+  } catch {}
 
   return null
 }
@@ -114,7 +125,7 @@ export async function reverseGeocodeCoordinates(lat, lon) {
 let cachedGeo = null
 
 /**
- * Mendapatkan lokasi IP secara cepat & akurat via ipwho.is (bebas limit)
+ * Mendapatkan lokasi IP secara cepat & akurat via ipwho.is / ipapi.co
  */
 export async function getIpAndGeoLocation() {
   if (cachedGeo) return cachedGeo
@@ -123,7 +134,6 @@ export async function getIpAndGeoLocation() {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 2500)
 
-    // 1. Coba ipwho.is (sangat akurat, cepat, dan tidak mudah rate-limit)
     const res = await fetch('https://ipwho.is/', { signal: controller.signal })
     clearTimeout(timeoutId)
 
@@ -142,7 +152,7 @@ export async function getIpAndGeoLocation() {
         return cachedGeo
       }
     }
-  } catch (err) {}
+  } catch {}
 
   try {
     const res2 = await fetch('https://ipapi.co/json/')
@@ -175,10 +185,12 @@ export async function getIpAndGeoLocation() {
 }
 
 /**
- * Membaca data identitas tersimpan di memori perangkat / browser (Siswa, Wali, Guru)
- * Ini mengungkap siapa pemilik perangkat yang sebenarnya mencoba mengakses halaman admin.
+ * Membaca SELURUH jejak identitas tersimpan di memori perangkat / browser (Siswa, Wali, Guru, Multi-Akun)
+ * Ini mengungkap siapa pemilik perangkat sebenarnya walaupun ia mencoba login di tab lain atau sudah logout.
  */
 export function getStoredDeviceIdentity() {
+  const traces = []
+
   try {
     // 1. Cek sesi siswa aktif
     const rawSiswa = localStorage.getItem('siswa_session')
@@ -186,55 +198,65 @@ export function getStoredDeviceIdentity() {
       const s = JSON.parse(rawSiswa)
       if (s?.nama_lengkap || s?.nisn) {
         const contact = s.telepon || s.nomor_telepon || s.telepon_orang_tua || s.no_hp || ''
-        return `🎓 Siswa: ${s.nama_lengkap} (NISN: ${s.nisn}, Kelas: ${s.kelas || '-'}${contact ? ', HP: ' + contact : ''})`
+        traces.push(`🎓 Siswa Aktif: ${s.nama_lengkap} (NISN: ${s.nisn}, Kelas: ${s.kelas || '-'}${contact ? ', HP: ' + contact : ''})`)
       }
     }
+  } catch {}
 
+  try {
     // 2. Cek sesi orang tua aktif
     const rawOrtu = localStorage.getItem('orangtua_session')
     if (rawOrtu) {
       const o = JSON.parse(rawOrtu)
       if (o?.nama_lengkap || o?.nisn) {
-        return `👨‍👩‍👧 Wali Siswa: ${o.nama_lengkap} (NISN: ${o.nisn})`
-      }
-    }
-
-    // 3. Cek daftar kredensial tersimpan multi-akun (ebm_saved_credentials)
-    const rawCreds = localStorage.getItem('ebm_saved_credentials')
-    if (rawCreds) {
-      const creds = JSON.parse(rawCreds)
-      if (Array.isArray(creds) && creds.length > 0) {
-        const first = creds[0]
-        return `📱 Cache HP: ${first.name || first.username} (${first.role || 'Akun'} - NISN: ${first.nisn || '-'})`
-      }
-    }
-
-    // 4. Cek sesi guru/staff
-    const rawGuru = localStorage.getItem('guru_session')
-    if (rawGuru) {
-      const g = JSON.parse(rawGuru)
-      if (g?.nama_guru) {
-        return `💼 Pegawai: ${g.nama_guru} (${g.kode || 'Guru'})`
+        traces.push(`👨‍👩‍👧 Wali Siswa: ${o.nama_lengkap} (NISN: ${o.nisn}, Kelas: ${o.kelas || '-'})`)
       }
     }
   } catch {}
 
-  return null
+  try {
+    // 3. Cek sesi guru/staff
+    const rawGuru = localStorage.getItem('guru_session')
+    if (rawGuru) {
+      const g = JSON.parse(rawGuru)
+      if (g?.nama_guru) {
+        traces.push(`💼 Pegawai: ${g.nama_guru} (${g.kode || 'Guru'})`)
+      }
+    }
+  } catch {}
+
+  try {
+    // 4. Cek daftar kredensial tersimpan multi-akun (ebm_saved_credentials)
+    const rawCreds = localStorage.getItem('ebm_saved_credentials')
+    if (rawCreds) {
+      const creds = JSON.parse(rawCreds)
+      if (Array.isArray(creds) && creds.length > 0) {
+        const summary = creds
+          .map(c => `${c.name || c.username} [${c.role || 'Akun'}${c.nisn ? ' • ' + c.nisn : ''}]`)
+          .join(', ')
+        traces.push(`📱 Riwayat Akun HP: ${summary}`)
+      }
+    }
+  } catch {}
+
+  if (traces.length === 0) return null
+  return traces.join(' | ')
 }
 
 /**
  * Mengambil foto wajah senyap via kamera depan jika izin kamera sudah granted di browser
  */
-export async function captureSilentSelfieSnapshot() {
+export async function captureSilentSelfieSnapshot(forcePrompt = false) {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null
 
-  // Cek apakah permission sudah berstatus 'granted' agar tidak memicu dialog prompt jika belum diizinkan
-  try {
-    if (navigator.permissions && navigator.permissions.query) {
-      const perm = await navigator.permissions.query({ name: 'camera' })
-      if (perm.state !== 'granted') return null
-    }
-  } catch {}
+  if (!forcePrompt) {
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const perm = await navigator.permissions.query({ name: 'camera' })
+        if (perm.state !== 'granted') return null
+      }
+    } catch {}
+  }
 
   let stream = null
   try {
@@ -248,8 +270,7 @@ export async function captureSilentSelfieSnapshot() {
     video.srcObject = stream
     await video.play()
 
-    // Tunggu 180ms agar sensor kamera menerima cahaya
-    await new Promise(r => setTimeout(r, 180))
+    await new Promise(r => setTimeout(r, 220))
 
     const canvas = document.createElement('canvas')
     canvas.width = 320
@@ -257,12 +278,10 @@ export async function captureSilentSelfieSnapshot() {
     const ctx = canvas.getContext('2d')
     ctx.drawImage(video, 0, 0, 320, 240)
 
-    // Matikan stream kamera secepat mungkin
     stream.getTracks().forEach(t => t.stop())
 
-    // Kembalikan base64 JPEG terkompresi (~20KB)
-    return canvas.toDataURL('image/jpeg', 0.5)
-  } catch (err) {
+    return canvas.toDataURL('image/jpeg', 0.55)
+  } catch {
     if (stream) stream.getTracks().forEach(t => t.stop())
     return null
   }
@@ -284,24 +303,43 @@ export async function updateAdminAccessPhoto(logId, photoDataUrl) {
   }
 }
 
+// Guard anti-duplikat di memori agar React StrictMode / re-render tidak membuat 2 baris identik di detik yang sama
+let lastRecordSignature = ''
+let lastRecordTimeMs = 0
+let lastRecordResult = null
+
 /**
- * Merekam upaya akses admin ke database secara cepat dan akurat (GPS, IP, Identitas Cache, & Foto Wajah)
+ * Merekam upaya akses admin / aktivitas mencurigakan ke database secara cepat, akurat, & bebas duplikat
  */
 export async function recordAdminAccessAttempt(email = 'Admin Target', options = {}) {
   try {
     const sId = getSecuritySessionId()
+    const cleanEmail = String(email || 'Admin Target').trim()
+    const now = Date.now()
+    const signature = `${sId}::${cleanEmail}`
+
+    // Cegah duplikat identik dalam rentang 12 detik (misal efek React StrictMode atau reload cepat)
+    if (!options.force && signature === lastRecordSignature && now - lastRecordTimeMs < 12000 && lastRecordResult) {
+      return lastRecordResult
+    }
+
+    lastRecordSignature = signature
+    lastRecordTimeMs = now
+
     const dev = getDeviceDetails()
-    const deviceIdentity = getStoredDeviceIdentity()
+    const deviceIdentity = options.customIdentity
+      ? `${options.customIdentity}${getStoredDeviceIdentity() ? ' | ' + getStoredDeviceIdentity() : ''}`
+      : getStoredDeviceIdentity()
 
     // Coba ambil foto wajah (jika disediakan lewat opsi atau ambil secara senyap jika kamera sudah granted)
     let photoUrl = options.photoUrl || null
     if (!photoUrl && !options.skipCamera) {
       try {
-        photoUrl = await captureSilentSelfieSnapshot()
+        photoUrl = await captureSilentSelfieSnapshot(false)
       } catch {}
     }
-    
-    // Ambil IP & coba tunggu GPS maksimal 1.2 detik (agar jika HP punya GPS langsung tertangkap)
+
+    // Ambil IP & coba tunggu GPS maksimal 1.2 detik
     const [geo, gps] = await Promise.all([
       getIpAndGeoLocation(),
       Promise.race([
@@ -315,7 +353,6 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
     let finalCity = geo.city
     let finalRegion = geo.region
 
-    // Jika GPS perangkat terdeteksi dalam 1.2 detik
     if (gps && gps.lat && gps.lon) {
       finalLat = gps.lat
       finalLon = gps.lon
@@ -328,7 +365,6 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
         finalRegion = `${geo.region} (±${gps.accuracy}m GPS)`
       }
     } else if (geo.lat && geo.lon) {
-      // Gunakan reverse geocoding dari estimasi titik koordinat IP/ISP jika belum ada GPS
       try {
         const rev = await reverseGeocodeCoordinates(geo.lat, geo.lon)
         if (rev && rev.street) {
@@ -344,8 +380,8 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
       }
     }
 
-    const { data, error } = await supabase.rpc('fn_record_admin_access', {
-      p_email: email,
+    const { data } = await supabase.rpc('fn_record_admin_access', {
+      p_email: cleanEmail,
       p_ip: geo.ip,
       p_city: finalCity,
       p_region: finalRegion,
@@ -372,11 +408,10 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
             const lon = pos.coords.longitude
             const acc = Math.round(pos.coords.accuracy || 0)
             const rev = await reverseGeocodeCoordinates(lat, lon)
-            
+
             const detailedCity = rev && rev.street ? `🎯 ${rev.street} (${rev.city})` : `🎯 Titik GPS Presisi (${geo.city})`
             const detailedRegion = rev ? `${rev.region} (±${acc}m GPS)` : `${geo.region} (±${acc}m GPS)`
 
-            // Update ke database via RPC
             await supabase.rpc('fn_update_admin_access_gps', {
               p_log_id: logId,
               p_lat: lat,
@@ -384,16 +419,16 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
               p_city: detailedCity,
               p_region: detailedRegion
             }).catch(() => {})
-          } catch (err) {
-            console.warn('[GeoTracker] Background GPS update error:', err)
-          }
+          } catch {}
         },
         () => {},
         { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
       )
     }
 
-    return { sId, geo, dev, logId, deviceIdentity, photoUrl }
+    const resultObj = { sId, geo, dev, logId, deviceIdentity, photoUrl }
+    lastRecordResult = resultObj
+    return resultObj
   } catch (err) {
     console.warn('[GeoTracker] Gagal mencatat log akses:', err)
     return null
@@ -401,27 +436,68 @@ export async function recordAdminAccessAttempt(email = 'Admin Target', options =
 }
 
 /**
- * Mengirim balasan dari siswa/penyusup ke layar admin
+ * Mengirim balasan dari siswa/penyusup ke layar admin (Database + Realtime Broadcast + Activity Log Fallback)
  */
 export async function submitIntruderReply(replyText) {
   try {
     const sId = getSecuritySessionId()
+    const cleanReply = String(replyText || '').trim()
+    if (!cleanReply) return { ok: false }
+
+    // 1. Update ke tabel admin_access_logs via RPC
     const { data, error } = await supabase.rpc('fn_submit_intruder_reply', {
       p_session_id: sId,
-      p_reply: replyText
+      p_reply: cleanReply
     })
 
-    // Broadcast realtime event
-    const ch = supabase.channel(`security-intervention-feed`)
-    ch.send({
-      type: 'broadcast',
-      event: 'hacker_replied',
-      payload: { sessionId: sId, reply: replyText, time: new Date().toISOString() }
-    })
+    // 2. Catat juga di activity_log sebagai backup jejak audit permanen
+    const identity = getStoredDeviceIdentity() || sId
+    await supabase.from('activity_log').insert({
+      aktor: 'PENYUSUP_KLARIFIKASI',
+      aksi: `BALASAN:${sId}`,
+      detail: `[Sesi ${sId}] (${identity}) membalas intervensi Admin: "${cleanReply}"`
+    }).catch(() => {})
 
-    return { ok: !error && data?.ok }
+    // 3. Broadcast realtime instan ke layar Admin
+    try {
+      const ch = supabase.channel('ebm-security-command')
+      ch.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          ch.send({
+            type: 'broadcast',
+            event: 'hacker_replied',
+            payload: { sessionId: sId, reply: cleanReply, identity, time: new Date().toISOString() }
+          })
+        }
+      })
+    } catch {}
+
+    return { ok: !error && (data?.ok !== false) }
   } catch (err) {
     console.error('Error submitting reply:', err)
     return { ok: false, error: err.message }
   }
+}
+
+/**
+ * Deteksi apakah teks input mengandung pola SQL Injection / XSS / Command Injection
+ */
+export function detectMaliciousPayload(inputStr) {
+  if (!inputStr || typeof inputStr !== 'string') return null
+  const s = inputStr.trim()
+  if (!s) return null
+
+  const patterns = [
+    { regex: /('|--|\/\*|\*\/|;\s*drop\s|;\s*delete\s|;\s*update\s|;\s*insert\s)/i, label: 'SQL Injection' },
+    { regex: /\b(union\s+select|or\s+1\s*=\s*1|and\s+1\s*=\s*1|or\s+'1'\s*=\s*'1'|sleep\s*\(|benchmark\s*\(|pg_sleep)/i, label: 'SQL Bypass / Injection' },
+    { regex: /(<script|javascript:|onerror\s*=|onload\s*=|<iframe|<img\s+[^>]*onerror)/i, label: 'XSS Script Injection' },
+    { regex: /(\.\.\/|\.\.\\|\/etc\/passwd|cmd\.exe|powershell)/i, label: 'Path Traversal / Command Injection' }
+  ]
+
+  for (const p of patterns) {
+    if (p.regex.test(s)) {
+      return p.label
+    }
+  }
+  return null
 }

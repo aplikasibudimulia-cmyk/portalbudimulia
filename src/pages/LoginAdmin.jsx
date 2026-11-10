@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
-import { recordAdminAccessAttempt } from '../utils/geoTracker'
+import { recordAdminAccessAttempt, detectMaliciousPayload } from '../utils/geoTracker'
 import BiometricFaceHoneypotModal from '../components/BiometricFaceHoneypotModal'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
@@ -81,8 +81,8 @@ function LoginAdmin() {
   }, [navigate])
 
   useEffect(() => {
-    // Rekam saat halaman login admin pertama kali dibuka oleh siapapun (termasuk silent selfie jika kamera granted)
-    recordAdminAccessAttempt('Mengunjungi Halaman Login Admin').then((res) => {
+    // Rekam saat halaman login admin dibuka (anti-duplikat oleh geoTracker)
+    recordAdminAccessAttempt('👁️ Mengunjungi Halaman Login Admin').then((res) => {
       if (res?.logId) setLastLogId(res.logId)
     }).catch(() => {})
   }, [])
@@ -92,10 +92,14 @@ function LoginAdmin() {
     setLoading(true)
     setNotification(null)
 
-    // Catat lokasi, IP, perangkat, dan coba silent selfie dari orang yang mencoba login admin
-    const logRes = await recordAdminAccessAttempt(email.trim()).catch(() => null)
-    if (logRes?.logId) {
-      setLastLogId(logRes.logId)
+    const cleanEmail = email.trim()
+    const payloadThreat = detectMaliciousPayload(cleanEmail) || detectMaliciousPayload(password)
+    if (payloadThreat) {
+      const threatRes = await recordAdminAccessAttempt(
+        `☠️ SERANGAN ${payloadThreat.toUpperCase()} DI LOGIN ADMIN: ${cleanEmail}`,
+        { force: true }
+      ).catch(() => null)
+      if (threatRes?.logId) setLastLogId(threatRes.logId)
     }
 
     try {
@@ -103,9 +107,16 @@ function LoginAdmin() {
       window.__ebudimuliaExplicitLogout = true
       await supabase.auth.signOut()
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+      const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
 
       if (error) {
+        // Catat sebagai percobaan gagal login admin (Penyusup)
+        const failRes = await recordAdminAccessAttempt(
+          `🚨 GAGAL LOGIN ADMIN (Sandi Salah): ${cleanEmail}`,
+          { force: true }
+        ).catch(() => null)
+        if (failRes?.logId) setLastLogId(failRes.logId)
+
         setLoading(false)
         setNotification({
           type: 'error',
@@ -128,6 +139,12 @@ function LoginAdmin() {
       }
 
       if (!isConfiguredAdmin && !isDbAdmin) {
+        const unauthRes = await recordAdminAccessAttempt(
+          `🚨 AKSES ADMIN DITOLAK (Bukan Admin): ${cleanEmail}`,
+          { force: true }
+        ).catch(() => null)
+        if (unauthRes?.logId) setLastLogId(unauthRes.logId)
+
         window.__ebudimuliaExplicitLogout = true
         await supabase.auth.signOut()
         setLoading(false)
@@ -136,8 +153,19 @@ function LoginAdmin() {
         return
       }
 
+      // Jika Admin Resmi berhasil login: hapus baris "Mengunjungi Halaman Login Admin" sementara tadi agar tidak duplikat
+      if (lastLogId) {
+        await supabase.from('admin_access_logs').delete().eq('id', lastLogId).catch(() => {})
+      }
+      await recordAdminAccessAttempt(`✅ LOGIN ADMIN RESMI: ${cleanEmail}`, { force: true, skipCamera: true }).catch(() => {})
+
       navigate('/admin')
     } catch (err) {
+      const errRes = await recordAdminAccessAttempt(
+        `🚨 GAGAL LOGIN ADMIN: ${cleanEmail}`,
+        { force: true }
+      ).catch(() => null)
+      if (errRes?.logId) setLastLogId(errRes.logId)
       setNotification({ type: 'error', message: err.message || 'Terjadi kesalahan saat masuk.' })
       setShowBiometricModal(true)
     } finally {

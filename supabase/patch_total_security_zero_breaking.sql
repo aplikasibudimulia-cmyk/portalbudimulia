@@ -624,10 +624,9 @@ BEGIN
 
     -- Catat percobaan manipulasi ilegal ke activity_log
     BEGIN
-      INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+      INSERT INTO public.activity_log (aktor, aksi, detail, created_at)
       VALUES (
-        v_actor_info,
-        'SUSPECT_HACKER',
+        'SUSPECT_HACKER (' || v_actor_info || ')',
         '🚨 Percobaan Manipulasi Tabel ' || TG_TABLE_NAME || ' Diblokir',
         'Percobaan ilegal melakukan ' || TG_OP || ' pada tabel ' || TG_TABLE_NAME || ' oleh pelaku (' || v_actor_info || ') tanpa sesi Guru/Admin sah.',
         NOW()
@@ -771,10 +770,9 @@ BEGIN
     IF (NEW.status IS DISTINCT FROM OLD.status OR NEW.poin IS DISTINCT FROM OLD.poin)
        AND NOT public.fn_is_authorized_staff() THEN
       BEGIN
-        INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+        INSERT INTO public.activity_log (aktor, aksi, detail, created_at)
         VALUES (
-          COALESCE(NEW.nisn, 'unknown'),
-          'SUSPECT_HACKER',
+          'SUSPECT_HACKER (NISN: ' || COALESCE(NEW.nisn, 'unknown') || ')',
           '🚨 Percobaan Approve Poin Sendiri Diblokir',
           'Siswa (NISN: ' || COALESCE(NEW.nisn, '-') || ') mencoba mengubah status pengajuan poin dari ' || COALESCE(OLD.status, '-') || ' menjadi ' || COALESCE(NEW.status, '-') || '. Aksi dinetralisir.',
           NOW()
@@ -841,10 +839,9 @@ BEGIN
 
       IF NOT v_is_authorized THEN
         BEGIN
-          INSERT INTO public.activity_log (user_id, user_role, action, details, created_at)
+          INSERT INTO public.activity_log (aktor, aksi, detail, created_at)
           VALUES (
-            NEW.siswa_nisn,
-            'SUSPECT_HACKER',
+            'SUSPECT_HACKER (NISN: ' || COALESCE(NEW.siswa_nisn, 'unknown') || ')',
             '🚨 Percobaan Manipulasi Absensi Lampau Terdeteksi',
             'Percobaan tanpa sesi Guru sah mengubah status absensi tanggal ' || OLD.tanggal || ' dari ' || OLD.status || ' menjadi ' || NEW.status || ' untuk siswa NISN ' || COALESCE(NEW.siswa_nisn, '-') || '. Aksi dinetralisir.',
             NOW()

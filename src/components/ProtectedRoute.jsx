@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { supabase, persistServerSessionToken } from '../supabaseClient'
+import { recordAdminAccessAttempt } from '../utils/geoTracker'
+import { logActivity } from '../utils/logger'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 
@@ -53,7 +55,8 @@ export function AdminRoute({ children }) {
           return
         }
 
-        // Jika tidak lolos verifikasi, sign out dan tolak akses
+        // Jika tidak lolos verifikasi, catat percobaan akses ilegal ke /admin, sign out, dan tolak akses
+        recordAdminAccessAttempt(`🚨 AKSES ILEGAL URL /admin: ${userEmail || 'Tanpa Otorisasi'}`).catch(() => {})
         await supabase.auth.signOut().catch(() => {})
         if (isMounted) setStatus('denied')
       } catch (err) {
@@ -131,6 +134,15 @@ export function GuruRoute({ children }) {
         // Hanya cabut sesi jika server secara eksplisit menyatakan sesi tidak valid (res.ok === false)
         if (!error && res && res.ok === false) {
           console.warn('[GuruGuard] Sesi guru terdeteksi tidak valid:', res?.msg)
+          recordAdminAccessAttempt(
+            `🚨 MANIPULASI SESI GURU (LocalStorage): ${parsed.nama_guru || parsed.id}`,
+            { force: true }
+          ).catch(() => {})
+          logActivity({
+            userRole: 'SUSPECT_HACKER',
+            action: '🚨 Manipulasi Sesi Guru Diblokir',
+            details: `Terdeteksi rekayasa guru_session di LocalStorage untuk ID ${parsed.id} (${parsed.nama_guru || '-'}). Sesi dicabut paksa.`
+          }).catch(() => {})
           localStorage.removeItem('guru_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
@@ -217,6 +229,15 @@ export function StudentRoute({ children }) {
 
         if (!error && res && res.ok === false) {
           console.warn('[StudentGuard] Manipulasi sesi siswa terdeteksi:', res?.msg)
+          recordAdminAccessAttempt(
+            `🚨 MANIPULASI SESI SISWA (LocalStorage): NISN ${nisn}`,
+            { force: true }
+          ).catch(() => {})
+          logActivity({
+            userRole: 'SUSPECT_HACKER',
+            action: '🚨 Manipulasi Sesi Siswa Diblokir',
+            details: `Terdeteksi percobaan memalsukan siswa_session di LocalStorage untuk NISN ${nisn} (${parsed.nama_lengkap || '-'}). Sesi dicabut paksa.`
+          }).catch(() => {})
           localStorage.removeItem('siswa_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
@@ -299,6 +320,15 @@ export function ParentRoute({ children }) {
 
         if (!error && res && res.ok === false) {
           console.warn('[ParentGuard] Manipulasi sesi orang tua terdeteksi:', res?.msg)
+          recordAdminAccessAttempt(
+            `🚨 MANIPULASI SESI ORANG TUA (LocalStorage): NISN ${nisn}`,
+            { force: true }
+          ).catch(() => {})
+          logActivity({
+            userRole: 'SUSPECT_HACKER',
+            action: '🚨 Manipulasi Sesi Orang Tua Diblokir',
+            details: `Terdeteksi percobaan memalsukan orangtua_session di LocalStorage untuk NISN ${nisn} (${parsed.nama_lengkap || '-'}). Sesi dicabut paksa.`
+          }).catch(() => {})
           localStorage.removeItem('orangtua_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
