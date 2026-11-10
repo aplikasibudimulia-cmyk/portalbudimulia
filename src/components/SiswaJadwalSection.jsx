@@ -212,6 +212,24 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 1 }) {
   }, [activeHari, activeTa?.id, kelas, selectedSemester])
 
   const fetchDayData = async () => {
+    const cacheKey = `ebm_jadwal_cache_${kelas || 'all'}_${selectedSemester}_${activeHari}`
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey)
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw)
+        if (cached && Array.isArray(cached.slots)) {
+          setSlots(cached.slots)
+          setJadwals(cached.jadwals || [])
+          if (cached.catatanList) setCatatanList(cached.catatanList)
+          if (cached.ekskulList) setEkskulList(cached.ekskulList)
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            setLoading(false)
+            return
+          }
+        }
+      }
+    } catch {}
+
     setLoading(true)
     try {
       // 1. Fetch slots
@@ -248,10 +266,12 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 1 }) {
         slotsData = res.data
       }
 
+      let computedSlots = []
       if (slotsData && slotsData.length > 0) {
         const baseStart = slotsData[0].waktu_mulai ? slotsData[0].waktu_mulai.slice(0, 5) : '06:30'
-        setSlots(calculateSlotTimes(slotsData, baseStart))
-      } else {
+        computedSlots = calculateSlotTimes(slotsData, baseStart)
+        setSlots(computedSlots)
+      } else if (typeof navigator === 'undefined' || navigator.onLine !== false) {
         setSlots([])
       }
 
@@ -301,9 +321,15 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 1 }) {
         jadwalData = res.data
       }
 
-      setJadwals(jadwalData || [])
+      if (jadwalData && jadwalData.length > 0) {
+        setJadwals(jadwalData)
+      } else if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+        setJadwals([])
+      }
 
       // 3. Fetch Catatan Kurikulum & Ekskul
+      let nextCatatan = []
+      let nextEkskul = []
       if (activeTa?.id) {
         const [catatanRes, ekskulRes] = await Promise.all([
           supabase
@@ -319,8 +345,22 @@ export default function SiswaJadwalSection({ kelas, activeTa, semester = 1 }) {
             .eq('semester', selectedSemester)
             .order('urutan')
         ])
-        setCatatanList(catatanRes.data || [])
-        setEkskulList(ekskulRes.data || [])
+        nextCatatan = catatanRes.data || []
+        nextEkskul = ekskulRes.data || []
+        setCatatanList(nextCatatan)
+        setEkskulList(nextEkskul)
+      }
+
+      if (computedSlots.length > 0 || (jadwalData && jadwalData.length > 0)) {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({
+            slots: computedSlots,
+            jadwals: jadwalData || [],
+            catatanList: nextCatatan,
+            ekskulList: nextEkskul,
+            savedAt: Date.now()
+          }))
+        } catch {}
       }
     } catch (err) {
       console.error('Error fetching jadwal:', err)

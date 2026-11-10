@@ -12,7 +12,14 @@ html, body, #root {
 }
 
 .animate-scale-in {
-  animation: scaleIn 0.2s ease-out forwards;
+  animation: scale-in 0.25s ease-out forwards;
+}
+
+/* Pastikan seluruh modal pop-up (fixed inset-0) di seluruh aplikasi selalu memiliki efek Full-Page Blur yang elegan */
+div.fixed.inset-0[class*="bg-black"],
+div.fixed.inset-0[class*="bg-slate-9"] {
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
 }
 
 @media (max-width: 767px) {

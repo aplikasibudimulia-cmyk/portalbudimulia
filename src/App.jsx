@@ -1,14 +1,153 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { useEffect, useRef, Component, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, Component, lazy, Suspense } from 'react'
 import { registerPlugin, Capacitor } from '@capacitor/core'
+import { App as CapApp } from '@capacitor/app'
 import { supabase } from './supabaseClient'
 import { showLocalNotif, isNotifGranted, initNativePushNotifications, requestNotifPermission } from './utils/pushNotif'
 import { loadAccounts } from './utils/credentialStore'
+import { processPresensiQueue } from './utils/presensiQueue'
 import AppUpdateModal from './components/AppUpdateModal'
 import SecurityInterventionModal from './components/SecurityInterventionModal'
 import { AdminRoute, GuruRoute, StudentRoute, ParentRoute } from './components/ProtectedRoute'
 
 const CbtLockTask = Capacitor.Plugins?.CbtLockTask || registerPlugin('CbtLockTask')
+
+/**
+ * Pengelola Global Mode Offline & Tombol Back Hardware Android:
+ * 1. Menampilkan indikator Mode Offline dan menyinkronkan antrean presensi otomatis saat sinyal kembali.
+ * 2. Mengatur perilaku tombol Back bawaan HP Android:
+ *    - Menutup pop-up/modal yang sedang terbuka terlebih dahulu.
+ *    - Mengembalikan dari sub-menu (Jadwal, Presensi, Kartu Pelajar, dll.) ke tab Beranda.
+ *    - Meminta ketukan kedua dalam 2 detik sebelum benar-benar keluar dari aplikasi.
+ */
+function OfflineAndBackWatcher() {
+  const location = useLocation()
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false)
+  const [backOnlineNotice, setBackOnlineNotice] = useState(false)
+  const [exitToast, setExitToast] = useState(false)
+  const lastBackPressRef = useRef(0)
+
+  useEffect(() => {
+    const onOffline = () => {
+      setIsOffline(true)
+      setBackOnlineNotice(false)
+    }
+    const onOnline = () => {
+      setIsOffline(false)
+      setBackOnlineNotice(true)
+      processPresensiQueue().catch(() => {})
+      setTimeout(() => setBackOnlineNotice(false), 3500)
+    }
+
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('online', onOnline)
+    return () => {
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    let backListener = null
+    try {
+      backListener = CapApp.addListener('backButton', ({ canGoBack }) => {
+        const path = window.location.pathname || ''
+        // Jangan intervensi tombol back saat ujian CBT berlangsung
+        if (path.startsWith('/cbt/ujian')) return
+
+        // 1. Cek apakah ada modal / pop-up (div.fixed.inset-0) yang sedang terbuka (kecuali layar kunci keamanan z-[999999])
+        const openModals = Array.from(document.querySelectorAll('div.fixed.inset-0'))
+          .filter(el => {
+            const cls = String(el.className || '')
+            if (cls.includes('z-[999999]') && el.textContent?.includes('DIKUNCI')) return false
+            const style = window.getComputedStyle(el)
+            return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0
+          })
+
+        if (openModals.length > 0) {
+          const topModal = openModals[openModals.length - 1]
+          // Cari tombol tutup (✕ / Tutup / Batal) di dalam modal paling atas
+          const buttons = Array.from(topModal.querySelectorAll('button'))
+          const closeBtn = buttons.find(b => {
+            const txt = (b.textContent || '').trim().toLowerCase()
+            return txt === '✕' || txt === 'x' || txt === 'tutup' || txt === 'batal' || txt === 'kembali'
+          })
+          if (closeBtn) {
+            closeBtn.click()
+            return
+          }
+          // Jika backdrop modal memiliki onClick langsung
+          topModal.click()
+          return
+        }
+
+        // 2. Kirim event ke Dashboard (Siswa / Ortu / Guru / Admin) untuk menutup sidebar mobile atau kembali ke tab Beranda
+        const backEvent = new CustomEvent('ebm-hardware-back', { cancelable: true })
+        const notCancelled = window.dispatchEvent(backEvent)
+        if (!notCancelled) {
+          // Sudah ditangani oleh Dashboard (misal kembali dari menu Jadwal ke Beranda)
+          return
+        }
+
+        // 3. Jika berada di halaman pendukung selain halaman utama, kembali ke halaman sebelumnya
+        const isRootDashboard =
+          path === '/' ||
+          path === '/login' ||
+          path === '/dashboard' ||
+          path === '/dashboard-orang-tua' ||
+          path === '/dashboard-guru' ||
+          path === '/admin'
+
+        if (!isRootDashboard && canGoBack) {
+          window.history.back()
+          return
+        }
+
+        // 4. Konfirmasi tekan 2 kali untuk keluar aplikasi
+        const now = Date.now()
+        if (now - lastBackPressRef.current < 2200) {
+          CapApp.exitApp()
+        } else {
+          lastBackPressRef.current = now
+          setExitToast(true)
+          setTimeout(() => setExitToast(false), 2200)
+        }
+      })
+    } catch {}
+
+    return () => {
+      if (backListener) {
+        Promise.resolve(backListener).then(h => h?.remove?.()).catch(() => {})
+      }
+    }
+  }, [location.pathname])
+
+  return (
+    <>
+      {isOffline && (
+        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[99990] max-w-md w-[94%] bg-amber-600 text-white px-3.5 py-2 rounded-2xl shadow-lg border border-amber-400 flex items-center gap-2.5 text-xs font-bold animate-fade-in pointer-events-none">
+          <span className="text-base shrink-0">📡</span>
+          <span className="leading-snug">
+            Mode Offline — Data tersimpan tetap dapat dibuka &amp; presensi akan disinkronkan otomatis saat sinyal kembali.
+          </span>
+        </div>
+      )}
+      {backOnlineNotice && !isOffline && (
+        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[99990] max-w-sm w-[90%] bg-emerald-600 text-white px-3.5 py-2 rounded-2xl shadow-lg border border-emerald-400 flex items-center justify-center gap-2 text-xs font-bold animate-fade-in pointer-events-none">
+          <span>✅</span>
+          <span>Koneksi kembali online — Menyinkronkan data...</span>
+        </div>
+      )}
+      {exitToast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99995] bg-slate-900/95 text-white px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold border border-slate-700 animate-fade-in pointer-events-none">
+          Tekan kembali sekali lagi untuk keluar aplikasi
+        </div>
+      )}
+    </>
+  )
+}
 
 /**
  * Pengawas Keamanan Lock Task / AAC Global:
@@ -202,6 +341,10 @@ function App() {
         // Normal token refresh by Supabase client
       }
       if (event === 'SIGNED_OUT') {
+        // Jangan pernah menghapus sesi lokal jika perangkat sedang offline (tanpa kuota/sinyal)
+        if (typeof navigator !== 'undefined' && navigator.onLine === false && !window.__ebudimuliaExplicitLogout) {
+          return
+        }
         // Hapus sesi lokal dan arahkan ke login jika tidak di halaman auth
         localStorage.removeItem('siswa_session')
         localStorage.removeItem('guru_session')
@@ -432,6 +575,7 @@ function App() {
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <CbtLockSafetyWatcher />
+        <OfflineAndBackWatcher />
         <AppUpdateModal />
         <SecurityInterventionModal />
         <Suspense fallback={

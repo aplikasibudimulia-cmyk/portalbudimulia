@@ -962,7 +962,21 @@ export default function CbtUjianSiswaPage() {
     }
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
+
+    // Auto-Retry Queue setiap 8 detik: memastikan jawaban yang tertunda saat sinyal putus-nyambung otomatis terkirim ke server
+    const retryTimer = setInterval(async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+      const curNisn = student?.nisn || pesertaRef.current?.siswa_nisn || peserta?.siswa_nisn
+      const curPesertaId = pesertaId || pesertaRef.current?.id
+      if (!curNisn || !curPesertaId || !sesiId) return
+      try {
+        await syncUnsyncedAnswers(curPesertaId, sesiId, curNisn)
+        setSyncStatus('saved')
+      } catch {}
+    }, 8000)
+
     return () => {
+      clearInterval(retryTimer)
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }
@@ -1950,6 +1964,7 @@ export default function CbtUjianSiswaPage() {
     // Real-time Cloud Sync ke Supabase agar admin/guru memantau progres jawaban secara langsung
     const targetPesertaId = pesertaId || pesertaRef.current?.id || peserta?.id
     if (targetPesertaId && navigator.onLine) {
+      setSyncStatus('saving')
       const valStr = typeof newJawaban === 'object' ? JSON.stringify(newJawaban) : String(newJawaban ?? '')
       supabase
         .from('cbt_jawaban_siswa')
@@ -1961,8 +1976,19 @@ export default function CbtUjianSiswaPage() {
           updated_at: new Date().toISOString()
         }], { onConflict: 'peserta_id,soal_id' })
         .then(({ error }) => {
-          if (error) console.warn('[CBT Cloud Sync] Pending sync error:', error.message)
-        }, err => console.warn('[CBT Cloud Sync] Pending sync reject:', err?.message || err))
+          if (error) {
+            console.warn('[CBT Cloud Sync] Pending sync error:', error.message)
+            setSyncStatus('offline')
+          } else {
+            setSyncStatus('saved')
+            setAnswers(prev => prev?.[currentQ.id] ? { ...prev, [currentQ.id]: { ...prev[currentQ.id], synced: true } } : prev)
+          }
+        }, err => {
+          console.warn('[CBT Cloud Sync] Pending sync reject:', err?.message || err)
+          setSyncStatus('offline')
+        })
+    } else {
+      setSyncStatus('offline')
     }
 
     // Broadcast instan progress jumlah soal terjawab ke pengawas di ruang ujian
@@ -2927,10 +2953,35 @@ export default function CbtUjianSiswaPage() {
 
         {/* Timer, Petunjuk (!), & Status (shrink-0 agar UTUH dan TIDAK TERPOTONG) */}
         <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3 shrink-0">
-          {/* Status Jaringan */}
-          <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500">
-            <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-            <span>{isOnline ? 'Online' : 'Offline'}</span>
+          {/* Indikator Real-Time Sinkronisasi Jawaban (Tampil di HP & Laptop) */}
+          <div
+            className={`flex items-center gap-1 px-2 py-1 rounded-xl border text-[10px] sm:text-[11px] font-bold transition ${
+              !isOnline || syncStatus === 'offline'
+                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : syncStatus === 'saving'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            }`}
+            title={
+              !isOnline || syncStatus === 'offline'
+                ? 'Sinyal terputus sementara. Jawaban tetap aman tersimpan di memori HP dan otomatis terkirim saat sinyal kembali.'
+                : 'Seluruh jawaban Anda telah tersimpan aman di server.'
+            }
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${
+              !isOnline || syncStatus === 'offline'
+                ? 'bg-amber-500 animate-ping'
+                : syncStatus === 'saving'
+                  ? 'bg-blue-500 animate-pulse'
+                  : 'bg-emerald-500'
+            }`}></span>
+            <span className="hidden sm:inline">
+              {!isOnline || syncStatus === 'offline'
+                ? 'Offline (Aman di HP)'
+                : syncStatus === 'saving'
+                  ? 'Menyimpan...'
+                  : 'Tersimpan'}
+            </span>
           </div>
 
           {/* Sisa Waktu Countdown */}

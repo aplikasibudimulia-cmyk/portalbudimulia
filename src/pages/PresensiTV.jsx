@@ -81,6 +81,16 @@ function generateToken() {
   return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('')
 }
 
+function computeOfflineQrSig(token, expMs) {
+  const raw = `${token}:${expMs}:EBM_TV_QR_SEC_2026`
+  let h1 = 0x811c9dc5
+  for (let i = 0; i < raw.length; i++) {
+    h1 ^= raw.charCodeAt(i)
+    h1 = Math.imul(h1, 0x01000193)
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0')
+}
+
 // Fixed format to query for student photo by NISN
 function getStudentPhotoUrl(nisn, activeTaId) {
   if (!activeTaId) return `https://res.cloudinary.com/dwyhpysp5/image/upload/c_fill,w_100,h_100/SKL-BM/FOTO_${nisn}`
@@ -442,7 +452,14 @@ export default function PresensiTV() {
   }, [loading, fetchLatestCheckins, fetchStats])
 
   const percentHadir = stats.total > 0 ? Math.round(((stats.hadir + stats.terlambat) / stats.total) * 100) : 0
-  const qrValue = useMemo(() => token ? JSON.stringify({ token }) : '{}', [token])
+  const qrValue = useMemo(() => {
+    if (!token) return '{}'
+    const expMs = expiresAt instanceof Date && !isNaN(expiresAt.getTime())
+      ? expiresAt.getTime()
+      : Date.now() + 90000
+    const sig = computeOfflineQrSig(token, expMs)
+    return JSON.stringify({ token, exp: expMs, sig })
+  }, [token, expiresAt])
   const countdownPct = interval > 0 ? (countdown / interval) * 100 : 0
 
   const sessionEval = useMemo(() => {

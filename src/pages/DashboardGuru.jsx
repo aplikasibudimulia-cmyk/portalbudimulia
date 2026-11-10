@@ -1,55 +1,72 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { useConfirm } from '../utils/useConfirm'
 import { initNativePushNotifications } from '../utils/pushNotif'
-import PiketDashboardSection from '../components/PiketDashboardSection'
-import DataPresensiSiswaSection from '../components/DataPresensiSiswaSection'
-import PresensiMatriksRekapSection from '../components/PresensiMatriksRekapSection'
-import TabunganSiswaSection from '../components/TabunganSiswaSection'
-import NilaiGuruSection from '../components/NilaiGuruSection'
-import LegerNilaiKurikulumSection from '../components/LegerNilaiKurikulumSection'
-import RaporSiswaSection from '../components/RaporSiswaSection'
-import AdminEkskulSection from '../components/AdminEkskulSection'
 import GuruDashboardBerita from '../components/GuruDashboardBerita'
-import AdminTataTertibSection from '../components/AdminTataTertibSection'
-import AdminKatalogPoinSection from '../components/AdminKatalogPoinSection'
-import AdminTahapPembinaanSection from '../components/AdminTahapPembinaanSection'
-import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
-import AdminPengaturanPoinSection from '../components/AdminPengaturanPoinSection'
-import ProgramSekolahSection from '../components/ProgramSekolahSection'
-import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
-import DenahKehadiranSection from '../components/DenahKehadiranSection'
-import PengumumanResmiSection from '../components/PengumumanResmiSection'
-import DashboardEksekutifSection from '../components/DashboardEksekutifSection'
-import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
-import AdminRoleSection from '../components/AdminRoleSection'
-import AdminActivityLogSection from '../components/AdminActivityLogSection'
-import AdminBeritaSection from '../components/AdminBeritaSection'
-import AdminNotifikasiSection from '../components/AdminNotifikasiSection'
-import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
-import AdminSemesterSection from '../components/AdminSemesterSection'
-import AdminBerandaConfigSection from '../components/AdminBerandaConfigSection'
-import AdminPersonalisasiSection from '../components/AdminPersonalisasiSection'
-import GuruDokumenSection from '../components/GuruDokumenSection'
 import CollapsibleSection from '../components/CollapsibleSection'
-import GuruBKKonsultasiSection from '../components/GuruBKKonsultasiSection'
-import BKDashboardSection from '../components/BKDashboardSection'
-import SiswaJadwalSection from '../components/SiswaJadwalSection'
-import PengacakTempatDudukSection from '../components/PengacakTempatDudukSection'
-import LaporanKeterlambatanSection from '../components/LaporanKeterlambatanSection'
 import GuruDashboardPoinWidget from '../components/GuruDashboardPoinWidget'
 import GuruSiswaDetailModal from '../components/GuruSiswaDetailModal'
-import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
-import AdminPrestasiSection from '../components/AdminPrestasiSection'
-import PendampingLombaSection from '../components/PendampingLombaSection'
 import ExportKontakModal from '../components/ExportKontakModal'
-import CbtBankSoalGuruSection from '../components/cbt/CbtBankSoalGuruSection'
-import CbtSesiUjianGuruSection from '../components/cbt/CbtSesiUjianGuruSection'
-import CbtMonitorPengawasSection from '../components/cbt/CbtMonitorPengawasSection'
 import { getTodayWIB, getCurrentTimeWIB, getCurrentTimeSecondsWIB, getDayNameWIB } from '../utils/dateUtils'
 import { sortKelasList } from '../utils/kelasHelper'
+
+const lazySection = (loader) => {
+  const Comp = lazy(loader)
+  return function LazyGuruSection(props) {
+    return (
+      <Suspense fallback={
+        <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
+          <div className="w-8 h-8 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
+          <span className="text-xs font-semibold">Memuat menu...</span>
+        </div>
+      }>
+        <Comp {...props} />
+      </Suspense>
+    )
+  }
+}
+
+const PiketDashboardSection = lazySection(() => import('../components/PiketDashboardSection'))
+const DataPresensiSiswaSection = lazySection(() => import('../components/DataPresensiSiswaSection'))
+const PresensiMatriksRekapSection = lazySection(() => import('../components/PresensiMatriksRekapSection'))
+const TabunganSiswaSection = lazySection(() => import('../components/TabunganSiswaSection'))
+const NilaiGuruSection = lazySection(() => import('../components/NilaiGuruSection'))
+const LegerNilaiKurikulumSection = lazySection(() => import('../components/LegerNilaiKurikulumSection'))
+const RaporSiswaSection = lazySection(() => import('../components/RaporSiswaSection'))
+const AdminEkskulSection = lazySection(() => import('../components/AdminEkskulSection'))
+const AdminTataTertibSection = lazySection(() => import('../components/AdminTataTertibSection'))
+const AdminKatalogPoinSection = lazySection(() => import('../components/AdminKatalogPoinSection'))
+const AdminTahapPembinaanSection = lazySection(() => import('../components/AdminTahapPembinaanSection'))
+const AdminCatatPoinSection = lazySection(() => import('../components/AdminCatatPoinSection'))
+const AdminPengaturanPoinSection = lazySection(() => import('../components/AdminPengaturanPoinSection'))
+const ProgramSekolahSection = lazySection(() => import('../components/ProgramSekolahSection'))
+const RekapPoinSiswaSection = lazySection(() => import('../components/RekapPoinSiswaSection'))
+const DenahKehadiranSection = lazySection(() => import('../components/DenahKehadiranSection'))
+const PengumumanResmiSection = lazySection(() => import('../components/PengumumanResmiSection'))
+const DashboardEksekutifSection = lazySection(() => import('../components/DashboardEksekutifSection'))
+const AdminManajemenAkunSection = lazySection(() => import('../components/AdminManajemenAkunSection'))
+const AdminRoleSection = lazySection(() => import('../components/AdminRoleSection'))
+const AdminActivityLogSection = lazySection(() => import('../components/AdminActivityLogSection'))
+const AdminBeritaSection = lazySection(() => import('../components/AdminBeritaSection'))
+const AdminNotifikasiSection = lazySection(() => import('../components/AdminNotifikasiSection'))
+const AdminPresensiConfigSection = lazySection(() => import('../components/AdminPresensiConfigSection'))
+const AdminSemesterSection = lazySection(() => import('../components/AdminSemesterSection'))
+const AdminBerandaConfigSection = lazySection(() => import('../components/AdminBerandaConfigSection'))
+const AdminPersonalisasiSection = lazySection(() => import('../components/AdminPersonalisasiSection'))
+const GuruDokumenSection = lazySection(() => import('../components/GuruDokumenSection'))
+const GuruBKKonsultasiSection = lazySection(() => import('../components/GuruBKKonsultasiSection'))
+const BKDashboardSection = lazySection(() => import('../components/BKDashboardSection'))
+const SiswaJadwalSection = lazySection(() => import('../components/SiswaJadwalSection'))
+const PengacakTempatDudukSection = lazySection(() => import('../components/PengacakTempatDudukSection'))
+const LaporanKeterlambatanSection = lazySection(() => import('../components/LaporanKeterlambatanSection'))
+const AdminPengajuanPoinSection = lazySection(() => import('../components/AdminPengajuanPoinSection'))
+const AdminPrestasiSection = lazySection(() => import('../components/AdminPrestasiSection'))
+const PendampingLombaSection = lazySection(() => import('../components/PendampingLombaSection'))
+const CbtBankSoalGuruSection = lazySection(() => import('../components/cbt/CbtBankSoalGuruSection'))
+const CbtSesiUjianGuruSection = lazySection(() => import('../components/cbt/CbtSesiUjianGuruSection'))
+const CbtMonitorPengawasSection = lazySection(() => import('../components/cbt/CbtMonitorPengawasSection'))
 
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
@@ -741,6 +758,23 @@ export default function DashboardGuru() {
   // Sidebar helpers — sederhana & terbukti di semua platform
   const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
   const closeSidebar = () => setSidebarOpen(false)
+
+  // Listener Tombol Back Hardware Android: tutup sidebar atau kembali ke Beranda
+  useEffect(() => {
+    const handleHardwareBack = (e) => {
+      if (sidebarOpen) {
+        e.preventDefault()
+        setSidebarOpen(false)
+        return
+      }
+      if (activeMenu && activeMenu !== 'dashboard') {
+        e.preventDefault()
+        setActiveMenu('dashboard')
+      }
+    }
+    window.addEventListener('ebm-hardware-back', handleHardwareBack)
+    return () => window.removeEventListener('ebm-hardware-back', handleHardwareBack)
+  }, [sidebarOpen, activeMenu])
 
   // Detect iOS (Safari doesn't support requestFullscreen)
   const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream

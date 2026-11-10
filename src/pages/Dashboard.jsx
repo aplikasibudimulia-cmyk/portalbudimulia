@@ -1,25 +1,42 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
-import SiswaNilaiSection from '../components/SiswaNilaiSection'
-import SiswaCbtPortalSection from '../components/cbt/SiswaCbtPortalSection'
-import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
-import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
-import SiswaPoinSection from '../components/SiswaPoinSection'
-import SiswaPengajuanPoinSection from '../components/SiswaPengajuanPoinSection'
-import ProgramSekolahSection from '../components/ProgramSekolahSection'
-import SiswaBKKonsultasiSection from '../components/SiswaBKKonsultasiSection'
-import SiswaJadwalSection from '../components/SiswaJadwalSection'
-import TabunganSiswaSection from '../components/TabunganSiswaSection'
-import BendaharaInputTabunganSection from '../components/BendaharaInputTabunganSection'
-import SiswaKartuPelajarSection from '../components/SiswaKartuPelajarSection'
 import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
-import BeritaPengumumanSiswaSection from '../components/BeritaPengumumanSiswaSection'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, requestAllInitialPermissions, initNativePushNotifications } from '../utils/pushNotif'
 import { getTodayWIB, getDayIndexWIB, getCurrentTimeWIB } from '../utils/dateUtils'
+
+const lazySection = (loader) => {
+  const Comp = lazy(loader)
+  return function LazyDashboardSection(props) {
+    return (
+      <Suspense fallback={
+        <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
+          <div className="w-8 h-8 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
+          <span className="text-xs font-semibold">Memuat menu...</span>
+        </div>
+      }>
+        <Comp {...props} />
+      </Suspense>
+    )
+  }
+}
+
+const SiswaNilaiSection = lazySection(() => import('../components/SiswaNilaiSection'))
+const SiswaCbtPortalSection = lazySection(() => import('../components/cbt/SiswaCbtPortalSection'))
+const SiswaPresensiSection = lazySection(() => import('../components/SiswaPresensiSection'))
+const SiswaProfilSection = lazySection(() => import('../components/SiswaProfilSection'))
+const SiswaPoinSection = lazySection(() => import('../components/SiswaPoinSection'))
+const SiswaPengajuanPoinSection = lazySection(() => import('../components/SiswaPengajuanPoinSection'))
+const ProgramSekolahSection = lazySection(() => import('../components/ProgramSekolahSection'))
+const SiswaBKKonsultasiSection = lazySection(() => import('../components/SiswaBKKonsultasiSection'))
+const SiswaJadwalSection = lazySection(() => import('../components/SiswaJadwalSection'))
+const TabunganSiswaSection = lazySection(() => import('../components/TabunganSiswaSection'))
+const BendaharaInputTabunganSection = lazySection(() => import('../components/BendaharaInputTabunganSection'))
+const SiswaKartuPelajarSection = lazySection(() => import('../components/SiswaKartuPelajarSection'))
+const BeritaPengumumanSiswaSection = lazySection(() => import('../components/BeritaPengumumanSiswaSection'))
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -373,6 +390,26 @@ function Dashboard() {
     window.addEventListener('popstate', checkMenuParam)
     return () => window.removeEventListener('popstate', checkMenuParam)
   }, [])
+
+  // Listener Tombol Back Hardware Android: tutup sidebar atau kembali ke Beranda
+  useEffect(() => {
+    const handleHardwareBack = (e) => {
+      if (sidebarOpen) {
+        e.preventDefault()
+        setSidebarOpen(false)
+        return
+      }
+      if (selectedType !== null) {
+        e.preventDefault()
+        setSelectedType(null)
+        try {
+          window.history.replaceState({}, '', '/dashboard')
+        } catch {}
+      }
+    }
+    window.addEventListener('ebm-hardware-back', handleHardwareBack)
+    return () => window.removeEventListener('ebm-hardware-back', handleHardwareBack)
+  }, [sidebarOpen, selectedType])
   const [pdfUrl, setPdfUrl] = useState(null)
   const [accessBlocked, setAccessBlocked] = useState(false)
   const [refreshBerkas, setRefreshBerkas] = useState(0)
@@ -506,26 +543,46 @@ function Dashboard() {
     let types = null
     let pengaturan = null
     let allFotos = null
+    let initHadNetworkError = false
 
     try {
-      const [resEnr, resTa, resBio, resTypes, resSettings, resFotos] = await Promise.all([
-        supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn),
-        supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
-        (data.nisn && data.akun_id
-          ? supabase.rpc('fn_get_my_student_profile', { p_nisn: data.nisn, p_akun_id: data.akun_id }).then(r => ({ data: r.data?.data || null }))
-          : supabase.from('siswa_permanent').select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu').eq('nisn', data.nisn).maybeSingle()),
-        supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
-        supabase.from('pengaturan_sekolah').select('*'),
-        data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
-      ])
-      enrollments = resEnr?.data
-      activeTaData = resTa?.data
-      latestStudentData = resBio?.data
-      types = resTypes?.data
-      pengaturan = resSettings?.data
-      allFotos = resFotos?.data
-    } catch (err) {
-      console.warn('Error during parallel init queries:', err)
+      const cachedSetRaw = localStorage.getItem('ebm_cached_pengaturan_sekolah')
+      if (cachedSetRaw) pengaturan = JSON.parse(cachedSetRaw)
+      const cachedTypesRaw = localStorage.getItem('ebm_cached_menu_types')
+      if (cachedTypesRaw) types = JSON.parse(cachedTypesRaw)
+    } catch {}
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      initHadNetworkError = true
+    } else {
+      try {
+        const [resEnr, resTa, resBio, resTypes, resSettings, resFotos] = await Promise.all([
+          supabase.from('enrollment').select('kelas, tahun_ajaran_id, kode').eq('nisn', data.nisn),
+          supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
+          (data.nisn && data.akun_id
+            ? supabase.rpc('fn_get_my_student_profile', { p_nisn: data.nisn, p_akun_id: data.akun_id }).then(r => ({ data: r.data?.data || null, error: r.error }))
+            : supabase.from('siswa_permanent').select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu').eq('nisn', data.nisn).maybeSingle()),
+          supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
+          supabase.from('pengaturan_sekolah').select('*'),
+          data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
+        ])
+        if (resBio?.error || resSettings?.error) initHadNetworkError = true
+        enrollments = resEnr?.data
+        activeTaData = resTa?.data
+        latestStudentData = resBio?.data
+        if (resTypes?.data) {
+          types = resTypes.data
+          try { localStorage.setItem('ebm_cached_menu_types', JSON.stringify(types)) } catch {}
+        }
+        if (resSettings?.data && resSettings.data.length > 0) {
+          pengaturan = resSettings.data
+          try { localStorage.setItem('ebm_cached_pengaturan_sekolah', JSON.stringify(pengaturan)) } catch {}
+        }
+        allFotos = resFotos?.data
+      } catch (err) {
+        initHadNetworkError = true
+        console.warn('Error during parallel init queries:', err)
+      }
     }
 
     if (enrollments) data.enrollments = enrollments
@@ -583,8 +640,8 @@ function Dashboard() {
       try {
         localStorage.setItem('siswa_session', JSON.stringify(data))
       } catch {}
-    } else if (!latestStudentData && data.nisn) {
-      // Data siswa telah dihapus dari tabel siswa_permanent oleh admin
+    } else if (!latestStudentData && data.nisn && !initHadNetworkError && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+      // Data siswa telah dihapus dari tabel siswa_permanent oleh admin (hanya reset jika online & tidak ada error jaringan)
       data = {
         ...data,
         alamat: '',

@@ -1,22 +1,39 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, requestAllInitialPermissions, initNativePushNotifications } from '../utils/pushNotif'
-import SiswaNilaiSection from '../components/SiswaNilaiSection'
-import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
-import SiswaProfilSection from '../components/SiswaProfilSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
-import SiswaPoinSection from '../components/SiswaPoinSection'
-import SiswaRiwayatPresensi from '../components/SiswaRiwayatPresensi'
-import ProgramSekolahSection from '../components/ProgramSekolahSection'
-import SiswaJadwalSection from '../components/SiswaJadwalSection'
-import TabunganSiswaSection from '../components/TabunganSiswaSection'
-import OrangTuaTagihanSection from '../components/OrangTuaTagihanSection'
 import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
-import BeritaPengumumanSiswaSection from '../components/BeritaPengumumanSiswaSection'
 import { sendLinePushNotification, createBindingSuccessFlexMessage } from '../utils/lineNotifier'
+
+const lazySection = (loader) => {
+  const Comp = lazy(loader)
+  return function LazyOrtuSection(props) {
+    return (
+      <Suspense fallback={
+        <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
+          <div className="w-8 h-8 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
+          <span className="text-xs font-semibold">Memuat menu...</span>
+        </div>
+      }>
+        <Comp {...props} />
+      </Suspense>
+    )
+  }
+}
+
+const SiswaNilaiSection = lazySection(() => import('../components/SiswaNilaiSection'))
+const SiswaPresensiSection = lazySection(() => import('../components/SiswaPresensiSection'))
+const SiswaProfilSection = lazySection(() => import('../components/SiswaProfilSection'))
+const SiswaPoinSection = lazySection(() => import('../components/SiswaPoinSection'))
+const SiswaRiwayatPresensi = lazySection(() => import('../components/SiswaRiwayatPresensi'))
+const ProgramSekolahSection = lazySection(() => import('../components/ProgramSekolahSection'))
+const SiswaJadwalSection = lazySection(() => import('../components/SiswaJadwalSection'))
+const TabunganSiswaSection = lazySection(() => import('../components/TabunganSiswaSection'))
+const OrangTuaTagihanSection = lazySection(() => import('../components/OrangTuaTagihanSection'))
+const BeritaPengumumanSiswaSection = lazySection(() => import('../components/BeritaPengumumanSiswaSection'))
 
 function DashboardOrangTua() {
   const navigate = useNavigate()
@@ -68,6 +85,26 @@ function DashboardOrangTua() {
     window.addEventListener('popstate', checkMenuParam)
     return () => window.removeEventListener('popstate', checkMenuParam)
   }, [])
+
+  // Listener Tombol Back Hardware Android: tutup sidebar atau kembali ke Beranda
+  useEffect(() => {
+    const handleHardwareBack = (e) => {
+      if (sidebarOpen) {
+        e.preventDefault()
+        setSidebarOpen(false)
+        return
+      }
+      if (selectedType !== null) {
+        e.preventDefault()
+        setSelectedType(null)
+        try {
+          window.history.replaceState({}, '', '/dashboard-orang-tua')
+        } catch {}
+      }
+    }
+    window.addEventListener('ebm-hardware-back', handleHardwareBack)
+    return () => window.removeEventListener('ebm-hardware-back', handleHardwareBack)
+  }, [sidebarOpen, selectedType])
   const [pdfUrl, setPdfUrl] = useState(null)
   const [accessBlocked, setAccessBlocked] = useState(false)
   const [refreshBerkas, setRefreshBerkas] = useState(0)

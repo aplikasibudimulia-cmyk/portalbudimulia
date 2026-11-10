@@ -397,11 +397,26 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   const frontCardRef = useRef(null)
   const backCardRef = useRef(null)
 
-  // State data siswa terkini langsung dari tabel database siswa_permanent
-  const [liveStudent, setLiveStudent] = useState(studentData)
+  // State data siswa terkini langsung dari tabel database siswa_permanent (dengan fallback cache offline)
+  const [liveStudent, setLiveStudent] = useState(() => {
+    try {
+      const nisn = studentData?.nisn
+      if (nisn) {
+        const cachedRaw = localStorage.getItem(`ebm_kartu_pelajar_student_${nisn}`)
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw)
+          if (cached && typeof cached === 'object') {
+            return { ...studentData, ...cached }
+          }
+        }
+      }
+    } catch {}
+    return studentData
+  })
 
   useEffect(() => {
-    setLiveStudent(studentData)
+    if (!studentData) return
+    setLiveStudent(prev => ({ ...(prev || {}), ...studentData }))
   }, [studentData])
 
   const activeStudent = liveStudent || studentData
@@ -451,31 +466,41 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
   const fetchFreshStudent = useCallback(async (forceUpdateParent = false) => {
     const nisn = studentData?.nisn
     if (!nisn) return
+    // Jangan menimpa/mereset data kartu pelajar jika HP sedang offline
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
     try {
       let fresh = null
+      let hadNetworkError = false
 
       // 1. Coba lewat RPC aman terlebih dahulu (bypass RLS restrict)
       try {
-        const { data: rpcRes } = await supabase.rpc('fn_get_biodata_kartu_pelajar', {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('fn_get_biodata_kartu_pelajar', {
           p_nisn: String(nisn),
           p_akun_id: studentData?.akun_id || null
         })
+        if (rpcErr) hadNetworkError = true
         if (rpcRes?.ok && rpcRes.data) {
           fresh = rpcRes.data
         }
-      } catch (_) {}
+      } catch (_) {
+        hadNetworkError = true
+      }
 
       // 2. Coba RPC profil alternatif jika RPC kartu pelajar belum ada
       if (!fresh && studentData?.akun_id) {
         try {
-          const { data: profRes } = await supabase.rpc('fn_get_my_student_profile', {
+          const { data: profRes, error: profErr } = await supabase.rpc('fn_get_my_student_profile', {
             p_nisn: String(nisn),
             p_akun_id: studentData.akun_id
           })
+          if (profErr) hadNetworkError = true
           if (profRes?.ok && profRes.data) {
             fresh = profRes.data
           }
-        } catch (_) {}
+        } catch (_) {
+          hadNetworkError = true
+        }
       }
 
       // 3. Fallback direct select
@@ -485,7 +510,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           .select('*')
           .eq('nisn', nisn)
           .maybeSingle()
-        if (!error && data) {
+        if (error) {
+          hadNetworkError = true
+        } else if (data) {
           fresh = data
         }
       }
@@ -513,6 +540,9 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
           no_hp: fresh.no_hp || fresh.no_whatsapp || '',
           tinggal_bersama: fresh.tinggal_bersama || ''
         }
+        try {
+          localStorage.setItem(`ebm_kartu_pelajar_student_${nisn}`, JSON.stringify(updated))
+        } catch {}
         setLiveStudent(prev => {
           if (!prev) return updated
           if (JSON.stringify(prev) === JSON.stringify(updated)) return prev
@@ -543,9 +573,8 @@ export default function SiswaKartuPelajarSection({ studentData, photoUrls = [], 
             })
           }
         }
-      } else {
-        // Data siswa telah dihapus dari tabel siswa_permanent oleh admin!
-        // Langsung kosongkan data wajib agar kartu terkunci dan menampilkan form
+      } else if (!hadNetworkError && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        // Hanya reset jika benar-benar online dan query sukses namun baris kosong
         const cleared = {
           ...studentData,
           alamat: '',

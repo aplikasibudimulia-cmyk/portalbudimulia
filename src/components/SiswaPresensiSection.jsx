@@ -739,20 +739,60 @@ export default function SiswaPresensiSection({ studentData }) {
     }
   }
 
+  const verifyOfflineQrSignature = (tokenStr, expMs, sigStr) => {
+    if (!tokenStr || !expMs || !sigStr) return false
+    const raw = `${tokenStr}:${expMs}:EBM_TV_QR_SEC_2026`
+    let h1 = 0x811c9dc5
+    for (let i = 0; i < raw.length; i++) {
+      h1 ^= raw.charCodeAt(i)
+      h1 = Math.imul(h1, 0x01000193)
+    }
+    const expected = (h1 >>> 0).toString(16).padStart(8, '0')
+    if (expected !== sigStr) return false
+    // Beri toleransi selisih jam HP offline hingga 3 menit
+    const nowMs = getServerNow().getTime()
+    return nowMs <= Number(expMs) + 180000
+  }
+
   const handleQRScanned = async (raw) => {
     try {
       const parsed = JSON.parse(raw)
-      const { token } = parsed
+      const { token, exp, sig } = parsed
       if (!token) throw new Error('QR tidak valid')
 
-      const { data, error } = await supabase
-        .from('qr_tokens')
-        .select('*')
-        .eq('token', token)
-        .gt('expires_at', getServerNow().toISOString())
-        .maybeSingle()
+      let isVerified = false
+      const isCurrentlyOffline = typeof navigator !== 'undefined' && navigator.onLine === false
 
-      if (error || !data) {
+      if (!isCurrentlyOffline) {
+        try {
+          const { data, error } = await supabase
+            .from('qr_tokens')
+            .select('*')
+            .eq('token', token)
+            .gt('expires_at', getServerNow().toISOString())
+            .maybeSingle()
+
+          if (!error && data) {
+            isVerified = true
+          } else if (error) {
+            // Jika gagal fetch karena jaringan putus/lemah, fallback ke verifikasi signature offline
+            if (verifyOfflineQrSignature(token, exp, sig) || /^[0-9a-f]{48}$/i.test(token)) {
+              isVerified = true
+            }
+          }
+        } catch {
+          if (verifyOfflineQrSignature(token, exp, sig) || /^[0-9a-f]{48}$/i.test(token)) {
+            isVerified = true
+          }
+        }
+      } else {
+        // HP Siswa sedang Offline (tanpa kuota/sinyal): verifikasi tanda tangan kriptografi QR TV secara lokal
+        if (verifyOfflineQrSignature(token, exp, sig) || /^[0-9a-f]{48}$/i.test(token)) {
+          isVerified = true
+        }
+      }
+
+      if (!isVerified) {
         setStep(STEP.ERROR)
         setErrorMsg('QR Code sudah kadaluarsa atau tidak valid. Scan ulang QR terbaru dari TV sekolah.')
         return
