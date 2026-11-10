@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { supabase } from '../supabaseClient'
+import { supabase, persistServerSessionToken } from '../supabaseClient'
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 
@@ -122,8 +122,13 @@ export function GuruRoute({ children }) {
         if (error || !res?.ok) {
           console.warn('[GuruGuard] Sesi guru terdeteksi tidak valid:', res?.msg || error?.message)
           localStorage.removeItem('guru_session')
+          localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
+        }
+
+        if (res.session_token) {
+          persistServerSessionToken(res.session_token, 'guru_session')
         }
 
         if (isMounted) setStatus('allowed')
@@ -193,8 +198,13 @@ export function StudentRoute({ children }) {
         if (error || !res?.ok) {
           console.warn('[StudentGuard] Manipulasi sesi siswa terdeteksi:', res?.msg || error?.message)
           localStorage.removeItem('siswa_session')
+          localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
+        }
+
+        if (res.session_token) {
+          persistServerSessionToken(res.session_token, 'siswa_session')
         }
 
         if (isMounted) setStatus('allowed')
@@ -261,8 +271,13 @@ export function ParentRoute({ children }) {
         if (error || !res?.ok) {
           console.warn('[ParentGuard] Manipulasi sesi orang tua terdeteksi:', res?.msg || error?.message)
           localStorage.removeItem('orangtua_session')
+          localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
+        }
+
+        if (res.session_token) {
+          persistServerSessionToken(res.session_token, 'orangtua_session')
         }
 
         if (isMounted) setStatus('allowed')

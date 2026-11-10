@@ -164,6 +164,9 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
       }
 
       const g = result.guru
+      if (result.session_token) {
+        localStorage.setItem('ebm_session_token', result.session_token)
+      }
       setPiketSession({
         id: g.id,
         nama_guru: g.nama_guru,

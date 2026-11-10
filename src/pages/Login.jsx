@@ -121,6 +121,10 @@ function Login() {
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('guru_session')
       localStorage.removeItem('orangtua_session')
+      localStorage.removeItem('ebm_session_token')
+      if (result.session_token) {
+        localStorage.setItem('ebm_session_token', result.session_token)
+      }
 
       let sessionData = {}
       if (acc.role === 'Guru / Staff') {
@@ -184,12 +188,13 @@ function Login() {
           guru_mapel_raw: guruMapelList,
           mapels: Array.from(new Set(guruMapelList.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))),
           akun_id: result.akun_id,
-          app_role: result.role
+          app_role: result.role,
+          session_token: result.session_token || null
         }
         localStorage.setItem(sessionKey, JSON.stringify(sessionData))
         logActivity({ userId: g.id, userRole: result.role, action: 'Pegawai Login', details: `${g.nama_guru} login via eBudiMulia.` })
       } else {
-        sessionData = { ...result.siswa, kode: result.kode || null, kelas: result.kelas || null, tahun_ajaran_id: result.tahun_ajaran_id || null, tahun_ajaran: result.tahun_ajaran || null, akun_id: result.akun_id, role: result.role }
+        sessionData = { ...result.siswa, kode: result.kode || null, kelas: result.kelas || null, tahun_ajaran_id: result.tahun_ajaran_id || null, tahun_ajaran: result.tahun_ajaran || null, akun_id: result.akun_id, role: result.role, session_token: result.session_token || null }
         localStorage.setItem(sessionKey, JSON.stringify(sessionData))
         initNativePushNotifications({ nisn: result.siswa?.nisn || result.siswa?.id, role: acc.role })
         logActivity({ userRole: acc.role, action: `${acc.role} Login`, details: `${result.siswa?.nama_lengkap || acc.displayName} login via eBudiMulia.` })
@@ -486,6 +491,10 @@ function Login() {
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('guru_session')
       localStorage.removeItem('orangtua_session')
+      localStorage.removeItem('ebm_session_token')
+      if (result.session_token) {
+        localStorage.setItem('ebm_session_token', result.session_token)
+      }
 
       // 3. Sinkronisasi Auth token Supabase di latar belakang (Non-blocking, tidak menahan loading layar)
       const authUser = (result.siswa?.nisn || result.guru?.id || rawInput.split('@')[0])
@@ -509,7 +518,8 @@ function Login() {
           tahun_ajaran_id: result.tahun_ajaran_id || null,
           tahun_ajaran: result.tahun_ajaran || null,
           akun_id: result.akun_id,
-          role: result.role
+          role: result.role,
+          session_token: result.session_token || null
         }
 
         saveAccountToHistory({
@@ -537,7 +547,8 @@ function Login() {
           tahun_ajaran_id: result.tahun_ajaran_id || null,
           tahun_ajaran: result.tahun_ajaran || null,
           akun_id: result.akun_id,
-          role: result.role
+          role: result.role,
+          session_token: result.session_token || null
         }
 
         saveAccountToHistory({
@@ -596,7 +607,8 @@ function Login() {
           guru_mapel_raw: guruMapelList,
           mapels: Array.from(new Set(guruMapelList.map(gm => gm.mata_pelajaran?.nama).filter(Boolean))),
           akun_id: result.akun_id,
-          app_role: result.role
+          app_role: result.role,
+          session_token: result.session_token || null
         }
 
         saveAccountToHistory({

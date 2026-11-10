@@ -25,13 +25,32 @@ function Impersonate() {
           return
         }
 
-        // Fetch token data dari supabase
-        const { data, error } = await supabase
-          .from('impersonate_tokens')
-          .select('*')
-          .eq('id', token)
-          .gt('expires_at', new Date().toISOString())
-          .single()
+        // 1. Coba via RPC aman (tetap berfungsi walau tabel impersonate_tokens dikunci dari anon)
+        let data = null
+        let error = null
+        try {
+          const { data: rpcRes, error: rpcErr } = await supabase.rpc('fn_consume_impersonate_token', { p_token: token })
+          if (!rpcErr && rpcRes?.ok) {
+            data = rpcRes.data
+            if (rpcRes.session_token && data?.session_data) {
+              data.session_data.session_token = rpcRes.session_token
+            }
+          } else {
+            error = rpcErr
+          }
+        } catch (_) {}
+
+        // 2. Fallback ke tabel jika RPC belum dipasang
+        if (!data) {
+          const res = await supabase
+            .from('impersonate_tokens')
+            .select('*')
+            .eq('id', token)
+            .gt('expires_at', new Date().toISOString())
+            .single()
+          data = res.data
+          error = res.error
+        }
 
         if (error || !data) {
           setStatus('Token sudah kadaluarsa atau tidak valid.')
@@ -43,7 +62,12 @@ function Impersonate() {
         // Clear any existing sessions first
         localStorage.removeItem('siswa_session')
         localStorage.removeItem('guru_session')
+        localStorage.removeItem('orangtua_session')
         localStorage.removeItem('admin_session')
+        localStorage.removeItem('ebm_session_token')
+        if (sessionData?.session_token) {
+          localStorage.setItem('ebm_session_token', sessionData.session_token)
+        }
 
         // Set the appropriate session
         if (role === 'murid') {

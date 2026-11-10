@@ -69,7 +69,8 @@ export default function MultiAccountSwitcherModal({ isOpen, onClose, currentAcco
           roles: g.roles || [],
           kelas: g.kelas || [],
           akun_id: result.akun_id,
-          app_role: result.role
+          app_role: result.role,
+          session_token: result.session_token || null
         }
       } else {
         sessionData = {
@@ -79,7 +80,8 @@ export default function MultiAccountSwitcherModal({ isOpen, onClose, currentAcco
           tahun_ajaran_id: result.tahun_ajaran_id || null,
           tahun_ajaran: result.tahun_ajaran || null,
           akun_id: result.akun_id,
-          role: result.role
+          role: result.role,
+          session_token: result.session_token || null
         }
       }
 
@@ -87,6 +89,10 @@ export default function MultiAccountSwitcherModal({ isOpen, onClose, currentAcco
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('guru_session')
       localStorage.removeItem('orangtua_session')
+      localStorage.removeItem('ebm_session_token')
+      if (result.session_token) {
+        localStorage.setItem('ebm_session_token', result.session_token)
+      }
 
       localStorage.setItem(sessionKey, JSON.stringify(sessionData))
       onClose()
