@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || 'aplikasibudimulia@gmail.com').toLowerCase()
@@ -1237,32 +1238,39 @@ export default function AdminActivityLogSection() {
         </div>
       )}
 
-      {/* MODAL DOSSIER FORENSIK LENGKAP + PETA LOKASI */}
-      {forensicTarget && (
+      {/* MODAL DOSSIER FORENSIK LENGKAP + PETA LOKASI (Full-Screen Blur via Portal) */}
+      {forensicTarget && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[99999] bg-slate-950/65 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fade-in font-sans"
           onClick={() => setForensicTarget(null)}
         >
           <div
-            className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-scale-up"
+            className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_25px_70px_-15px_rgba(15,23,42,0.45)] max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-scale-up"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header Forensik */}
-            <div className="bg-slate-900 text-white p-5 flex items-center justify-between sticky top-0 z-10">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-2xl">🕵️‍♂️</span>
+            {/* Header Forensik Elegan */}
+            <div className="bg-slate-900 text-white px-6 py-4.5 flex items-center justify-between sticky top-0 z-10 border-b border-slate-800">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center text-xl shrink-0">
+                  🕵️‍♂️
+                </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm font-black uppercase tracking-wider truncate">
-                    Laporan Forensik Perangkat &amp; Lokasi Pelaku
-                  </h3>
-                  <p className="text-[11px] text-slate-300 font-mono">
-                    Waktu: {formatTime(forensicTarget.created_at)} • Sesi: {forensicTarget.session_id || '-'}
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black tracking-wide text-white truncate">
+                      Laporan Forensik Perangkat &amp; Lokasi
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-red-500/20 text-red-300 border border-red-500/30">
+                      LIVE DOSSIER
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">
+                    {formatTime(forensicTarget.created_at)} • Sesi: {forensicTarget.session_id || '-'}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setForensicTarget(null)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm font-bold shrink-0"
+                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center text-sm font-bold shrink-0 transition"
               >
                 ✕
               </button>
@@ -1270,17 +1278,17 @@ export default function AdminActivityLogSection() {
 
             <div className="p-6 space-y-5 text-xs">
               {/* Baris Atas: Foto Wajah & Identitas Tersadap */}
-              <div className="flex flex-col sm:flex-row gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <div className="flex flex-col sm:flex-row gap-4 bg-slate-50/80 p-4 rounded-2xl border border-slate-200/90">
                 <div className="flex flex-col items-center justify-center shrink-0 gap-2">
                   {forensicTarget.photo_url ? (
                     <img
                       src={forensicTarget.photo_url}
                       alt="Wajah Pelaku"
                       onClick={() => setSelectedPhoto(forensicTarget.photo_url)}
-                      className="w-28 h-28 rounded-2xl object-cover border-2 border-emerald-500 shadow-md cursor-pointer"
+                      className="w-28 h-28 rounded-2xl object-cover border-2 border-emerald-500 shadow-md cursor-pointer hover:scale-105 transition"
                     />
                   ) : (
-                    <div className="w-28 h-28 rounded-2xl bg-slate-200 border border-slate-300 flex flex-col items-center justify-center text-slate-500 p-2 text-center">
+                    <div className="w-28 h-28 rounded-2xl bg-slate-200/70 border border-slate-300 flex flex-col items-center justify-center text-slate-500 p-2 text-center">
                       <span className="text-2xl mb-1">📷</span>
                       <span className="text-[10px] font-semibold">Belum Ada Foto</span>
                     </div>
@@ -1288,49 +1296,49 @@ export default function AdminActivityLogSection() {
                   <button
                     type="button"
                     onClick={() => handleTriggerRemoteCamera(forensicTarget)}
-                    className="w-full px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-[10px] transition active:scale-95"
+                    className="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-[10px] transition active:scale-95 shadow-2xs"
                   >
-                    📸 Minta Jepret Kamera
+                    📸 Jepret Kamera
                   </button>
                 </div>
 
-                <div className="flex-1 space-y-2 min-w-0">
+                <div className="flex-1 space-y-2.5 min-w-0">
                   <div>
-                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Kejadian / Input Tercatat:</span>
-                    <p className="text-sm font-black text-slate-900 break-words">{forensicTarget.email || '-'}</p>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">Kejadian / Input Tercatat</span>
+                    <p className="text-sm font-black text-slate-900 break-words mt-0.5">{forensicTarget.email || '-'}</p>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-bold uppercase text-rose-600 block">Jejak Akun Tersimpan di HP / Browser Pelaku:</span>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-600 block">Jejak Akun Tersimpan di HP / Browser Pelaku</span>
                     {forensicTarget.device_identity ? (
-                      <div className="mt-1 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 font-bold break-words">
+                      <div className="mt-1 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 font-bold break-words leading-relaxed">
                         {forensicTarget.device_identity}
                       </div>
                     ) : (
-                      <p className="text-slate-500 italic">Tidak ada sesi Siswa/Wali yang tersimpan di browser ini (Mode Tamu / Incognito).</p>
+                      <p className="text-slate-500 italic mt-0.5">Tidak ada sesi Siswa/Wali yang tersimpan di browser ini (Mode Tamu / Incognito).</p>
                     )}
                   </div>
                 </div>
               </div>
 
               {/* Detail Teknis Lokasi & Jaringan */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3.5 rounded-2xl border border-slate-200 space-y-1.5">
-                  <span className="text-[10px] font-black uppercase text-slate-400">📍 Lokasi &amp; Alamat Jalan</span>
-                  <p className="font-bold text-slate-800 break-words">{forensicTarget.city || '-'}</p>
-                  <p className="text-slate-600 break-words">{forensicTarget.region || '-'}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-1.5 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">📍 Lokasi &amp; Alamat Jalan</span>
+                  <p className="font-bold text-slate-800 break-words text-xs">{forensicTarget.city || '-'}</p>
+                  <p className="text-slate-500 break-words text-[11px]">{forensicTarget.region || '-'}</p>
                   {forensicTarget.latitude && forensicTarget.longitude && (
-                    <p className="font-mono text-[11px] text-indigo-700 pt-1">
-                      Koordinat: {forensicTarget.latitude}, {forensicTarget.longitude}
+                    <p className="font-mono text-[10.5px] text-indigo-600 font-semibold pt-1">
+                      GPS: {forensicTarget.latitude}, {forensicTarget.longitude}
                     </p>
                   )}
                 </div>
 
-                <div className="p-3.5 rounded-2xl border border-slate-200 space-y-1.5">
-                  <span className="text-[10px] font-black uppercase text-slate-400">🌐 Jaringan &amp; Perangkat</span>
-                  <p className="font-mono font-bold text-slate-800 break-all">IP: {forensicTarget.ip_address || '-'}</p>
-                  <p className="text-slate-600 break-words">ISP: <strong>{forensicTarget.isp || '-'}</strong></p>
-                  <p className="text-slate-600 break-words">Perangkat: <strong>{forensicTarget.device || '-'}</strong> ({forensicTarget.browser} • {forensicTarget.os})</p>
+                <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-1.5 shadow-2xs">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">🌐 Jaringan &amp; Perangkat</span>
+                  <p className="font-mono font-bold text-slate-800 break-all text-[11px]">IP: {forensicTarget.ip_address || '-'}</p>
+                  <p className="text-slate-600 break-words text-[11px]">ISP: <strong className="text-slate-800">{forensicTarget.isp || '-'}</strong></p>
+                  <p className="text-slate-600 break-words text-[11px]">Perangkat: <strong className="text-slate-800">{forensicTarget.device || '-'}</strong> ({forensicTarget.browser} • {forensicTarget.os})</p>
                 </div>
               </div>
 
@@ -1338,7 +1346,7 @@ export default function AdminActivityLogSection() {
               {forensicTarget.latitude && forensicTarget.longitude && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase text-slate-400">🗺️ Peta Titik Lokasi Pelaku</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">🗺️ Peta Titik Lokasi Pelaku</span>
                     <a
                       href={`https://www.google.com/maps?q=${forensicTarget.latitude},${forensicTarget.longitude}`}
                       target="_blank"
@@ -1348,7 +1356,7 @@ export default function AdminActivityLogSection() {
                       Buka di Google Maps Penuh ↗
                     </a>
                   </div>
-                  <div className="w-full h-52 rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+                  <div className="w-full h-52 rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-inner">
                     <iframe
                       title="Peta Lokasi Penyusup"
                       width="100%"
@@ -1362,7 +1370,7 @@ export default function AdminActivityLogSection() {
               )}
 
               {/* Tombol Kendali Intervensi di Bawah Modal */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -1371,7 +1379,7 @@ export default function AdminActivityLogSection() {
                       setForensicTarget(null)
                       handleOpenSendMessage(target, false)
                     }}
-                    className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition shadow-sm"
+                    className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition shadow-sm active:scale-95"
                   >
                     💬 Kirim Pesan Interogasi
                   </button>
@@ -1382,7 +1390,7 @@ export default function AdminActivityLogSection() {
                       handleToggleLockDevice(forensicTarget)
                       setForensicTarget(prev => prev ? { ...prev, status: prev.status === 'blocked' ? 'active' : 'blocked' } : null)
                     }}
-                    className={`px-4 py-2.5 rounded-xl font-bold text-xs transition shadow-sm ${
+                    className={`px-4 py-2.5 rounded-xl font-bold text-xs transition shadow-sm active:scale-95 ${
                       forensicTarget.status === 'blocked'
                         ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                         : 'bg-amber-500 hover:bg-amber-600 text-white'
@@ -1402,25 +1410,38 @@ export default function AdminActivityLogSection() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* MODAL POP-UP: KIRIM PESAN & KUNCI LAYAR PENYUSUP */}
-      {selectedTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden animate-scale-up">
-            
-            {/* Header Modal */}
-            <div className="bg-gradient-to-r from-red-600 to-rose-700 text-white p-5 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-black uppercase tracking-wider">Intervensi Layar Penyusup</h3>
-                <p className="text-xs text-red-100 mt-0.5">
-                  Target: {selectedTarget.city || 'Jakarta'} ({selectedTarget.ip_address})
-                </p>
+      {/* MODAL POP-UP: KIRIM PESAN & KUNCI LAYAR PENYUSUP (Full-Screen Blur via Portal) */}
+      {selectedTarget && createPortal(
+        <div
+          className="fixed inset-0 z-[99999] bg-slate-950/65 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fade-in font-sans"
+          onClick={() => setSelectedTarget(null)}
+        >
+          <div
+            className="bg-white rounded-3xl border border-slate-200/80 shadow-[0_25px_70px_-15px_rgba(15,23,42,0.45)] max-w-lg w-full overflow-hidden animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Modal Modern Dark/Crimson */}
+            <div className="bg-slate-900 text-white px-6 py-4.5 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center text-xl shrink-0">
+                  🛡️
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black tracking-wide text-white">
+                    Intervensi &amp; Kendali Layar Penyusup
+                  </h3>
+                  <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                    Target: {selectedTarget.city || 'Jakarta'} • <span className="font-mono">{selectedTarget.ip_address}</span>
+                  </p>
+                </div>
               </div>
               <button 
                 onClick={() => setSelectedTarget(null)}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-sm font-bold"
+                className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center text-sm font-bold shrink-0 transition"
               >
                 ✕
               </button>
@@ -1428,90 +1449,108 @@ export default function AdminActivityLogSection() {
 
             <form onSubmit={handleSendMessageToHacker} className="p-6 space-y-4">
               
-              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200 text-[11px] space-y-1 text-slate-600 break-words">
-                <p><strong>Kejadian:</strong> {selectedTarget.email || '-'}</p>
+              {/* Ringkasan Target */}
+              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/90 text-[11px] space-y-1.5 text-slate-600 break-words">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] shrink-0">Kejadian:</span>
+                  <span className="font-bold text-slate-800 text-right">{selectedTarget.email || '-'}</span>
+                </div>
                 {selectedTarget.device_identity && (
-                  <p className="text-rose-700 font-bold"><strong>Akun HP Tersadap:</strong> {selectedTarget.device_identity}</p>
+                  <div className="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold text-[10.5px]">
+                    🎯 {selectedTarget.device_identity}
+                  </div>
                 )}
-                <p><strong>Perangkat:</strong> {selectedTarget.device || '-'}</p>
-                <p><strong>Lokasi:</strong> {selectedTarget.city}, {selectedTarget.region} ({selectedTarget.isp})</p>
+                <div className="flex items-start justify-between gap-2 pt-0.5 border-t border-slate-200/60">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] shrink-0">Perangkat:</span>
+                  <span className="font-semibold text-slate-700 text-right">{selectedTarget.device || '-'} ({selectedTarget.browser} • {selectedTarget.os})</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] shrink-0">Lokasi / ISP:</span>
+                  <span className="font-semibold text-slate-700 text-right">{selectedTarget.city} ({selectedTarget.isp})</span>
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Teks Peringatan (Langsung muncul memenuhi layar pelaku &amp; wajib dibalas):
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-extrabold text-slate-800">
+                    Pesan Peringatan ke Layar Pelaku:
+                  </label>
+                  <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-md border border-red-100">
+                    Wajib Dibalas Pelaku
+                  </span>
+                </div>
                 <textarea
                   rows={4}
                   required
                   value={messagePrompt}
                   onChange={(e) => setMessagePrompt(e.target.value)}
                   placeholder="Ketik pesan peringatan atau interogasi Anda..."
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white resize-none"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white resize-none transition"
                 />
               </div>
 
+              {/* Template Cepat */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Template:</span>
+                <button
+                  type="button"
+                  onClick={() => setMessagePrompt(`Halo, sistem keamanan mendeteksi Anda mencoba mengakses area terlarang dari ${selectedTarget.city}. Mohon segera tulis nama/kelas Anda dan temui Tim IT / Admin sekolah untuk klarifikasi.`)}
+                  className="text-[10.5px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold transition"
+                >
+                  📋 Teguran Resmi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMessagePrompt(`Kami telah mencatat identitas perangkat (${selectedTarget.device}) dan alamat IP (${selectedTarget.ip_address}) Anda. Jelaskan mengapa Anda mencoba melakukan akses ilegal?`)}
+                  className="text-[10.5px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold transition"
+                >
+                  🚨 Interogasi Tegas
+                </button>
+              </div>
+
               {/* Opsi Kunci Layar Sekaligus */}
-              <label className="flex items-center gap-2.5 p-3 rounded-xl bg-red-50 border border-red-200 cursor-pointer select-none">
+              <label className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer select-none transition ${
+                lockOnSend ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+              }`}>
                 <input
                   type="checkbox"
                   checked={lockOnSend}
                   onChange={(e) => setLockOnSend(e.target.checked)}
-                  className="rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                  className="rounded text-red-600 focus:ring-red-500 w-4 h-4 mt-0.5 shrink-0"
                 />
                 <div className="text-[11px] leading-snug">
-                  <span className="font-extrabold text-red-900 block">🔒 Kunci / Bekukan Layar Perangkat Pelaku</span>
-                  <span className="text-red-700">Pelaku tidak bisa menutup jendela peringatan walaupun me-refresh browser sampai Anda membuka kuncinya.</span>
+                  <span className="font-extrabold text-slate-900 block">🔒 Kunci &amp; Bekukan Layar Perangkat Pelaku</span>
+                  <span className="text-slate-600">Pelaku tidak bisa menutup jendela peringatan walaupun me-refresh browser sampai Anda membuka kuncinya.</span>
                 </div>
               </label>
 
-              {/* Template Cepat */}
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Pilih Template Cepat:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setMessagePrompt(`Halo, sistem keamanan mendeteksi Anda mencoba mengakses area terlarang dari ${selectedTarget.city}. Mohon segera tulis nama/kelas Anda dan temui Tim IT / Admin sekolah untuk klarifikasi.`)}
-                    className="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-semibold"
-                  >
-                    Teguran Resmi
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMessagePrompt(`Kami telah mencatat identitas perangkat (${selectedTarget.device}) dan alamat IP (${selectedTarget.ip_address}) Anda. Jelaskan mengapa Anda mencoba melakukan akses ilegal?`)}
-                    className="text-[10px] px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-semibold"
-                  >
-                    Interogasi Tegas
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setSelectedTarget(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
                   disabled={sendingMsg || !messagePrompt.trim()}
-                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white rounded-xl text-xs font-bold transition shadow-sm active:scale-95"
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white rounded-xl text-xs font-extrabold transition shadow-md active:scale-95"
                 >
-                  {sendingMsg ? 'Mengirim...' : lockOnSend ? 'Kunci Layar & Kirim Pesan 🔒' : 'Kirim Pesan Sekarang 🚀'}
+                  {sendingMsg ? 'Mengirim...' : lockOnSend ? '🔒 Kunci Layar & Kirim Pesan' : '🚀 Kirim ke Layar Pelaku'}
                 </button>
               </div>
 
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Modal Lightbox Foto Wajah Penyusup */}
-      {selectedPhoto && (
+      {/* Modal Lightbox Foto Wajah Penyusup (Full-Screen Blur via Portal) */}
+      {selectedPhoto && createPortal(
         <div
-          className="fixed inset-0 z-[999999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[999999] bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in font-sans"
           onClick={() => setSelectedPhoto(null)}
         >
           <div
@@ -1552,7 +1591,8 @@ export default function AdminActivityLogSection() {
               Tutup Foto
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>
