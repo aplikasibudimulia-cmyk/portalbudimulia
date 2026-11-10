@@ -27,6 +27,71 @@ export default function SecurityInterventionModal() {
     return p === '/admin' || p.startsWith('/admin/')
   }
 
+  // Kumpulkan seluruh token identitas akun yang tersimpan di HP/Browser ini (NISN, username, email)
+  const getLocalAccountTokens = () => {
+    const tokens = new Set()
+    try {
+      const idStr = getStoredDeviceIdentity()
+      if (idStr) tokens.add(idStr.toLowerCase())
+
+      const keys = ['siswa_session', 'orangtua_session', 'guru_session', 'ebm_saved_accounts_v1', 'portal_saved_credentials']
+      for (const k of keys) {
+        const raw = localStorage.getItem(k)
+        if (!raw) continue
+        const parsed = JSON.parse(raw)
+        const items = Array.isArray(parsed) ? parsed : [parsed]
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue
+          const candidates = [
+            item.nisn,
+            item.siswa_nisn,
+            item.username,
+            item.email,
+            item.nama_lengkap,
+            item.nama,
+            item.identifier
+          ]
+          for (const c of candidates) {
+            if (c && String(c).trim().length >= 3) {
+              tokens.add(String(c).trim().toLowerCase())
+            }
+          }
+        }
+      }
+    } catch {}
+    return Array.from(tokens)
+  }
+
+  const doesPayloadMatchThisDevice = (payload, sId) => {
+    if (!payload) return false
+    const targetSession = payload.session_id || payload.sessionId
+    if (targetSession && targetSession === sId) return true
+
+    const localIdentity = getStoredDeviceIdentity()
+    if (localIdentity && payload.device_identity && localIdentity === payload.device_identity) {
+      return true
+    }
+
+    const haystacks = [
+      payload.device_identity || '',
+      payload.target_email || '',
+      payload.email || ''
+    ]
+      .join(' ')
+      .toLowerCase()
+
+    if (haystacks.trim()) {
+      const tokens = getLocalAccountTokens()
+      for (const tk of tokens) {
+        if (tk.length >= 4 && haystacks.includes(tk)) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
   useEffect(() => {
     const sId = getSecuritySessionId()
     if (!sId) return
@@ -78,12 +143,7 @@ export default function SecurityInterventionModal() {
       // Jangan mengunci layar Admin sendiri saat Admin sedang bekerja di /admin
       if (isInsideAdminDashboard()) return
 
-      const targetSession = payload.session_id || payload.sessionId
-      const localIdentity = getStoredDeviceIdentity()
-      const isSameDeviceIdentity =
-        Boolean(localIdentity && payload.device_identity && localIdentity === payload.device_identity)
-
-      if (targetSession && targetSession !== sId && !isSameDeviceIdentity) return
+      if (!doesPayloadMatchThisDevice(payload, sId)) return
 
       // Aksi buka kunci layar dari Admin
       if (payload.action === 'unlock_screen' || payload.status === 'unlocked' || payload.status === 'active') {
@@ -146,26 +206,30 @@ export default function SecurityInterventionModal() {
       setIsAdminPreview(false)
     }
 
-    // 3. Cek intervensi via activity_log bridge (100% berhasil untuk anon maupun authenticated)
+    // 3. Cek intervensi via activity_log bridge (100% berhasil untuk anon maupun aplikasi Android)
     const checkInterventionBridge = async () => {
       if (isInsideAdminDashboard()) return
       try {
-        const { data } = await supabase
+        const { data: rows } = await supabase
           .from('activity_log')
           .select('id, aksi, detail, created_at')
           .eq('aktor', 'SECURITY_INTERCEPT')
-          .eq('aksi', `INTERVENSI:${sId}`)
           .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
+          .limit(25)
 
-        if (data && data.detail) {
-          if (lastHandledTimestampRef.current === data.created_at) return
-          lastHandledTimestampRef.current = data.created_at
-          try {
-            const parsed = JSON.parse(data.detail)
-            await applyPayload({ ...parsed, timestamp: data.created_at })
-          } catch {}
+        if (Array.isArray(rows) && rows.length > 0) {
+          for (const row of rows) {
+            if (!row.detail) continue
+            try {
+              const parsed = JSON.parse(row.detail)
+              if (doesPayloadMatchThisDevice(parsed, sId)) {
+                if (lastHandledTimestampRef.current === row.created_at) break
+                lastHandledTimestampRef.current = row.created_at
+                await applyPayload({ ...parsed, timestamp: row.created_at })
+                break
+              }
+            } catch {}
+          }
         }
       } catch {}
     }

@@ -356,6 +356,8 @@ export default function AdminActivityLogSection() {
       logId: target.id,
       session_id: target.session_id,
       sessionId: target.session_id,
+      device_identity: target.device_identity || null,
+      target_email: target.email || null,
       admin_message: action === 'unlock_screen' ? null : cleanMsg,
       action,
       status: action === 'unlock_screen' ? 'unlocked' : status,
@@ -364,6 +366,7 @@ export default function AdminActivityLogSection() {
       isp: target.isp,
       ip_address: target.ip_address,
       device: target.device,
+      os: target.os,
       timestamp: new Date().toISOString()
     }
 
