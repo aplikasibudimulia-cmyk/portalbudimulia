@@ -46,9 +46,6 @@ export function evaluatePresensiSession({
   const pulTanggalVal = getSetting('presensi_pulang_tanggal')
   const isPulangManualAktif = pulAktifVal && (!pulTanggalVal || pulTanggalVal === todayStr)
 
-  // Cek apakah sesi masuk diaktifkan manual oleh Petugas Piket / Admin via tabel sesi_presensi
-  const isMasukManualAktif = !!sesiPresensiRow && sesiPresensiRow.tanggal === todayStr && !isSesiSelesaiManual
-
   // Evaluasi jadwal hari aktif (Senin - Jumat vs Libur)
   const activeDays = har.split(',').map(Number)
   const isHariAktif = autAct ? activeDays.includes(currentDow) : true
@@ -65,6 +62,24 @@ export function evaluatePresensiSession({
   const isSudahLewatBatasSelesai = currentH > bh || (currentH === bh && currentM >= (bm || 0))
   const isLewatBatasHadir = currentH > th || (currentH === th && currentM > (tm || 0))
 
+  // Cek apakah sesi masuk diaktifkan manual oleh Petugas Piket / Admin via tabel sesi_presensi.
+  // KRUSIAL: Jika jadwal_otomatis_aktif = true dan jam sudah melewati jam_batas_pulang (misal 19:00),
+  // maka baris sesi_presensi yang dibuka pagi/siang hari (sebelum jam_batas_pulang) OTOMATIS dianggap berakhir!
+  let isMasukManualHold = !!sesiPresensiRow && sesiPresensiRow.tanggal === todayStr && !isSesiSelesaiManual
+  if (isMasukManualHold && autAct && isSudahLewatBatasSelesai) {
+    if (sesiPresensiRow.dibuka_pada) {
+      const openedTimeWIB = getCurrentTimeWIB(new Date(sesiPresensiRow.dibuka_pada))
+      const [oh, om] = openedTimeWIB.split(':').map(Number)
+      const openedAfterCutoff = oh > bh || (oh === bh && om >= (bm || 0))
+      if (!openedAfterCutoff) {
+        isMasukManualHold = false
+      }
+    } else {
+      isMasukManualHold = false
+    }
+  }
+  const isMasukManualAktif = isMasukManualHold
+
   // Jadwal otomatis:
   // Sesi masuk aktif dari jam_mulai_masuk sampai jam_batas_pulang pada hari aktif
   const isAutoMasukActive = autAct && isHariAktif && isSudahMulaiMasuk && !isSudahLewatBatasSelesai
@@ -76,8 +91,8 @@ export function evaluatePresensiSession({
   // Sesi Masuk aktif jika: (Otomatis Aktif) ATAU (Manual dibuka oleh Piket/Admin)
   const isSesiMasukAktif = isAutoMasukActive || isMasukManualAktif
 
-  // Sesi Pulang aktif jika: (Otomatis Pulang Aktif) ATAU (Manual dibuka oleh Piket/Admin untuk hari ini)
-  const isSesiPulangAktif = isAutoPulangActive || isPulangManualAktif
+  // Sesi Pulang aktif jika: (Otomatis Pulang Aktif) ATAU (Manual dibuka oleh Piket/Admin untuk hari ini dan belum lewat batas selesai)
+  const isSesiPulangAktif = isAutoPulangActive || (isPulangManualAktif && !(autAct && isSudahLewatBatasSelesai))
 
   // Presensi ditutup jika:
   // - Sudah lewat jam batas selesai pulang pada jadwal otomatis, ATAU

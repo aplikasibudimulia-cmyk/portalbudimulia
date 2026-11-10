@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
-import { getTodayWIB } from '../utils/dateUtils'
+import { getTodayWIB, getCurrentTimeWIB } from '../utils/dateUtils'
 import { getPortalBaseUrl } from '../utils/urlHelper'
 
 // ===== Haversine Distance Calculator =====
@@ -171,9 +171,8 @@ export default function AdminPresensiConfigSection() {
       supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
       supabase.from('push_subscriptions').select('nisn'),
       supabase.from('push_subscriptions_ortu').select('nisn_anak'),
-      supabase.from('sesi_presensi').select('tanggal').eq('tanggal', todayStr).maybeSingle()
+      supabase.from('sesi_presensi').select('tanggal, dibuka_pada').eq('tanggal', todayStr).maybeSingle()
     ])
-    setSesiMasukHariIni(!!sesiToday)
     if (pengaturan) {
       const map = {}
       pengaturan.forEach(p => { map[p.setting_key] = p.setting_value || '' })
@@ -183,8 +182,30 @@ export default function AdminPresensiConfigSection() {
         map['presensi_pulang_aktif'] = 'false'
       }
 
-      // Bersihkan sesi_selesai hari ini jika jadwal otomatis aktif agar tidak memblokir jadwal
-      if (map['jadwal_otomatis_aktif'] === 'true' || map['jadwal_otomatis_aktif'] === '1') {
+      const isAutoOn = map['jadwal_otomatis_aktif'] === 'true' || map['jadwal_otomatis_aktif'] === '1'
+      const batasPulangStr = map['jam_batas_pulang'] || '19:00'
+      const [bh, bm] = batasPulangStr.split(':').map(Number)
+      const [ch, cm] = getCurrentTimeWIB().split(':').map(Number)
+      const isPastCutoff = ch > bh || (ch === bh && cm >= (bm || 0))
+
+      // Jika jadwal otomatis aktif dan sudah melewati jam batas selesai presensi (misal 19:00):
+      // Otomatis tutup sesi_presensi yang dibuka pagi/siang tadi agar toggle tidak nyangkut hijau di malam hari!
+      let activeSesiToday = !!sesiToday
+      if (isAutoOn && isPastCutoff && sesiToday) {
+        let openedAfterCutoff = false
+        if (sesiToday.dibuka_pada) {
+          const [oh, om] = getCurrentTimeWIB(new Date(sesiToday.dibuka_pada)).split(':').map(Number)
+          openedAfterCutoff = oh > bh || (oh === bh && om >= (bm || 0))
+        }
+        if (!openedAfterCutoff) {
+          activeSesiToday = false
+          supabase.from('sesi_presensi').delete().eq('tanggal', todayStr).then(() => {})
+        }
+      }
+      setSesiMasukHariIni(activeSesiToday)
+
+      // Bersihkan sesi_selesai hari ini jika jadwal otomatis aktif dan belum lewat cutoff agar tidak memblokir jadwal
+      if (isAutoOn && !isPastCutoff) {
         if (map[`sesi_selesai_${todayStr}`]) {
           supabase.from('pengaturan_sekolah').delete().eq('setting_key', `sesi_selesai_${todayStr}`).then(() => {})
           delete map[`sesi_selesai_${todayStr}`]
@@ -196,6 +217,8 @@ export default function AdminPresensiConfigSection() {
       if (map['geofence_areas']) {
         try { setGeofenceAreas(JSON.parse(map['geofence_areas'])) } catch { setGeofenceAreas([]) }
       }
+    } else {
+      setSesiMasukHariIni(!!sesiToday)
     }
     setSiswaList(siswa)
     

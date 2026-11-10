@@ -883,6 +883,39 @@ CREATE TRIGGER trg_guard_push_tokens_mass_delete
   REFERENCING OLD TABLE AS deleted_tokens
   FOR EACH STATEMENT EXECUTE FUNCTION public.fn_guard_push_tokens_mass_delete();
 
+-- 5.4 Perbaikan & Pengamanan Tabel sesi_presensi (Agar Auto-Close Jam 19:00 Berfungsi Normal!)
+-- Sebelumnya REVOKE DELETE ON sesi_presensi FROM anon membuat sistem gagal menutup sesi otomatis saat jam 19:00 tiba!
+ALTER TABLE public.sesi_presensi ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sesi_presensi TO anon, authenticated, service_role;
+
+DROP POLICY IF EXISTS "sesi_presensi_read_all" ON public.sesi_presensi;
+CREATE POLICY "sesi_presensi_read_all" ON public.sesi_presensi FOR SELECT TO anon, authenticated USING (true);
+
+DROP POLICY IF EXISTS "sesi_presensi_write" ON public.sesi_presensi;
+CREATE POLICY "sesi_presensi_write" ON public.sesi_presensi FOR INSERT TO anon, authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "sesi_presensi_update" ON public.sesi_presensi;
+CREATE POLICY "sesi_presensi_update" ON public.sesi_presensi FOR UPDATE TO anon, authenticated USING (true);
+
+DROP POLICY IF EXISTS "sesi_presensi_delete" ON public.sesi_presensi;
+CREATE POLICY "sesi_presensi_delete" ON public.sesi_presensi FOR DELETE TO anon, authenticated USING (true);
+
+DROP TRIGGER IF EXISTS trg_guard_staff_sesi_presensi ON public.sesi_presensi;
+CREATE TRIGGER trg_guard_staff_sesi_presensi
+  BEFORE INSERT OR UPDATE OR DELETE ON public.sesi_presensi
+  FOR EACH ROW EXECUTE FUNCTION public.fn_guard_staff_only_write();
+
+-- Bersihkan seluruh baris sesi_presensi hari-hari kemarin DAN hari ini jika sudah lewat jam batas selesai (19:00 WIB)
+DELETE FROM public.sesi_presensi
+WHERE tanggal < (now() AT TIME ZONE 'Asia/Jakarta')::date
+   OR (
+     tanggal = (now() AT TIME ZONE 'Asia/Jakarta')::date
+     AND (now() AT TIME ZONE 'Asia/Jakarta')::time >= COALESCE(
+       (SELECT NULLIF(TRIM(setting_value), '')::time FROM public.pengaturan_sekolah WHERE setting_key = 'jam_batas_pulang' LIMIT 1),
+       '19:00:00'::time
+     )
+   );
+
 -- ------------------------------------------------------------------------------
 -- SELESAI & REFRESH SCHEMA CACHE POSTGREST
 -- ------------------------------------------------------------------------------
