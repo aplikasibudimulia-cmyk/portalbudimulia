@@ -57,19 +57,25 @@ function OfflineAndBackWatcher() {
         // Jangan intervensi tombol back saat ujian CBT berlangsung
         if (path.startsWith('/cbt/ujian')) return
 
-        // 1. Cek apakah ada modal / pop-up (div.fixed.inset-0) yang sedang terbuka (kecuali layar kunci keamanan z-[999999])
+        // 1. Cek apakah ada modal / pop-up (div.fixed.inset-0) yang sedang terbuka (kecuali layar kunci keamanan & dekorasi)
         const openModals = Array.from(document.querySelectorAll('div.fixed.inset-0'))
           .filter(el => {
             const cls = String(el.className || '')
-            if (cls.includes('z-[999999]') && el.textContent?.includes('DIKUNCI')) return false
+            if (cls.includes('pointer-events-none')) return false
+            if (cls.includes('z-[999999]') || cls.includes('z-[99999]') || cls.includes('z-[9999]')) return false
+            if (el.offsetWidth === 0 || el.offsetHeight === 0) return false
             const style = window.getComputedStyle(el)
+            if (style.pointerEvents === 'none') return false
             return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0
           })
 
         if (openModals.length > 0) {
           const topModal = openModals[openModals.length - 1]
+          const searchScope = topModal.querySelectorAll('button').length > 0
+            ? topModal
+            : (topModal.parentElement || topModal)
           // Cari tombol tutup (✕ / Tutup / Batal) di dalam modal paling atas
-          const buttons = Array.from(topModal.querySelectorAll('button'))
+          const buttons = Array.from(searchScope.querySelectorAll('button'))
           const closeBtn = buttons.find(b => {
             const txt = (b.textContent || '').trim().toLowerCase()
             return txt === '✕' || txt === 'x' || txt === 'tutup' || txt === 'batal' || txt === 'kembali'
