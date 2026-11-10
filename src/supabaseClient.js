@@ -206,10 +206,14 @@ const fetchWithRetry = (url, options = {}) => {
         urlStr.includes('/rpc/fn_consume_impersonate_token') ||
         urlStr.includes('/auth/v1/')
 
+      const isReadRpc =
+        urlStr.includes('/rpc/fn_get_') ||
+        urlStr.includes('/rpc/fn_check_')
+
       let ctx = getActiveSessionContext()
       if (ctx && !ctx.token && !isHandshakeRpc && urlStr.includes('/rest/v1/')) {
         const isWriteOrProtectedRead =
-          method !== 'GET' || urlStr.includes('/rest/v1/akun_pengguna')
+          (method !== 'GET' && !isReadRpc) || urlStr.includes('/rest/v1/akun_pengguna')
         if (isWriteOrProtectedRead) {
           const newToken = await ensureServerSessionToken(ctx)
           if (newToken) ctx = getActiveSessionContext() || { ...ctx, token: newToken }
@@ -233,7 +237,7 @@ const fetchWithRetry = (url, options = {}) => {
       }
 
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 8000) // 8s timeout agar retry lebih responsif saat sinyal lemah
 
       const response = await fetch(url, {
         ...options,

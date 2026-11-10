@@ -83,7 +83,16 @@ export function AdminRoute({ children }) {
  * Memastikan sesi guru_session bukan hasil rekayasa di LocalStorage.
  */
 export function GuruRoute({ children }) {
-  const [status, setStatus] = useState('checking')
+  const [status, setStatus] = useState(() => {
+    try {
+      const raw = localStorage.getItem('guru_session')
+      if (!raw) return 'denied'
+      const parsed = JSON.parse(raw)
+      return (parsed && parsed.id && parsed.akun_id) ? 'allowed' : 'denied'
+    } catch {
+      return 'denied'
+    }
+  })
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -112,22 +121,23 @@ export function GuruRoute({ children }) {
       }
 
       try {
-        // Validasi ke server database: Apakah ID & akun_id ini sah sebagai pegawai aktif?
+        // Validasi di background ke server database: Apakah ID & akun_id ini sah sebagai pegawai aktif?
         const { data: res, error } = await supabase.rpc('fn_verify_session', {
           p_akun_id: parsed.akun_id,
           p_role: 'staff',
           p_foreign_id: String(parsed.id)
         })
 
-        if (error || !res?.ok) {
-          console.warn('[GuruGuard] Sesi guru terdeteksi tidak valid:', res?.msg || error?.message)
+        // Hanya cabut sesi jika server secara eksplisit menyatakan sesi tidak valid (res.ok === false)
+        if (!error && res && res.ok === false) {
+          console.warn('[GuruGuard] Sesi guru terdeteksi tidak valid:', res?.msg)
           localStorage.removeItem('guru_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
         }
 
-        if (res.session_token) {
+        if (res?.session_token) {
           persistServerSessionToken(res.session_token, 'guru_session')
         }
 
@@ -157,9 +167,19 @@ export function GuruRoute({ children }) {
 /**
  * 🛡️ StudentRoute: Mengunci halaman /dashboard
  * Memastikan sesi siswa_session bukan hasil modifikasi NISN orang lain.
+ * Instan (0ms) saat dibuka jika sesi lokal valid, lalu diverifikasi di background.
  */
 export function StudentRoute({ children }) {
-  const [status, setStatus] = useState('checking')
+  const [status, setStatus] = useState(() => {
+    try {
+      const raw = localStorage.getItem('siswa_session')
+      if (!raw) return 'denied'
+      const parsed = JSON.parse(raw)
+      return (parsed && (parsed.nisn || parsed.id)) ? 'allowed' : 'denied'
+    } catch {
+      return 'denied'
+    }
+  })
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -195,15 +215,15 @@ export function StudentRoute({ children }) {
           p_foreign_id: String(nisn)
         })
 
-        if (error || !res?.ok) {
-          console.warn('[StudentGuard] Manipulasi sesi siswa terdeteksi:', res?.msg || error?.message)
+        if (!error && res && res.ok === false) {
+          console.warn('[StudentGuard] Manipulasi sesi siswa terdeteksi:', res?.msg)
           localStorage.removeItem('siswa_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
         }
 
-        if (res.session_token) {
+        if (res?.session_token) {
           persistServerSessionToken(res.session_token, 'siswa_session')
         }
 
@@ -233,7 +253,16 @@ export function StudentRoute({ children }) {
  * 🛡️ ParentRoute: Mengunci halaman /dashboard-orang-tua
  */
 export function ParentRoute({ children }) {
-  const [status, setStatus] = useState('checking')
+  const [status, setStatus] = useState(() => {
+    try {
+      const raw = localStorage.getItem('orangtua_session')
+      if (!raw) return 'denied'
+      const parsed = JSON.parse(raw)
+      return (parsed && (parsed.nisn || parsed.id)) ? 'allowed' : 'denied'
+    } catch {
+      return 'denied'
+    }
+  })
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -268,15 +297,15 @@ export function ParentRoute({ children }) {
           p_foreign_id: String(nisn)
         })
 
-        if (error || !res?.ok) {
-          console.warn('[ParentGuard] Manipulasi sesi orang tua terdeteksi:', res?.msg || error?.message)
+        if (!error && res && res.ok === false) {
+          console.warn('[ParentGuard] Manipulasi sesi orang tua terdeteksi:', res?.msg)
           localStorage.removeItem('orangtua_session')
           localStorage.removeItem('ebm_session_token')
           if (isMounted) setStatus('denied')
           return
         }
 
-        if (res.session_token) {
+        if (res?.session_token) {
           persistServerSessionToken(res.session_token, 'orangtua_session')
         }
 
