@@ -43,23 +43,20 @@ public class CbtLockTaskPlugin extends Plugin {
             }
 
             if (getActivity() instanceof MainActivity) {
-                ((MainActivity) getActivity()).enableCbtLock(true);
+                ((MainActivity) getActivity()).startAndVerifyCbtLock(call);
             } else {
                 getActivity().runOnUiThread(() -> {
                     try {
                         getActivity().startLockTask();
+                        JSObject ret = new JSObject();
+                        ret.put("success", true);
+                        call.resolve(ret);
+                        notifyLockState(true);
                     } catch (Exception e) {
-                        Log.w(TAG, "Fallback startLockTask: " + e.getMessage());
+                        call.reject("Gagal mengaktifkan kunci layar: " + e.getMessage());
                     }
                 });
             }
-
-            Log.i(TAG, "Android Lock Task Mode berhasil diaktifkan dengan pengamanan penuh.");
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            call.resolve(ret);
-
-            notifyLockState(true);
         } catch (Exception e) {
             call.reject("Error: " + e.getMessage());
         }

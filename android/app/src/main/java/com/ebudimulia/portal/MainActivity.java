@@ -8,12 +8,14 @@ import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -21,18 +23,23 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.PluginCall;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "MainActivity";
     public static volatile boolean isCbtLockActive = false;
+    private volatile boolean hasConfirmedPinning = false;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // Lock Task Watchdog & Debounce Control
     private Runnable lockWatchdog;
+    private Runnable verifyPinRunnable;
     private long lastPinCallMs = 0;
-    private static final long PIN_DEBOUNCE_MS = 2500;
+    private static final long PIN_DEBOUNCE_MS = 1500;
     private long continuousUnpinStartMs = 0;
-    private static final long UNPIN_VIOLATION_THRESHOLD_MS = 4000;
 
     // Android 13+ Predictive Back Interceptor (Mencegah gesture swipe back di Samsung / One UI)
     private android.window.OnBackInvokedCallback cbtBackCallback;
@@ -95,8 +102,114 @@ public class MainActivity extends BridgeActivity {
         createNotificationChannel();
     }
 
+    public boolean isNativeLockTaskActive() {
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && am != null) {
+                return am.getLockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "isNativeLockTaskActive error: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Memulai Lock Task Mode dan memverifikasi bahwa pengguna benar-benar menekan
+     * "Oke / Sematkan / Mengerti" pada dialog sistem Android (setara dengan iOS AAC).
+     * Jika pengguna menekan "Tidak / Batal", maka call.reject() dipanggil sehingga soal TIDAK terbuka.
+     */
+    public void startAndVerifyCbtLock(final PluginCall call) {
+        mainHandler.post(() -> {
+            // 1. Jika sudah dalam status tersemat (PINNED / LOCKED), langsung resolve
+            if (isNativeLockTaskActive()) {
+                isCbtLockActive = true;
+                hasConfirmedPinning = true;
+                enableCbtLock(true);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("alreadyActive", true);
+                call.resolve(ret);
+                CbtLockTaskPlugin.notifyLockState(true);
+                return;
+            }
+
+            if (verifyPinRunnable != null) {
+                mainHandler.removeCallbacks(verifyPinRunnable);
+                verifyPinRunnable = null;
+            }
+
+            hasConfirmedPinning = false;
+            enableCbtLock(true);
+
+            final long startWaitMs = System.currentTimeMillis();
+            final boolean[] sawSystemDialog = { false };
+            final long[] dialogClosedAtMs = { 0L };
+
+            verifyPinRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (isNativeLockTaskActive()) {
+                        verifyPinRunnable = null;
+                        hasConfirmedPinning = true;
+                        startLockWatchdog();
+                        Log.i(TAG, "Verifikasi Sematan Layar Android BERHASIL (LOCK_TASK_MODE aktif).");
+                        JSObject ret = new JSObject();
+                        ret.put("success", true);
+                        ret.put("locked", true);
+                        call.resolve(ret);
+                        CbtLockTaskPlugin.notifyLockState(true);
+                        return;
+                    }
+
+                    long elapsed = System.currentTimeMillis() - startWaitMs;
+                    boolean focused = hasWindowFocus();
+
+                    if (!focused) {
+                        // Dialog sistem "Sematkan aplikasi ini?" sedang tampil di atas aplikasi
+                        sawSystemDialog[0] = true;
+                        dialogClosedAtMs[0] = 0L;
+                    } else if (sawSystemDialog[0]) {
+                        // Fokus kembali ke aplikasi setelah dialog sistem tertutup, namun belum tersemat
+                        if (dialogClosedAtMs[0] == 0L) {
+                            dialogClosedAtMs[0] = System.currentTimeMillis();
+                        } else if (System.currentTimeMillis() - dialogClosedAtMs[0] >= 450) {
+                            // Pengguna menekan "Tidak / Batal" pada dialog sematkan layar!
+                            verifyPinRunnable = null;
+                            enableCbtLock(false);
+                            CbtLockTaskPlugin.notifyLockState(false);
+                            call.reject("Izin Sematan Layar ditolak. Anda WAJIB menekan tombol 'Oke / Sematkan / Mengerti' pada jendela konfirmasi Android untuk membuka soal ujian.");
+                            return;
+                        }
+                    }
+
+                    // Jika setelah 3.2 detik dialog sistem sama sekali tidak muncul dan layar belum tersemat
+                    // (misal fitur Sematkan Aplikasi dimatikan di Pengaturan HP), atau batas tunggu 15 detik habis
+                    if ((!sawSystemDialog[0] && elapsed >= 3200) || elapsed >= 15000) {
+                        verifyPinRunnable = null;
+                        enableCbtLock(false);
+                        CbtLockTaskPlugin.notifyLockState(false);
+                        call.reject("Layar belum berhasil disematkan. Pastikan Anda menekan 'Oke / Sematkan' pada pop-up Android (atau aktifkan fitur 'Sematkan Aplikasi / Pin App' di Pengaturan Keamanan HP Anda).");
+                        return;
+                    }
+
+                    mainHandler.postDelayed(this, 150);
+                }
+            };
+
+            mainHandler.postDelayed(verifyPinRunnable, 200);
+        });
+    }
+
     public void enableCbtLock(boolean enable) {
         isCbtLockActive = enable;
+        if (!enable) {
+            hasConfirmedPinning = false;
+            if (verifyPinRunnable != null) {
+                mainHandler.removeCallbacks(verifyPinRunnable);
+                verifyPinRunnable = null;
+            }
+        }
         mainHandler.post(() -> {
             try {
                 if (enable) {
@@ -132,12 +245,16 @@ public class MainActivity extends BridgeActivity {
                         Log.w(TAG, "DPM setup warning: " + dpmErr.getMessage());
                     }
 
-                    try {
-                        startLockTask();
-                    } catch (Exception e) {
-                        Log.w(TAG, "startLockTask warning: " + e.getMessage());
+                    if (!isNativeLockTaskActive()) {
+                        try {
+                            startLockTask();
+                        } catch (Exception e) {
+                            Log.w(TAG, "startLockTask warning: " + e.getMessage());
+                        }
+                    } else {
+                        hasConfirmedPinning = true;
+                        startLockWatchdog();
                     }
-                    startLockWatchdog();
                     registerBackCallback();
                     Log.i(TAG, "CBT Lock Screen AKTIF dengan proteksi maksimal.");
                 } else {
@@ -199,6 +316,21 @@ public class MainActivity extends BridgeActivity {
                 | View.SYSTEM_UI_FLAG_FULLSCREEN
             );
 
+            // Blokir gesture swipe dari tepi kiri, kanan, atas, dan bawah layar pada Android 10+ (API 29+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    DisplayMetrics dm = getResources().getDisplayMetrics();
+                    int w = dm.widthPixels > 0 ? dm.widthPixels : 1440;
+                    int h = dm.heightPixels > 0 ? dm.heightPixels : 3200;
+                    List<Rect> exclusions = new ArrayList<>();
+                    exclusions.add(new Rect(0, 0, w, 140));          // Tepi atas (status bar pull-down)
+                    exclusions.add(new Rect(0, h - 180, w, h));      // Tepi bawah (gesture home / assistant)
+                    exclusions.add(new Rect(0, 0, 120, h));          // Tepi kiri (back gesture)
+                    exclusions.add(new Rect(w - 120, 0, w, h));      // Tepi kanan (back gesture)
+                    decorView.setSystemGestureExclusionRects(exclusions);
+                } catch (Exception ignored) {}
+            }
+
             // Pasang listener instan: jika bar navigasi sempat muncul akibat swipe, langsung sembunyikan kembali dalam 0ms
             decorView.setOnSystemUiVisibilityChangeListener(visibility -> {
                 if (isCbtLockActive && (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
@@ -228,6 +360,11 @@ public class MainActivity extends BridgeActivity {
                 }
             }
             View decorView = getWindow().getDecorView();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    decorView.setSystemGestureExclusionRects(new ArrayList<>());
+                } catch (Exception ignored) {}
+            }
             decorView.setOnSystemUiVisibilityChangeListener(null);
             decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         } catch (Exception e) {
@@ -240,10 +377,13 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (isCbtLockActive) {
             applyImmersiveSticky();
-            if (!hasFocus) {
-                Log.w(TAG, "CBT Lock: Window kehilangan fokus (mungkin ada floating app / overlay / status bar)!");
+            if (!hasFocus && hasConfirmedPinning) {
+                Log.w(TAG, "CBT Lock: Window kehilangan fokus saat terkunci!");
+                try {
+                    sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+                } catch (Exception ignored) {}
                 mainHandler.postDelayed(() -> {
-                    if (isCbtLockActive && !hasWindowFocus()) {
+                    if (isCbtLockActive && hasConfirmedPinning && !hasWindowFocus()) {
                         bringToFront();
                         if (getBridge() != null && getBridge().getWebView() != null) {
                             getBridge().getWebView().evaluateJavascript(
@@ -251,7 +391,7 @@ public class MainActivity extends BridgeActivity {
                             );
                         }
                     }
-                }, 800);
+                }, 600);
             }
         }
     }
@@ -362,9 +502,8 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * Watchdog timer yang memantau status sematan layar saat CBT Lock aktif.
-     * Jika sematan terlepas (unpin), tunggu konfirmasi beberapa saat sebelum kirim event ke JS
-     * agar tidak terjadi false-positive saat transisi awal layar atau saat buka blokir.
+     * Watchdog timer yang memantau status sematan layar saat CBT Lock aktif (setiap 250ms).
+     * Begitu sematan layar terlepas (unpin), langsung sembunyikan soal & kunci ujian!
      */
     private void startLockWatchdog() {
         stopLockWatchdog();
@@ -375,37 +514,33 @@ public class MainActivity extends BridgeActivity {
                 try {
                     applyImmersiveSticky();
 
-                    ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && am != null) {
-                        int lockState = am.getLockTaskModeState();
-                        if (lockState == ActivityManager.LOCK_TASK_MODE_NONE) {
-                            if (continuousUnpinStartMs == 0) {
-                                continuousUnpinStartMs = System.currentTimeMillis();
-                            } else if (System.currentTimeMillis() - continuousUnpinStartMs >= 2000) {
-                                Log.w(TAG, "Watchdog: Sematan terlepas (unpin) > 2s! Mengirim event ke JS untuk mengunci ujian.");
-                                continuousUnpinStartMs = 0; // Reset agar tidak mengirim event terus menerus setiap 500ms
-                                CbtLockTaskPlugin.notifyLockState(false);
-                                if (getBridge() != null && getBridge().getWebView() != null) {
-                                    getBridge().getWebView().evaluateJavascript(
-                                        "window.dispatchEvent(new CustomEvent('cbt_unpin_attempt'));", null
-                                    );
-                                }
-                            }
-                        } else {
+                    if (hasConfirmedPinning && !isNativeLockTaskActive()) {
+                        if (continuousUnpinStartMs == 0) {
+                            continuousUnpinStartMs = System.currentTimeMillis();
+                        } else if (System.currentTimeMillis() - continuousUnpinStartMs >= 300) {
+                            Log.w(TAG, "Watchdog: Sematan terlepas (unpin) terdeteksi! Mengunci ujian seketika.");
                             continuousUnpinStartMs = 0;
+                            hasConfirmedPinning = false;
+                            CbtLockTaskPlugin.notifyLockState(false);
+                            if (getBridge() != null && getBridge().getWebView() != null) {
+                                getBridge().getWebView().evaluateJavascript(
+                                    "window.dispatchEvent(new CustomEvent('cbt_unpin_attempt'));", null
+                                );
+                            }
                         }
+                    } else {
+                        continuousUnpinStartMs = 0;
                     }
                 } catch (Exception e) {
                     Log.w(TAG, "lockWatchdog error: " + e.getMessage());
                 }
                 if (isCbtLockActive && lockWatchdog != null) {
-                    mainHandler.postDelayed(this, 500);
+                    mainHandler.postDelayed(this, 250);
                 }
             }
         };
-        // Beri waktu 3 detik agar sistem menyelesaikan transisi pinning sebelum evaluasi watchdog dimulai
-        mainHandler.postDelayed(lockWatchdog, 3000);
-        Log.i(TAG, "Lock Watchdog DIJADWALKAN (dimulai dalam 3s setelah transisi sematan siap).");
+        mainHandler.postDelayed(lockWatchdog, 300);
+        Log.i(TAG, "Lock Watchdog AKTIF (interval 250ms).");
     }
 
     private void stopLockWatchdog() {

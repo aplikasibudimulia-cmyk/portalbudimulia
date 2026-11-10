@@ -1723,11 +1723,7 @@ export default function CbtUjianSiswaPage() {
     }
 
     const handleUnpinAttempt = async () => {
-      if (isSecurityGracePeriod()) {
-        console.log('[CBT Security] Mengabaikan unpin attempt selama masa transisi (grace period).')
-        return
-      }
-      console.warn('[CBT Security] Terdeteksi melepas sematan layar Android.')
+      console.warn('[CBT Security] Terdeteksi melepas sematan layar Android (Unpin).')
       setIsLocked(true)
       setIsBlocked(true)
       setIsDeviceLocked(false)
