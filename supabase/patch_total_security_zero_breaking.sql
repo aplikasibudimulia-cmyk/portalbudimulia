@@ -802,9 +802,26 @@ CREATE TRIGGER trg_guard_pengajuan_poin_status
   BEFORE INSERT OR UPDATE OR DELETE ON public.pengajuan_poin_positif
   FOR EACH ROW EXECUTE FUNCTION public.fn_guard_pengajuan_poin_status();
 
--- 5.2 Presensi Harian:
--- Siswa hanya boleh absen hari ini. Koreksi absensi tanggal lampau WAJIB lolos
--- verifikasi sesi Staff (fn_is_authorized_staff), sehingga mencatut UUID guru_id via curl tetap ditolak!
+-- 5.2 Presensi Harian & Laporan Kendala Presensi:
+-- Pulihkan GRANT DELETE & RLS DELETE agar:
+--   a) Guru / Wali Kelas / Admin bisa mengubah status ke "Kosong (-)"
+--   b) Tombol "Reset Data (Mode Dev)" untuk presensi hari ini berfungsi normal
+--   c) Siswa tetap DILARANG menghapus presensi tanggal lampau atau presensi milik siswa lain!
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.presensi_harian TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.laporan_kendala_presensi TO anon, authenticated, service_role;
+
+DROP POLICY IF EXISTS "presensi_delete_portal" ON public.presensi_harian;
+CREATE POLICY "presensi_delete_portal"
+  ON public.presensi_harian FOR DELETE
+  TO anon, authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "laporan_kendala_delete" ON public.laporan_kendala_presensi;
+CREATE POLICY "laporan_kendala_delete"
+  ON public.laporan_kendala_presensi FOR DELETE
+  TO anon, authenticated
+  USING (true);
+
 CREATE OR REPLACE FUNCTION public.fn_guard_presensi_harian()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -814,9 +831,11 @@ AS $$
 DECLARE
   v_editor_id UUID;
   v_is_authorized BOOLEAN := FALSE;
+  v_today_wib DATE := (now() AT TIME ZONE 'Asia/Jakarta')::date;
+  v_actor_nisn TEXT;
 BEGIN
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.tanggal < (CURRENT_DATE - INTERVAL '1 day') AND (NEW.status IS DISTINCT FROM OLD.status) THEN
+    IF OLD.tanggal < (v_today_wib - INTERVAL '1 day') AND (NEW.status IS DISTINCT FROM OLD.status) THEN
       v_editor_id := COALESCE(NEW.diedit_oleh, NEW.diinput_oleh);
       v_is_authorized := public.fn_is_authorized_staff();
 
@@ -843,10 +862,18 @@ BEGIN
       END IF;
     END IF;
   ELSIF TG_OP = 'DELETE' THEN
-    IF NOT public.fn_is_authorized_staff() THEN
-      RAISE EXCEPTION 'Akses ditolak: Hanya Guru / Admin yang dapat menghapus data presensi.';
+    -- Izinkan jika Guru/Admin/Staff resmi
+    IF public.fn_is_authorized_staff() THEN
+      RETURN OLD;
     END IF;
-    RETURN OLD;
+
+    -- Izinkan Reset Data (Mode Dev) untuk presensi HARI INI milik siswa itu sendiri (atau kelas percobaan 10X)
+    v_actor_nisn := public.fn_get_client_header_part('ebm_actor');
+    IF OLD.tanggal = v_today_wib AND (v_actor_nisn = OLD.siswa_nisn OR OLD.kelas = '10X') THEN
+      RETURN OLD;
+    END IF;
+
+    RAISE EXCEPTION 'Akses ditolak: Hanya Guru / Admin yang dapat menghapus data riwayat presensi.';
   END IF;
 
   NEW.updated_at := NOW();
