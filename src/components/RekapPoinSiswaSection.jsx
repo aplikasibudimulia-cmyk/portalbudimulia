@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import HallOfFameModal from './HallOfFameModal'
 import MonthlyDisciplineRewardModal from './MonthlyDisciplineRewardModal'
+import ExportRekapPoinPdfModal from './ExportRekapPoinPdfModal'
 import { downloadFile } from '../utils/fileDownloader'
 import { useConfirm } from '../utils/useConfirm'
 import {
@@ -87,6 +88,10 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [showcaseTopChoice, setShowcaseTopChoice] = useState('10')
   const [showcaseCustomInput, setShowcaseCustomInput] = useState('')
   const [monthlyRewardModalOpen, setMonthlyRewardModalOpen] = useState(false)
+
+  // Modal Ekspor PDF Rekap Poin Resmi
+  const [pdfExportOpen, setPdfExportOpen] = useState(false)
+  const [pdfExportStudent, setPdfExportStudent] = useState(null)
 
   // Dashboard Data
   const [loading, setLoading] = useState(false)
@@ -1231,6 +1236,16 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
           >
             <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
             <span>Rekap Total Poin (Tab Baru)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPdfExportStudent(null); setPdfExportOpen(true) }}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm transition-all cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            <span>Ekspor PDF Resmi</span>
           </button>
           <button
             onClick={handleExportExcel}
@@ -2521,6 +2536,13 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => { setPdfExportStudent(selectedStudentHistory); setPdfExportOpen(true) }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  <span>PDF Siswa Ini</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => openAddPointModal(selectedStudentHistory)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                 >
@@ -3105,6 +3127,18 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         </div>,
         document.body
       )}
+
+      {/* Modal Ekspor PDF Rekap Poin Resmi */}
+      <ExportRekapPoinPdfModal
+        isOpen={pdfExportOpen}
+        onClose={() => { setPdfExportOpen(false); setPdfExportStudent(null) }}
+        allStudents={allStudentsList}
+        allClasses={allClasses}
+        activeTa={activeTa}
+        session={session}
+        initialKelas={daftarKelasFilter}
+        preselectedStudent={pdfExportStudent}
+      />
 
       {/* Confirm Modal Dialog */}
       {ConfirmModalComponent}
