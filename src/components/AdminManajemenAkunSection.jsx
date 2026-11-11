@@ -665,17 +665,20 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     } else {
       return guruList.map(guru => {
         const akun = akunList.find(a => a.foreign_id === guru.id.toString())
+        const uName = akun?.username 
+          ? (akun.username.includes('@') ? akun.username.split('@')[0] : akun.username) 
+          : (guru.user_name || '(Belum punya akun)')
         return {
           id: guru.id,
           foreign_id: guru.id.toString(),
           kode: guru.kode,
           nama: guru.nama_guru,
           foto_url: guru.foto_url,
-          hasAkun: !!akun,
+          hasAkun: !!akun || Boolean(guru.user_name),
           akun_id: akun?.id,
-          username: akun?.username ? (akun.username.includes('@') ? akun.username.split('@')[0] : akun.username) : '(Belum punya akun)',
-          password_exists: !!akun?.password,
-          status: akun?.status || 'nonaktif',
+          username: uName,
+          password_exists: !!akun?.password || Boolean(guru.kode_akses),
+          status: akun?.status || 'aktif',
           rawGuru: guru
         }
       })
@@ -1184,6 +1187,18 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
       }
       setGuruKodeTa(kodeTaList)
 
+      // Pastikan data username & akun guru diambil secara komprehensif
+      const akunFromList = (akunList || []).find(a => a.foreign_id === String(row?.id || ''))
+      const currentUsername = akunFromList?.username 
+        ? (akunFromList.username.includes('@') ? akunFromList.username.split('@')[0] : akunFromList.username)
+        : (row?.username && row.username !== '(Belum punya akun)' 
+            ? (row.username.includes('@') ? row.username.split('@')[0] : row.username) 
+            : (g?.user_name || ''))
+
+      const currentHasAkun = Boolean(akunFromList?.id || (row?.hasAkun && row?.akun_id) || g?.user_name)
+      const currentAkunId = akunFromList?.id || row?.akun_id || null
+      const currentStatus = akunFromList?.status || row?.status || 'aktif'
+
       const formState = {
         isNew: !row,
         row: row,
@@ -1191,12 +1206,12 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         foreign_id: row?.foreign_id || '',
         kode: g?.kode || '',
         nama: row?.nama || '',
-        username: row?.hasAkun ? row.username : '',
+        username: currentUsername,
         password: '',
-        hasAkun: row?.hasAkun || false,
-        akun_id: row?.akun_id,
+        hasAkun: currentHasAkun,
+        akun_id: currentAkunId,
         foto_url: row?.foto_url || null,
-        akun_status: row?.hasAkun ? row.status : 'aktif',
+        akun_status: currentStatus,
         no_hp: g?.no_hp || '',
         role_ids: g?.guru_role?.map(r => r.role_id) || [],
         kelas_assigned: g?.guru_kelas?.filter(k => k.tahun_ajaran_id === activeTa?.id).map(k => k.kelas) || [],
@@ -1207,6 +1222,28 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
         }, {})).map(([mapel_id, kelas_list]) => ({ mapel_id, kelas_list }))
       }
       setBiodataForm(formState)
+
+      // Cek langsung ke akun_pengguna jika belum terdeteksi akun_id untuk mencegah duplicate key
+      if (!currentAkunId && row?.id) {
+        supabase
+          .from('akun_pengguna')
+          .select('id, username, status')
+          .eq('role', 'guru')
+          .eq('foreign_id', String(row.id))
+          .maybeSingle()
+          .then(({ data: directAkun }) => {
+            if (directAkun) {
+              setBiodataForm(prev => ({
+                ...prev,
+                hasAkun: true,
+                akun_id: directAkun.id,
+                username: prev.username || (directAkun.username ? directAkun.username.split('@')[0] : ''),
+                akun_status: directAkun.status || prev.akun_status
+              }))
+            }
+          })
+          .catch(() => {})
+      }
       setInitialFormSnapshot({
         biodataForm: JSON.parse(JSON.stringify(formState)),
         studentEnrollments: [],
@@ -1518,6 +1555,13 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
             p_status: biodataForm.akun_status
           })
           if (createErr || !createResult?.ok) throw new Error(createResult?.msg || createErr?.message || "Gagal membuat akun")
+        }
+
+        // Sinkronisasi eksplisit ke tabel guru agar data user_name selalu terisi
+        if (activeTab === 'guru' && cleanFId) {
+          const syncGuruData = { user_name: cleanUsernameForAkun }
+          if (biodataForm.password) syncGuruData.kode_akses = biodataForm.password
+          await supabase.from('guru').update(syncGuruData).eq('id', cleanFId)
         }
 
         // Auto-generate Akun Orang Tua jika tipenya Murid (meniru angka acak username siswa)
