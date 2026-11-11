@@ -209,13 +209,18 @@ export default function SecurityInterventionModal() {
     // 3. Cek intervensi via activity_log bridge (100% berhasil untuk anon maupun aplikasi Android)
     const checkInterventionBridge = async () => {
       if (isInsideAdminDashboard()) return
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
       try {
+        // Hanya ambil intervensi 24 jam terakhir agar ringan untuk ratusan perangkat siswa
+        const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
         const { data: rows } = await supabase
           .from('activity_log')
           .select('id, aksi, detail, created_at')
           .eq('aktor', 'SECURITY_INTERCEPT')
+          .gte('created_at', sinceIso)
           .order('created_at', { ascending: false })
-          .limit(25)
+          .limit(10)
 
         if (Array.isArray(rows) && rows.length > 0) {
           for (const row of rows) {
@@ -235,7 +240,8 @@ export default function SecurityInterventionModal() {
     }
 
     checkInterventionBridge()
-    const pollInterval = setInterval(checkInterventionBridge, 3500)
+    // Polling cadangan dijarangkan (20 dtk); pengiriman instan sudah ditangani Realtime Broadcast
+    const pollInterval = setInterval(checkInterventionBridge, 20000)
 
     // 4. Realtime Broadcast Listener (< 100ms instan saat Admin klik Kirim Pesan / Kunci Layar / Jepret Kamera)
     const bcChannel = supabase.channel('ebm-security-command')
