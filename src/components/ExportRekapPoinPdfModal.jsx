@@ -288,6 +288,13 @@ export default function ExportRekapPoinPdfModal({
     })
   }, [allStudents, studentFilterClass, studentSearchText])
 
+  // Daftar objek siswa yang saat ini dicentang (untuk preview & review pilihan)
+  const selectedStudentsList = useMemo(() => {
+    if (selectedStudentNisns.length === 0) return []
+    const nisnSet = new Set(selectedStudentNisns)
+    return allStudents.filter((s) => nisnSet.has(s.nisn))
+  }, [allStudents, selectedStudentNisns])
+
   const toggleStudentNisn = (nisn) => {
     setSelectedStudentNisns((prev) =>
       prev.includes(nisn) ? prev.filter((n) => n !== nisn) : [...prev, nisn]
@@ -700,6 +707,52 @@ export default function ExportRekapPoinPdfModal({
                         })
                       )}
                     </div>
+
+                    {/* Preview Daftar Siswa yang Sedang Terpilih */}
+                    {selectedStudentsList.length > 0 && (
+                      <div className="pt-2.5 border-t border-slate-200 space-y-2 animate-fade-in">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>Daftar Siswa Terpilih ({selectedStudentsList.length} anak):</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedStudentNisns([])}
+                            className="text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline cursor-pointer"
+                          >
+                            Hapus Semua
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2.5 bg-slate-100/80 rounded-xl border border-slate-200">
+                          {selectedStudentsList.map((s) => (
+                            <span
+                              key={s.nisn}
+                              className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg text-xs font-semibold bg-white border border-indigo-200 text-slate-800 shadow-2xs hover:border-rose-300 transition-colors"
+                            >
+                              <span className="font-extrabold text-indigo-700 text-[10px] bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                {s.kelas}
+                              </span>
+                              <span className="truncate max-w-[170px] sm:max-w-[240px]" title={s.nama_lengkap}>
+                                {s.nama_lengkap}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  toggleStudentNisn(s.nisn)
+                                }}
+                                className="w-4 h-4 rounded-full hover:bg-rose-100 hover:text-rose-600 text-slate-400 flex items-center justify-center text-[10px] font-black transition-colors cursor-pointer"
+                                title={`Hapus ${s.nama_lengkap} dari pilihan`}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
