@@ -2124,13 +2124,16 @@ export default function DashboardGuru() {
     try {
       window.__ebudimuliaExplicitLogout = true
       localStorage.removeItem('guru_session')
-      try {
-        await supabase.auth.signOut()
-      } catch (authErr) {
-        console.warn('[Logout] Supabase signOut error/skipped:', authErr)
-      }
+      localStorage.removeItem('ebm_session_token')
+      sessionStorage.clear()
+      await Promise.race([
+        supabase.auth.signOut().catch(() => {}),
+        new Promise(resolve => setTimeout(resolve, 600))
+      ])
+    } catch (authErr) {
+      console.warn('[Logout] Supabase signOut error/skipped:', authErr)
     } finally {
-      window.location.href = '/'
+      window.location.replace('/login')
     }
   }
 

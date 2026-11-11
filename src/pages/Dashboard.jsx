@@ -1204,13 +1204,17 @@ function Dashboard() {
     try {
       window.__ebudimuliaExplicitLogout = true
       localStorage.removeItem('siswa_session')
-      try {
-        await supabase.auth.signOut()
-      } catch (authErr) {
-        console.warn('[Logout] Supabase signOut skipped/error:', authErr)
-      }
+      localStorage.removeItem('ebm_session_token')
+      sessionStorage.clear()
+      // Beri timeout maksimal 600ms agar supabase.auth.signOut tidak menggantung proses logout
+      await Promise.race([
+        supabase.auth.signOut().catch(() => {}),
+        new Promise(resolve => setTimeout(resolve, 600))
+      ])
+    } catch (e) {
+      console.warn('[Logout] Error saat keluar:', e)
     } finally {
-      window.location.href = '/'
+      window.location.replace('/login')
     }
   }
 
