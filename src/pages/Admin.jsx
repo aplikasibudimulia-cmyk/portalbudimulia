@@ -2710,20 +2710,18 @@ function Admin() {
     fetchMenuTypes()
   }
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    window.__ebudimuliaExplicitLogout = true
     try {
-      window.__ebudimuliaExplicitLogout = true
       localStorage.removeItem('ebm_session_token')
       sessionStorage.clear()
-      await Promise.race([
-        supabase.auth.signOut().catch(() => {}),
-        new Promise(resolve => setTimeout(resolve, 600))
-      ])
-    } catch (authErr) {
-      console.warn('[Logout] Supabase signOut error/skipped:', authErr)
-    } finally {
-      window.location.replace('/login-admin')
-    }
+    } catch {}
+
+    try {
+      supabase.auth.signOut().catch(() => {})
+    } catch {}
+
+    window.location.replace('/login-admin')
   }
 
   const activeType = menuTypes.find(t => t.id === activeMenu)

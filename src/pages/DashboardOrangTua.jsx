@@ -969,22 +969,20 @@ function DashboardOrangTua() {
     }
   }, [loading, studentData])
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    window.__ebudimuliaExplicitLogout = true
     try {
-      window.__ebudimuliaExplicitLogout = true
       localStorage.removeItem('orangtua_session')
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('ebm_session_token')
       sessionStorage.clear()
-      await Promise.race([
-        supabase.auth.signOut().catch(() => {}),
-        new Promise(resolve => setTimeout(resolve, 600))
-      ])
-    } catch (authErr) {
-      console.warn('[Logout] Supabase signOut error/skipped:', authErr)
-    } finally {
-      window.location.replace('/login')
-    }
+    } catch {}
+
+    try {
+      supabase.auth.signOut().catch(() => {})
+    } catch {}
+
+    window.location.replace('/login')
   }
 
   const handleChangePassword = async (e) => {

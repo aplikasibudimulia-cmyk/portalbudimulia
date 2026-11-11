@@ -1200,22 +1200,22 @@ function Dashboard() {
     }
   }, [loading, studentData?.nisn])
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    // 1. Bersihkan tanda sesi seketika secara sinkron tanpa menunggu server/jaringan
+    window.__ebudimuliaExplicitLogout = true
     try {
-      window.__ebudimuliaExplicitLogout = true
       localStorage.removeItem('siswa_session')
       localStorage.removeItem('ebm_session_token')
       sessionStorage.clear()
-      // Beri timeout maksimal 600ms agar supabase.auth.signOut tidak menggantung proses logout
-      await Promise.race([
-        supabase.auth.signOut().catch(() => {}),
-        new Promise(resolve => setTimeout(resolve, 600))
-      ])
-    } catch (e) {
-      console.warn('[Logout] Error saat keluar:', e)
-    } finally {
-      window.location.replace('/login')
-    }
+    } catch {}
+
+    // 2. Beritahu server Supabase auth di latar belakang tanpa memblokir navigasi
+    try {
+      supabase.auth.signOut().catch(() => {})
+    } catch {}
+
+    // 3. Pindah langsung seketika ke halaman login (kecepatan 0ms)
+    window.location.replace('/login')
   }
 
   const handleChangePassword = async (e) => {
