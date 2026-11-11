@@ -327,11 +327,15 @@ export async function generateOfficialRekapPoinPDF({
   }
   const sortLabel = sortLabels[config.sortBy] || sortLabels.absen_per_kelas
 
-  // Label Cakupan Kelas
-  const kelasLabel =
-    config.kelasScope === 'all' || !config.selectedClasses || config.selectedClasses.length === 0
-      ? 'Seluruh Kelas (Semua Tingkat)'
-      : `Kelas ${config.selectedClasses.join(', ')}`
+  // Label Cakupan Kelas / Siswa
+  let kelasLabel = 'Seluruh Kelas (Semua Tingkat)'
+  if (config.kelasScope === 'custom_students') {
+    kelasLabel = `${students.length} Siswa Pilihan Khusus`
+  } else if (config.kelasScope === 'single_student' && config.selectedClasses?.[0]) {
+    kelasLabel = config.selectedClasses[0]
+  } else if (config.selectedClasses && config.selectedClasses.length > 0 && config.kelasScope !== 'all') {
+    kelasLabel = `Kelas ${config.selectedClasses.join(', ')}`
+  }
 
   // Label Jenis Laporan
   const modeLabel =

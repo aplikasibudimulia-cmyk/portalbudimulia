@@ -28,8 +28,11 @@ export default function ExportRekapPoinPdfModal({
   preselectedStudent = null
 }) {
   // 1. Cakupan Kelas & Siswa
-  const [kelasScope, setKelasScope] = useState('all') // 'all' | 'selected' | 'single_student'
+  const [kelasScope, setKelasScope] = useState('all') // 'all' | 'selected' | 'custom_students' | 'single_student'
   const [selectedClasses, setSelectedClasses] = useState([])
+  const [selectedStudentNisns, setSelectedStudentNisns] = useState([])
+  const [studentSearchText, setStudentSearchText] = useState('')
+  const [studentFilterClass, setStudentFilterClass] = useState('all')
   const [studentCondition, setStudentCondition] = useState('semua_siswa')
   // 'semua_siswa' | 'punya_catatan' | 'poin_diatas_100' | 'poin_dibawah_100'
   const [pageBreakPerClass, setPageBreakPerClass] = useState(false)
@@ -162,11 +165,13 @@ export default function ExportRekapPoinPdfModal({
       filteredRecsByNisn[r.nisn].push(r)
     })
 
-    // 2. Pilih daftar siswa sesuai cakupan kelas
+    // 2. Pilih daftar siswa sesuai cakupan kelas / siswa checklist
     let baseStudents = allStudents
     if (kelasScope === 'single_student' && preselectedStudent) {
       baseStudents = allStudents.filter((s) => s.nisn === preselectedStudent.nisn)
       if (baseStudents.length === 0) baseStudents = [preselectedStudent]
+    } else if (kelasScope === 'custom_students') {
+      baseStudents = allStudents.filter((s) => selectedStudentNisns.includes(s.nisn))
     } else if (kelasScope === 'selected' && selectedClasses.length > 0) {
       baseStudents = allStudents.filter((s) => selectedClasses.includes(s.kelas))
     }
@@ -196,8 +201,8 @@ export default function ExportRekapPoinPdfModal({
       }
     })
 
-    // 4. Filter kriteria kondisi siswa
-    if (kelasScope !== 'single_student') {
+    // 4. Filter kriteria kondisi siswa (hanya untuk mode kelas/seluruh siswa)
+    if (kelasScope !== 'single_student' && kelasScope !== 'custom_students') {
       enriched = enriched.filter((s) => {
         if (studentCondition === 'punya_catatan') {
           if (pointTypeFilter === 'positif') return s.filteredPosCount > 0
@@ -257,6 +262,7 @@ export default function ExportRekapPoinPdfModal({
     allRecords,
     kelasScope,
     selectedClasses,
+    selectedStudentNisns,
     preselectedStudent,
     studentCondition,
     pointTypeFilter,
@@ -267,6 +273,36 @@ export default function ExportRekapPoinPdfModal({
     customStartDate,
     customEndDate
   ])
+
+  // Filter daftar siswa untuk fitur Checklist Siswa Pilihan
+  const searchableStudents = useMemo(() => {
+    return allStudents.filter((s) => {
+      if (studentFilterClass !== 'all' && s.kelas !== studentFilterClass) return false
+      if (studentSearchText.trim()) {
+        const q = studentSearchText.toLowerCase().trim()
+        const matchName = String(s.nama_lengkap || '').toLowerCase().includes(q)
+        const matchNisn = String(s.nisn || '').toLowerCase().includes(q)
+        if (!matchName && !matchNisn) return false
+      }
+      return true
+    })
+  }, [allStudents, studentFilterClass, studentSearchText])
+
+  const toggleStudentNisn = (nisn) => {
+    setSelectedStudentNisns((prev) =>
+      prev.includes(nisn) ? prev.filter((n) => n !== nisn) : [...prev, nisn]
+    )
+  }
+
+  const selectAllSearchable = () => {
+    const nisnsToSelect = searchableStudents.map((s) => s.nisn)
+    setSelectedStudentNisns((prev) => Array.from(new Set([...prev, ...nisnsToSelect])))
+  }
+
+  const deselectAllSearchable = () => {
+    const nisnsToDeselect = new Set(searchableStudents.map((s) => s.nisn))
+    setSelectedStudentNisns((prev) => prev.filter((n) => !nisnsToDeselect.has(n)))
+  }
 
   if (!isOpen || typeof document === 'undefined') return null
 
@@ -288,6 +324,10 @@ export default function ExportRekapPoinPdfModal({
       alert('Pilih minimal 1 kelas terlebih dahulu, atau pilih opsi "Seluruh Siswa (Semua Kelas)".')
       return
     }
+    if (kelasScope === 'custom_students' && selectedStudentNisns.length === 0) {
+      alert('Pilih minimal 1 siswa dengan mencentang kotak pilihan siswa terlebih dahulu.')
+      return
+    }
     setExportingAction(action)
     try {
       await generateOfficialRekapPoinPDF({
@@ -300,6 +340,8 @@ export default function ExportRekapPoinPdfModal({
           selectedClasses:
             kelasScope === 'single_student' && preselectedStudent
               ? [`${preselectedStudent.kelas} - ${preselectedStudent.nama_lengkap}`]
+              : kelasScope === 'custom_students'
+              ? [`${selectedStudentNisns.length}-siswa-terpilih`]
               : selectedClasses,
           reportMode,
           pointTypeFilter,
@@ -413,7 +455,7 @@ export default function ExportRekapPoinPdfModal({
 
             {kelasScope !== 'single_student' && (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setKelasScope('all')}
@@ -424,8 +466,8 @@ export default function ExportRekapPoinPdfModal({
                     }`}
                   >
                     <div>
-                      <p className="text-xs font-extrabold text-slate-900">🏫 Seluruh Siswa (Semua Kelas)</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">Ekspor seluruh kelas ({allClasses.length} kelas)</p>
+                      <p className="text-xs font-extrabold text-slate-900">🏫 Seluruh Siswa</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Semua ({allClasses.length} kelas)</p>
                     </div>
                     <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${kelasScope === 'all' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'}`}>
                       {kelasScope === 'all' && <span className="text-[9px]">✓</span>}
@@ -442,11 +484,29 @@ export default function ExportRekapPoinPdfModal({
                     }`}
                   >
                     <div>
-                      <p className="text-xs font-extrabold text-slate-900">🎯 Pilih Kelas Tertentu</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">Pilih 1 atau beberapa kelas spesifik</p>
+                      <p className="text-xs font-extrabold text-slate-900">🎯 Filter Kelas</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Pilih kelas tertentu</p>
                     </div>
                     <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${kelasScope === 'selected' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'}`}>
                       {kelasScope === 'selected' && <span className="text-[9px]">✓</span>}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setKelasScope('custom_students')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                      kelasScope === 'custom_students'
+                        ? 'border-indigo-600 bg-indigo-50/80 ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 bg-white hover:border-indigo-300'
+                    }`}
+                  >
+                    <div>
+                      <p className="text-xs font-extrabold text-slate-900">☑️ Checklist Siswa</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Pilih siswa khusus</p>
+                    </div>
+                    <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${kelasScope === 'custom_students' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'}`}>
+                      {kelasScope === 'custom_students' && <span className="text-[9px]">✓</span>}
                     </span>
                   </button>
                 </div>
@@ -494,36 +554,196 @@ export default function ExportRekapPoinPdfModal({
                   </div>
                 )}
 
-                {/* Filter Kondisi Siswa & Opsi Pisah Halaman Per Kelas */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Filter Kriteria Siswa:</label>
-                    <select
-                      value={studentCondition}
-                      onChange={(e) => setStudentCondition(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    >
-                      <option value="semua_siswa">Seluruh Siswa (Termasuk Poin Utuh 100)</option>
-                      <option value="punya_catatan">Hanya Siswa yang Memiliki Catatan Poin</option>
-                      <option value="poin_diatas_100">Hanya Siswa Berprestasi (Total Poin &gt; 100)</option>
-                      <option value="poin_dibawah_100">Hanya Siswa Perlu Pembinaan (Total Poin &lt; 100)</option>
-                    </select>
-                  </div>
+                {kelasScope === 'custom_students' && (
+                  <div className="p-3.5 bg-white rounded-2xl border border-indigo-200/90 shadow-2xs space-y-3 animate-fade-in">
+                    {/* Search & Class Filter */}
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="relative flex-1">
+                        <svg
+                          className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                          type="text"
+                          value={studentSearchText}
+                          onChange={(e) => setStudentSearchText(e.target.value)}
+                          placeholder="Cari nama siswa atau NISN..."
+                          className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                        {studentSearchText && (
+                          <button
+                            type="button"
+                            onClick={() => setStudentSearchText('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
 
-                  <div className="flex items-end">
-                    <label className="flex items-center gap-2.5 p-2.5 bg-white border border-slate-200 rounded-xl w-full cursor-pointer hover:border-indigo-300 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={pageBreakPerClass}
-                        onChange={(e) => setPageBreakPerClass(e.target.checked)}
-                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="text-xs font-bold text-slate-700">
-                        Pisahkan halaman baru per kelas
-                      </span>
-                    </label>
+                      <div className="sm:w-44">
+                        <select
+                          value={studentFilterClass}
+                          onChange={(e) => setStudentFilterClass(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        >
+                          <option value="all">Semua Kelas ({allClasses.length})</option>
+                          {allClasses.map((k) => (
+                            <option key={k} value={k}>
+                              Kelas {k}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Quick Action & Counter */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-0.5 border-b border-slate-100 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                          Terpilih: {selectedStudentNisns.length} Siswa
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          (Tampil: {searchableStudents.length} siswa)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={selectAllSearchable}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer transition-colors"
+                          title="Centang semua siswa yang sedang tampil"
+                        >
+                          ✓ Centang Semua Tampil
+                        </button>
+                        <button
+                          type="button"
+                          onClick={deselectAllSearchable}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer transition-colors"
+                          title="Batal centang siswa yang sedang tampil"
+                        >
+                          Batal Centang
+                        </button>
+                        {selectedStudentNisns.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedStudentNisns([])}
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                            title="Kosongkan seluruh pilihan checklist"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Scrollable Students Checklist */}
+                    <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50/50">
+                      {searchableStudents.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-400">
+                          Tidak ada siswa yang cocok dengan filter / pencarian kata kunci.
+                        </div>
+                      ) : (
+                        searchableStudents.map((s) => {
+                          const isChecked = selectedStudentNisns.includes(s.nisn)
+                          const total = Number(s.total_poin ?? 100)
+                          return (
+                            <label
+                              key={s.nisn}
+                              className={`flex items-center justify-between px-3.5 py-2.5 cursor-pointer transition-colors ${
+                                isChecked ? 'bg-indigo-50/70' : 'hover:bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0 pr-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleStudentNisn(s.nisn)}
+                                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                                  {String(s.nama_lengkap || 'S').slice(0, 1).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-slate-900 truncate">
+                                    {s.nama_lengkap}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500 truncate">
+                                    NISN: {s.nisn || '—'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700">
+                                  {s.kelas || '—'}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                                    total > 100
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : total < 100
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-slate-100 text-slate-700'
+                                  }`}
+                                >
+                                  {total} Poin
+                                </span>
+                              </div>
+                            </label>
+                          )
+                        })
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Filter Kondisi Siswa & Opsi Pisah Halaman Per Kelas */}
+                {kelasScope !== 'custom_students' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Filter Kriteria Siswa:</label>
+                      <select
+                        value={studentCondition}
+                        onChange={(e) => setStudentCondition(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      >
+                        <option value="semua_siswa">Seluruh Siswa (Termasuk Poin Utuh 100)</option>
+                        <option value="punya_catatan">Hanya Siswa yang Memiliki Catatan Poin</option>
+                        <option value="poin_diatas_100">Hanya Siswa Berprestasi (Total Poin &gt; 100)</option>
+                        <option value="poin_dibawah_100">Hanya Siswa Perlu Pembinaan (Total Poin &lt; 100)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-end">
+                      <label className="flex items-center gap-2.5 p-2.5 bg-white border border-slate-200 rounded-xl w-full cursor-pointer hover:border-indigo-300 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={pageBreakPerClass}
+                          onChange={(e) => setPageBreakPerClass(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-xs font-bold text-slate-700">
+                          Pisahkan halaman baru per kelas
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-indigo-50/60 rounded-xl border border-indigo-100 flex items-center justify-between text-xs text-indigo-900">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">💡</span>
+                      <span>
+                        Mode <strong>Checklist Siswa Pilihan</strong>: Dokumen akan mencetak {selectedStudentNisns.length} siswa yang Anda pilih di atas.
+                      </span>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
