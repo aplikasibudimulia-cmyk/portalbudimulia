@@ -932,7 +932,7 @@ export async function generateOfficialRekapPoinPDF({
   // Gambar Footer & Nomor Halaman di semua lembar
   drawAllPageFooters(doc, docTitle)
 
-  // Simpan / Unduh File PDF
+  // Simpan / Unduh File PDF atau Buka Dialog Print Langsung
   const todayStr = new Date().toISOString().slice(0, 10)
   const kelasSlug =
     config.kelasScope === 'all' || !config.selectedClasses || config.selectedClasses.length === 0
@@ -940,6 +940,44 @@ export async function generateOfficialRekapPoinPDF({
       : `kelas-${config.selectedClasses.join('-').toLowerCase()}`
   const filename = config.customFilename || `Laporan-Rekap-Poin-${kelasSlug}-${todayStr}.pdf`
 
-  await downloadPdf(doc, filename)
+  if (config.action === 'print') {
+    doc.autoPrint({ variant: 'non-conform' })
+    const blob = doc.output('blob')
+    const blobUrl = URL.createObjectURL(blob)
+
+    // Buka tab cetak langsung dengan PDF auto-print
+    const printWindow = window.open(blobUrl, '_blank')
+    if (printWindow) {
+      printWindow.onload = () => {
+        try {
+          printWindow.focus()
+          printWindow.print()
+        } catch (_) {}
+      }
+    } else {
+      // Fallback menggunakan hidden iframe jika popup tab baru diblokir oleh browser
+      const iframe = document.createElement('iframe')
+      iframe.style.position = 'fixed'
+      iframe.style.right = '0'
+      iframe.style.bottom = '0'
+      iframe.style.width = '0'
+      iframe.style.height = '0'
+      iframe.style.border = '0'
+      iframe.src = blobUrl
+      document.body.appendChild(iframe)
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.focus()
+            iframe.contentWindow?.print()
+          } catch (_) {
+            doc.save(filename)
+          }
+        }, 500)
+      }
+    }
+  } else {
+    await downloadPdf(doc, filename)
+  }
 }
 
