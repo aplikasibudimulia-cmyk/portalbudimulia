@@ -771,40 +771,62 @@ export async function generateOfficialRekapPoinPDF({
       const statusInfo = getStudentStatusInfo(s, pointTypeFilter)
 
       // Estimasi tinggi minimum kartu siswa + minimal 1 baris rincian
-      const minNeededH = rawRecords.length > 0 ? 22 : 14
+      const minNeededH = rawRecords.length > 0 ? 25 : 18
       if (curY + minNeededH > pageHeight - bottomMargin) {
         doc.addPage()
         curY = 15
       }
 
-      // 1. Header Bar Siswa (Indigo/Slate lembut)
-      const studentHeaderH = 7.8
+      // 1. Header Baris 1 Siswa: No, Nama Lengkap, NISN & Kelas (Latar Indigo Muda)
+      const h1 = 6.4
       doc.setFillColor(238, 242, 255) // Indigo-50
       doc.setDrawColor(165, 180, 252) // Indigo-300
       doc.setLineWidth(0.3)
-      doc.rect(marginX, curY, contentWidth, studentHeaderH, 'FD')
+      doc.rect(marginX, curY, contentWidth, h1, 'FD')
 
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8.3)
+      doc.setTextColor(15, 23, 42) // Slate-900
+      const leftStudentTitle = `${sIdx + 1}. ${s.nama_lengkap || '-'}  (NISN: ${s.nisn || '-'})`
+      doc.text(leftStudentTitle, marginX + 3, curY + 4.4)
+
+      // Kelas di sisi kanan Baris 1
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(8.2)
-      doc.setTextColor(30, 41, 59)
-      const leftStudentTitle = `${sIdx + 1}. ${s.nama_lengkap || '-'}  (NISN: ${s.nisn || '-'})  •  Kelas ${s.kelas || '-'}`
-      doc.text(leftStudentTitle, marginX + 2.5, curY + 5.1)
+      doc.setTextColor(67, 56, 202) // Indigo-700
+      doc.text(`KELAS: ${s.kelas || '-'}`, pageWidth - marginX - 3, curY + 4.4, { align: 'right' })
 
-      // Ringkasan Poin Siswa di sisi kanan bar
-      let rightSummaryText = ''
-      if (pointTypeFilter === 'positif') {
-        rightSummaryText = `Positif: +${posPoin} Poin (${rawRecords.length} Kegiatan)  |  Total Poin: ${totalPoin}`
-      } else if (pointTypeFilter === 'negatif') {
-        rightSummaryText = `Pelanggaran: -${negPoin} Poin (${rawRecords.length} Kasus)  |  Sisa Poin: ${totalPoin}`
-      } else {
-        rightSummaryText = `Awal: ${s.poin_default ?? 100}  |  Positif: +${posPoin}  |  Negatif: -${negPoin}  |  Total: ${totalPoin} Poin (${statusInfo.label})`
-      }
-      doc.setFont('helvetica', 'bold')
+      // 2. Header Baris 2 Siswa: Rincian Poin Awal, Positif, Negatif & Total Poin (Latar Slate Terang)
+      const y2 = curY + h1
+      const h2 = 5.6
+      doc.setFillColor(248, 250, 252) // Slate-50
+      doc.setDrawColor(203, 213, 225) // Slate-300
+      doc.setLineWidth(0.2)
+      doc.rect(marginX, y2, contentWidth, h2, 'FD')
+
+      // Teks kiri Baris 2: Breakdown Poin
+      doc.setFont('helvetica', 'normal')
       doc.setFontSize(7.4)
-      doc.setTextColor(...statusInfo.rgb)
-      doc.text(rightSummaryText, pageWidth - marginX - 2.5, curY + 5.1, { align: 'right' })
+      doc.setTextColor(51, 65, 85) // Slate-700
 
-      curY += studentHeaderH
+      let leftPoinBreakdown = ''
+      if (pointTypeFilter === 'positif') {
+        leftPoinBreakdown = `Poin Awal: ${s.poin_default ?? 100}   |   Total Positif (+): +${posPoin} (${rawRecords.length} Kegiatan)`
+      } else if (pointTypeFilter === 'negatif') {
+        leftPoinBreakdown = `Poin Awal: ${s.poin_default ?? 100}   |   Total Pelanggaran (-): -${negPoin} (${rawRecords.length} Kasus)`
+      } else {
+        leftPoinBreakdown = `Poin Awal: ${s.poin_default ?? 100}   |   Positif (+): +${posPoin}   |   Negatif (-): -${negPoin}`
+      }
+      doc.text(leftPoinBreakdown, marginX + 3, y2 + 3.8)
+
+      // Teks kanan Baris 2: Total Poin & Predikat/Status
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(7.5)
+      doc.setTextColor(...statusInfo.rgb)
+      const rightTotalStatus = `Total Akhir: ${totalPoin} Poin  (${statusInfo.label})`
+      doc.text(rightTotalStatus, pageWidth - marginX - 3, y2 + 3.8, { align: 'right' })
+
+      curY += h1 + h2
 
       // 2. Tabel Rincian Poin untuk Siswa Ini
       if (rawRecords.length === 0) {
