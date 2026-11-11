@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { downloadPdf } from './fileDownloader'
 
 let _cachedLogoDataUrl = null
@@ -965,6 +966,15 @@ export async function generateOfficialRekapPoinPDF({
       ? 'semua-kelas'
       : `kelas-${config.selectedClasses.join('-').toLowerCase()}`
   const filename = config.customFilename || `Laporan-Rekap-Poin-${kelasSlug}-${todayStr}.pdf`
+
+  // Platform Native (iOS & Android):
+  // Di dalam WKWebView iOS atau Android Capacitor, dialog cetak iframe/window.open dibatasi.
+  // Panggil downloadPdf() yang menulis ke Filesystem dan memunculkan Native Share Sheet OS.
+  // Di iOS, Share Sheet otomatis menyertakan opsi native "Print" (AirPrint) dan "Save to Files"!
+  if (Capacitor.isNativePlatform()) {
+    await downloadPdf(doc, filename)
+    return
+  }
 
   if (config.action === 'print') {
     doc.autoPrint({ variant: 'non-conform' })
