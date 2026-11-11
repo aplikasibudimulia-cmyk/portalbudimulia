@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
@@ -9,7 +10,7 @@ import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPush
 import { getTodayWIB, getDayIndexWIB, getCurrentTimeWIB } from '../utils/dateUtils'
 
 const lazySection = (loader) => {
-  const Comp = lazy(loader)
+  const Comp = lazyRetry(loader)
   return function LazyDashboardSection(props) {
     return (
       <Suspense fallback={

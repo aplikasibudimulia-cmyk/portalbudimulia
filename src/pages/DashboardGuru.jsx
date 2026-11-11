@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react'
+import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
@@ -13,7 +14,7 @@ import { getTodayWIB, getCurrentTimeWIB, getCurrentTimeSecondsWIB, getDayNameWIB
 import { sortKelasList } from '../utils/kelasHelper'
 
 const lazySection = (loader) => {
-  const Comp = lazy(loader)
+  const Comp = lazyRetry(loader)
   return function LazyGuruSection(props) {
     return (
       <Suspense fallback={

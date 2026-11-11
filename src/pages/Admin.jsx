@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
@@ -12,7 +13,7 @@ import SmartPhotoUploadModal from '../components/SmartPhotoUploadModal'
 import { downloadWorkbook } from '../utils/fileDownloader'
 
 const lazySection = (loader) => {
-  const Comp = lazy(loader)
+  const Comp = lazyRetry(loader)
   return function LazyAdminSection(props) {
     return (
       <Suspense fallback={

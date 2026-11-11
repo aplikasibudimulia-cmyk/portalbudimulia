@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useState, useEffect, useRef, Component, lazy, Suspense } from 'react'
+import { lazyRetry } from './utils/lazyRetry'
 import { registerPlugin, Capacitor } from '@capacitor/core'
 import { App as CapApp } from '@capacitor/app'
 import { supabase } from './supabaseClient'
@@ -200,20 +201,20 @@ function CbtLockSafetyWatcher() {
 }
 
 // Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)
-const Login = lazy(() => import('./pages/Login'))
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const Admin = lazy(() => import('./pages/Admin'))
-const LoginAdmin = lazy(() => import('./pages/LoginAdmin'))
-const DashboardGuru = lazy(() => import('./pages/DashboardGuru'))
-const DashboardOrangTua = lazy(() => import('./pages/DashboardOrangTua'))
-const Impersonate = lazy(() => import('./pages/Impersonate'))
-const PresensiTV = lazy(() => import('./pages/PresensiTV'))
-const LaporanPengumuman = lazy(() => import('./pages/LaporanPengumuman'))
-const PresensiManualSiswa = lazy(() => import('./pages/PresensiManualSiswa'))
-const ShowcaseRekapPoin = lazy(() => import('./pages/ShowcaseRekapPoin'))
-const ValidasiKartuPelajar = lazy(() => import('./pages/ValidasiKartuPelajar'))
-const CbtUjianSiswaPage = lazy(() => import('./pages/CbtUjianSiswaPage'))
-const RaporDeskripsiTpPage = lazy(() => import('./pages/RaporDeskripsiTpPage'))
+const Login = lazyRetry(() => import('./pages/Login'))
+const Dashboard = lazyRetry(() => import('./pages/Dashboard'))
+const Admin = lazyRetry(() => import('./pages/Admin'))
+const LoginAdmin = lazyRetry(() => import('./pages/LoginAdmin'))
+const DashboardGuru = lazyRetry(() => import('./pages/DashboardGuru'))
+const DashboardOrangTua = lazyRetry(() => import('./pages/DashboardOrangTua'))
+const Impersonate = lazyRetry(() => import('./pages/Impersonate'))
+const PresensiTV = lazyRetry(() => import('./pages/PresensiTV'))
+const LaporanPengumuman = lazyRetry(() => import('./pages/LaporanPengumuman'))
+const PresensiManualSiswa = lazyRetry(() => import('./pages/PresensiManualSiswa'))
+const ShowcaseRekapPoin = lazyRetry(() => import('./pages/ShowcaseRekapPoin'))
+const ValidasiKartuPelajar = lazyRetry(() => import('./pages/ValidasiKartuPelajar'))
+const CbtUjianSiswaPage = lazyRetry(() => import('./pages/CbtUjianSiswaPage'))
+const RaporDeskripsiTpPage = lazyRetry(() => import('./pages/RaporDeskripsiTpPage'))
 
 /**
  * Root Router Cerdas:

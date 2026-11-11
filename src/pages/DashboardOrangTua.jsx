@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
+import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
@@ -9,7 +10,7 @@ import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
 import { sendLinePushNotification, createBindingSuccessFlexMessage } from '../utils/lineNotifier'
 
 const lazySection = (loader) => {
-  const Comp = lazy(loader)
+  const Comp = lazyRetry(loader)
   return function LazyOrtuSection(props) {
     return (
       <Suspense fallback={
