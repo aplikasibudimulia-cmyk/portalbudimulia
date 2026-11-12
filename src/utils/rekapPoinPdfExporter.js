@@ -104,57 +104,64 @@ function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
   const marginX = 14
   const startY = 10.5
 
+  const hasLogo = logoDataUrl && config.showLogo !== false
+  const logoWidth = 16.5
+  const logoHeight = 21.5
+  const logoRightEdge = hasLogo ? (marginX + 2 + logoWidth) : marginX
+
   // Logo Resmi Sekolah di sisi kiri (aspek rasio ~3:4 sesuai perisai resmi SMP Budi Mulia)
-  if (logoDataUrl && config.showLogo !== false) {
+  if (hasLogo) {
     try {
-      doc.addImage(logoDataUrl, 'PNG', marginX + 2, startY, 17, 22)
+      doc.addImage(logoDataUrl, 'PNG', marginX + 2, startY, logoWidth, logoHeight)
     } catch {
       // Abaikan jika gagal render gambar
     }
   }
 
-  const centerX = pageWidth / 2 + (logoDataUrl && config.showLogo !== false ? 6 : 0)
+  // Hitung titik tengah area teks di sebelah kanan logo agar seimbang dan tidak pernah bertabrakan
+  const rightBoundary = pageWidth - marginX
+  const textSpaceCenterX = hasLogo ? (logoRightEdge + 3 + rightBoundary) / 2 : pageWidth / 2
 
-  // Baris 1: Nama Sekolah Utama (Dimulai langsung dari nama sekolah)
+  // Baris 1: Nama Sekolah Utama (Ukuran disesuaikan ke 12.5pt agar proporsional dan tidak menimpa logo)
   doc.setFont('times', 'bold')
-  doc.setFontSize(15)
+  doc.setFontSize(12.5)
   doc.setTextColor(15, 23, 42)
   doc.text(
     (config.schoolName || 'SEKOLAH MENENGAH PERTAMA (SMP) BUDI MULIA JAKARTA').toUpperCase(),
-    centerX,
-    startY + 7.2,
+    textSpaceCenterX,
+    startY + 6.6,
     { align: 'center' }
   )
 
   // Baris 2: Akreditasi & Alamat
   doc.setFont('times', 'normal')
-  doc.setFontSize(8.8)
+  doc.setFontSize(8.4)
   doc.setTextColor(51, 65, 85)
   doc.text(
     config.schoolAddress || 'Jl. Mangga Besar Raya No. 135, Mangga Dua Selatan, Kec. Sawah Besar, Jakarta Pusat 10730',
-    centerX,
-    startY + 13.0,
+    textSpaceCenterX,
+    startY + 12.4,
     { align: 'center' }
   )
 
   // Baris 3: Kontak & Portal Resmi
-  doc.setFontSize(8.2)
+  doc.setFontSize(7.8)
   doc.text(
     config.schoolContact || 'Telp. (021) 6291767 • Email: smpbudimulia51@gmail.com • Portal Akademik: edu.smpbudimuliajakarta.sch.id',
-    centerX,
-    startY + 17.6,
+    textSpaceCenterX,
+    startY + 17.0,
     { align: 'center' }
   )
 
   // Garis Ganda Kop Surat (Tebal + Tipis)
-  const lineY = startY + 22.8
+  const lineY = startY + 22.5
   doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.75)
   doc.line(marginX, lineY, pageWidth - marginX, lineY)
   doc.setLineWidth(0.25)
   doc.line(marginX, lineY + 1.1, pageWidth - marginX, lineY + 1.1)
 
-  return lineY + 5.5
+  return lineY + 4.8
 }
 
 /**
@@ -203,21 +210,34 @@ function drawAllPageFooters(doc, documentTitle) {
 
 /**
  * Menggambar Blok Tanda Tangan / Pengesahan Resmi (3 Kolom: Guru BK, Waka Kesiswaan, Kepala Sekolah)
+ * Dilengkapi Adaptive Auto-Fitting agar muat di halaman yang sama jika selisih sedikit (mencegah halaman yatim).
  */
 function drawSignatureBlock(doc, curY, config, pageWidth, pageHeight) {
   if (config.showSignature === false) return curY
 
-  const neededHeight = 44
-  const bottomLimit = pageHeight - 15
-  if (curY + neededHeight > bottomLimit) {
-    doc.addPage()
-    curY = 20
-  } else {
-    curY += 7
-  }
-
   const marginX = 14
   const contentWidth = pageWidth - marginX * 2
+  const bottomLimit = pageHeight - 14
+
+  // Hitung sisa ruang vertikal pada halaman saat ini
+  const remainingSpace = bottomLimit - curY
+
+  // Tanda tangan normal butuh ~36mm, tetapi bisa adaptif kompak di ~27mm jika ruang pas
+  let isCompact = false
+  let neededHeight = 36
+
+  if (remainingSpace >= 27 && remainingSpace < neededHeight) {
+    // Aktifkan mode kompak agar muat di halaman yang sama tanpa terlempar ke halaman baru!
+    isCompact = true
+    neededHeight = 27
+  }
+
+  if (curY + neededHeight > bottomLimit) {
+    doc.addPage()
+    curY = 18
+  } else {
+    curY += isCompact ? 2.5 : 5
+  }
 
   // 3 Kolom Penandatangan Proporsional
   const col1Center = marginX + contentWidth / 6
@@ -242,72 +262,72 @@ function drawSignatureBlock(doc, curY, config, pageWidth, pageHeight) {
 
   // Tanggal Dokumen di atas Kolom Kanan
   doc.setFont('times', 'normal')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.setTextColor(15, 23, 42)
   doc.text(`${kota}, ${tanggalCetak}`, col3Center, curY, { align: 'center' })
 
-  const headerY = curY + 4.8
+  const headerY = curY + (isCompact ? 3.8 : 4.5)
 
   // Header Kolom 1: Guru BK (Penyusun)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.text(bkTitle, col1Center, headerY, { align: 'center' })
 
   // Header Kolom 2: Waka Kesiswaan
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.text(kesiswaanTitle, col2Center, headerY, { align: 'center' })
 
   // Header Kolom 3: Mengetahui, Kepala Sekolah
   doc.setFont('times', 'normal')
-  doc.setFontSize(8.5)
+  doc.setFontSize(8)
   doc.text('Mengetahui,', col3Center, headerY, { align: 'center' })
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
-  doc.text(kepsekTitle, col3Center, headerY + 4.2, { align: 'center' })
+  doc.setFontSize(8.5)
+  doc.text(kepsekTitle, col3Center, headerY + 3.8, { align: 'center' })
 
-  // Ruang Tanda Tangan
-  const nameY = curY + 28
+  // Ruang Tanda Tangan (Adaptif)
+  const nameY = curY + (isCompact ? 19.5 : 24.5)
   doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.3)
 
   // 1. Kolom 1 (Guru BK)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.text(bkName, col1Center, nameY, { align: 'center' })
-  const w1 = Math.min(Math.max(doc.getTextWidth(bkName) + 4, 38), 54)
+  const w1 = Math.min(Math.max(doc.getTextWidth(bkName) + 4, 36), 52)
   doc.line(col1Center - w1 / 2, nameY + 1, col1Center + w1 / 2, nameY + 1)
   if (bkNip) {
     doc.setFont('times', 'normal')
-    doc.setFontSize(8)
-    doc.text(`NIP/NIK: ${bkNip}`, col1Center, nameY + 4.5, { align: 'center' })
+    doc.setFontSize(7.5)
+    doc.text(`NIP/NIK: ${bkNip}`, col1Center, nameY + 4, { align: 'center' })
   }
 
   // 2. Kolom 2 (Waka Kesiswaan)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.text(kesiswaanName, col2Center, nameY, { align: 'center' })
-  const w2 = Math.min(Math.max(doc.getTextWidth(kesiswaanName) + 4, 38), 54)
+  const w2 = Math.min(Math.max(doc.getTextWidth(kesiswaanName) + 4, 36), 52)
   doc.line(col2Center - w2 / 2, nameY + 1, col2Center + w2 / 2, nameY + 1)
   if (kesiswaanNip) {
     doc.setFont('times', 'normal')
-    doc.setFontSize(8)
-    doc.text(`NIP/NIK: ${kesiswaanNip}`, col2Center, nameY + 4.5, { align: 'center' })
+    doc.setFontSize(7.5)
+    doc.text(`NIP/NIK: ${kesiswaanNip}`, col2Center, nameY + 4, { align: 'center' })
   }
 
   // 3. Kolom 3 (Kepala Sekolah)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9)
+  doc.setFontSize(8.5)
   doc.text(kepsekName, col3Center, nameY, { align: 'center' })
-  const w3 = Math.min(Math.max(doc.getTextWidth(kepsekName) + 4, 38), 54)
+  const w3 = Math.min(Math.max(doc.getTextWidth(kepsekName) + 4, 36), 52)
   doc.line(col3Center - w3 / 2, nameY + 1, col3Center + w3 / 2, nameY + 1)
   if (kepsekNip) {
     doc.setFont('times', 'normal')
-    doc.setFontSize(8)
-    doc.text(`NIP/NIK: ${kepsekNip}`, col3Center, nameY + 4.5, { align: 'center' })
+    doc.setFontSize(7.5)
+    doc.text(`NIP/NIK: ${kepsekNip}`, col3Center, nameY + 4, { align: 'center' })
   }
 
-  return nameY + 10
+  return nameY + 8
 }
 
 /**
@@ -428,13 +448,14 @@ export async function generateOfficialRekapPoinPDF({
     doc.setTextColor(71, 85, 105)
     doc.text(`Nomor Dokumen: ${config.nomorDokumen || defaultNo}`, pageWidth / 2, y + 6.5, { align: 'center' })
 
-    y += 11
+    y += 9.5
 
-    // Kotak Metadata Informasi Laporan (2 Kolom)
+    // Kotak Metadata Informasi Laporan (2 Kolom Ramping)
     doc.setFillColor(248, 250, 252)
     doc.setDrawColor(203, 213, 225)
     doc.setLineWidth(0.25)
-    doc.roundedRect(marginX, y, contentWidth, 21, 1.8, 1.8, 'FD')
+    const metaBoxH = 18
+    doc.roundedRect(marginX, y, contentWidth, metaBoxH, 1.8, 1.8, 'FD')
 
     const col1LabelX = marginX + 3.5
     const col1ColonX = marginX + 35
@@ -466,9 +487,9 @@ export async function generateOfficialRekapPoinPDF({
     ]
 
     metaRows.forEach((row, idx) => {
-      const rowY = y + 5.2 + idx * 5.2
+      const rowY = y + 4.5 + idx * 4.5
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(7.8)
+      doc.setFontSize(7.6)
       doc.setTextColor(71, 85, 105)
       doc.text(row.l1, col1LabelX, rowY)
       doc.text(':', col1ColonX, rowY)
@@ -485,13 +506,13 @@ export async function generateOfficialRekapPoinPDF({
       doc.text(doc.splitTextToSize(String(row.v2), contentWidth / 2 - 36)[0] || '', col2ValX, rowY)
     })
 
-    y += 24
+    y += metaBoxH + 3.0
 
-    // Kotak Ringkasan Statistik (4 Kartu Sejajar) jika di halaman pertama dan bukan sub-kelas
+    // Kotak Ringkasan Statistik (4 Kartu Sejajar Ramping) jika di halaman pertama dan bukan sub-kelas
     if (!classSubtitle) {
       const boxGap = 2.5
       const boxW = (contentWidth - boxGap * 3) / 4
-      const boxH = 13.5
+      const boxH = 12.0
 
       const statCards = [
         {
@@ -532,17 +553,17 @@ export async function generateOfficialRekapPoinPDF({
         doc.roundedRect(bx, y, boxW, boxH, 1.5, 1.5, 'FD')
 
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(6.5)
+        doc.setFontSize(6.2)
         doc.setTextColor(100, 116, 139)
-        doc.text(c.title, bx + 3, y + 4.5)
+        doc.text(c.title, bx + 2.5, y + 4.0)
 
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(9.5)
+        doc.setFontSize(9.0)
         doc.setTextColor(...c.textRgb)
-        doc.text(c.value, bx + 3, y + 10.5)
+        doc.text(c.value, bx + 2.5, y + 9.5)
       })
 
-      y += boxH + 4.5
+      y += boxH + 3.5
     }
 
     return y
@@ -666,8 +687,15 @@ export async function generateOfficialRekapPoinPDF({
       }
 
       group.list.forEach((s, idx) => {
-        const rowH = 6.8
-        if (curY + rowH > pageHeight - bottomMargin) {
+        const rowH = 6.6
+        const isLastRowOverall = (gIdx === groups.length - 1) && (idx === group.list.length - 1)
+        // Pencegah tanda tangan yatim: jika baris terakhir tidak menyisakan ruang untuk tanda tangan (min 27mm),
+        // pindahkan baris terakhir ke halaman baru agar bersanding dengan tanda tangan
+        if (isLastRowOverall && curY + rowH + 27 > pageHeight - bottomMargin) {
+          doc.addPage()
+          curY = 16
+          curY = drawTableHeader(curY, group.kelas ? `${group.kelas} (Lanjutan)` : null)
+        } else if (curY + rowH > pageHeight - bottomMargin) {
           doc.addPage()
           curY = 16
           curY = drawTableHeader(curY, group.kelas ? `${group.kelas} (Lanjutan)` : null)
@@ -807,9 +835,17 @@ export async function generateOfficialRekapPoinPDF({
       const totalPoin = Number(s.total_poin ?? 100)
       const statusInfo = getStudentStatusInfo(s, pointTypeFilter)
 
-      // Estimasi tinggi minimum kartu siswa + minimal 1 baris rincian
-      const minNeededH = rawRecords.length > 0 ? 25 : 18
-      if (curY + minNeededH > pageHeight - bottomMargin) {
+      // Estimasi tinggi kartu siswa ini
+      const isLastStudent = sIdx === students.length - 1
+      const studentCardEstHeight = 12 + (rawRecords.length === 0 ? 8 : (6.0 + rawRecords.length * 5.8 + 2.5))
+
+      // ORPHAN PREVENTION (Pencegah Tanda Tangan Sendirian):
+      // Jika ini siswa terakhir dan sisa ruang di halaman ini tidak cukup untuk tanda tangan (butuh min 27mm),
+      // maka pindahkan seluruh kartu siswa terakhir ke halaman baru agar tanda tangan memiliki teman tabel!
+      if (isLastStudent && curY + studentCardEstHeight + 27 > pageHeight - bottomMargin) {
+        doc.addPage()
+        curY = 15
+      } else if (curY + (rawRecords.length > 0 ? 24 : 16) > pageHeight - bottomMargin) {
         doc.addPage()
         curY = 15
       }
@@ -905,7 +941,7 @@ export async function generateOfficialRekapPoinPDF({
           const jenisLines = doc.splitTextToSize(String(rec.jenis || '-'), detailCols[3].width - 4)
           const ketLines = doc.splitTextToSize(String(rec.keterangan || '—'), detailCols[5].width - 3)
           const maxLines = Math.min(3, Math.max(jenisLines.length, ketLines.length, 1))
-          const rowH = Math.max(6.2, maxLines * 3.8 + 2.2)
+          const rowH = Math.max(5.8, maxLines * 3.6 + 2.0)
 
           if (curY + rowH > pageHeight - bottomMargin) {
             doc.addPage()
@@ -984,7 +1020,7 @@ export async function generateOfficialRekapPoinPDF({
           curY += rowH
         })
 
-        curY += 4
+        curY += 3.2
       }
     })
 
