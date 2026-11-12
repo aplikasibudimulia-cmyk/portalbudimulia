@@ -4,38 +4,48 @@ import { downloadPdf } from './fileDownloader'
 let _cachedLogoDataUrl = null
 
 /**
- * Memuat logo sekolah (/logo.png) dan mengonversinya ke Base64 PNG berukuran optimal
- * agar ukuran file PDF tetap ringan dan tajam.
+ * Memuat logo resmi sekolah (/logo_smp_budi_mulia.png) dan mengonversinya ke Base64 PNG berukuran optimal
+ * agar ukuran file PDF tetap tajam saat dicetak dan ringan.
  */
-async function getSchoolLogoDataUrl(logoPath = '/logo.png') {
+async function getSchoolLogoDataUrl(logoPath = '/logo_smp_budi_mulia.png') {
   if (_cachedLogoDataUrl) return _cachedLogoDataUrl
   if (typeof window === 'undefined' || typeof document === 'undefined') return null
 
-  return new Promise((resolve) => {
+  const tryLoad = (src) => new Promise((resolve) => {
     try {
       const img = new Image()
       img.crossOrigin = 'anonymous'
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas')
-          const maxDim = 180
-          const scale = Math.min(maxDim / (img.width || 180), maxDim / (img.height || 180), 1)
-          canvas.width = Math.max(1, Math.round((img.width || 180) * scale))
-          canvas.height = Math.max(1, Math.round((img.height || 180) * scale))
+          const maxDim = 320
+          const scale = Math.min(maxDim / (img.width || 320), maxDim / (img.height || 320), 1)
+          canvas.width = Math.max(1, Math.round((img.width || 320) * scale))
+          canvas.height = Math.max(1, Math.round((img.height || 320) * scale))
           const ctx = canvas.getContext('2d')
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-          _cachedLogoDataUrl = canvas.toDataURL('image/png')
-          resolve(_cachedLogoDataUrl)
+          resolve(canvas.toDataURL('image/png'))
         } catch {
           resolve(null)
         }
       }
       img.onerror = () => resolve(null)
-      img.src = logoPath
+      img.src = src
     } catch {
       resolve(null)
     }
   })
+
+  let loaded = await tryLoad(logoPath)
+  if (!loaded && logoPath !== '/logo_budimulia.png') {
+    loaded = await tryLoad('/logo_budimulia.png')
+  }
+  if (!loaded && logoPath !== '/logo.png') {
+    loaded = await tryLoad('/logo.png')
+  }
+
+  if (loaded) _cachedLogoDataUrl = loaded
+  return loaded
 }
 
 /**
@@ -92,12 +102,12 @@ function getStudentStatusInfo(student, pointTypeFilter) {
  */
 function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
   const marginX = 14
-  const startY = 11
+  const startY = 10.5
 
-  // Logo Sekolah di sisi kiri
+  // Logo Resmi Sekolah di sisi kiri (aspek rasio ~3:4 sesuai perisai resmi SMP Budi Mulia)
   if (logoDataUrl && config.showLogo !== false) {
     try {
-      doc.addImage(logoDataUrl, 'PNG', marginX + 2, startY, 21, 21)
+      doc.addImage(logoDataUrl, 'PNG', marginX + 2, startY, 17, 22)
     } catch {
       // Abaikan jika gagal render gambar
     }
@@ -105,57 +115,46 @@ function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
 
   const centerX = pageWidth / 2 + (logoDataUrl && config.showLogo !== false ? 6 : 0)
 
-  // Baris 1: Yayasan / Perkumpulan
+  // Baris 1: Nama Sekolah Utama (Dimulai langsung dari nama sekolah)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9.5)
-  doc.setTextColor(51, 65, 85)
-  doc.text(
-    (config.yayasanName || 'PERKUMPULAN PERGURUAN BUDI MULIA JAKARTA').toUpperCase(),
-    centerX,
-    startY + 4.5,
-    { align: 'center' }
-  )
-
-  // Baris 2: Nama Sekolah Utama
-  doc.setFont('times', 'bold')
-  doc.setFontSize(14.5)
+  doc.setFontSize(15)
   doc.setTextColor(15, 23, 42)
   doc.text(
     (config.schoolName || 'SEKOLAH MENENGAH PERTAMA (SMP) BUDI MULIA JAKARTA').toUpperCase(),
     centerX,
-    startY + 10.5,
+    startY + 7.2,
     { align: 'center' }
   )
 
-  // Baris 3: Akreditasi & Alamat
+  // Baris 2: Akreditasi & Alamat
   doc.setFont('times', 'normal')
-  doc.setFontSize(8.5)
+  doc.setFontSize(8.8)
   doc.setTextColor(51, 65, 85)
   doc.text(
     config.schoolAddress || 'Jl. Mangga Besar Raya No. 135, Mangga Dua Selatan, Kec. Sawah Besar, Jakarta Pusat 10730',
     centerX,
-    startY + 15.2,
+    startY + 13.0,
     { align: 'center' }
   )
 
-  // Baris 4: Kontak & Portal Resmi
-  doc.setFontSize(8)
+  // Baris 3: Kontak & Portal Resmi
+  doc.setFontSize(8.2)
   doc.text(
     config.schoolContact || 'Telp. (021) 6291767 • Email: smpbudimulia51@gmail.com • Portal Akademik: edu.smpbudimuliajakarta.sch.id',
     centerX,
-    startY + 19.3,
+    startY + 17.6,
     { align: 'center' }
   )
 
   // Garis Ganda Kop Surat (Tebal + Tipis)
-  const lineY = startY + 23.5
+  const lineY = startY + 22.8
   doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.75)
   doc.line(marginX, lineY, pageWidth - marginX, lineY)
   doc.setLineWidth(0.25)
   doc.line(marginX, lineY + 1.1, pageWidth - marginX, lineY + 1.1)
 
-  return lineY + 6
+  return lineY + 5.5
 }
 
 /**
@@ -303,7 +302,7 @@ export async function generateOfficialRekapPoinPDF({
   const contentWidth = pageWidth - marginX * 2
   const bottomMargin = 16
 
-  const logoDataUrl = await getSchoolLogoDataUrl('/logo.png')
+  const logoDataUrl = await getSchoolLogoDataUrl('/logo_smp_budi_mulia.png')
 
   // Judul Utama Berdasarkan Filter Jenis Poin
   const pointTypeFilter = config.pointTypeFilter || 'semua' // 'semua' | 'positif' | 'negatif'
