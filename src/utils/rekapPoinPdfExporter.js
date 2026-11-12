@@ -202,12 +202,12 @@ function drawAllPageFooters(doc, documentTitle) {
 }
 
 /**
- * Menggambar Blok Tanda Tangan / Pengesahan Resmi
+ * Menggambar Blok Tanda Tangan / Pengesahan Resmi (3 Kolom: Guru BK, Waka Kesiswaan, Kepala Sekolah)
  */
 function drawSignatureBlock(doc, curY, config, pageWidth, pageHeight) {
   if (config.showSignature === false) return curY
 
-  const neededHeight = 42
+  const neededHeight = 44
   const bottomLimit = pageHeight - 15
   if (curY + neededHeight > bottomLimit) {
     doc.addPage()
@@ -217,57 +217,94 @@ function drawSignatureBlock(doc, curY, config, pageWidth, pageHeight) {
   }
 
   const marginX = 14
-  const leftCenterX = marginX + 42
-  const rightCenterX = pageWidth - marginX - 45
+  const contentWidth = pageWidth - marginX * 2
+
+  // 3 Kolom Penandatangan Proporsional
+  const col1Center = marginX + contentWidth / 6
+  const col2Center = marginX + contentWidth / 2
+  const col3Center = pageWidth - marginX - contentWidth / 6
 
   const kota = config.kotaSurat || 'Jakarta'
   const tanggalCetak = formatTanggalIndo(config.tanggalSurat || new Date())
 
+  // Data 3 Penandatangan (dengan fallback kompatibel)
+  const bkTitle = config.bkTitle || config.rightSignerTitle || 'Guru Bimbingan Konseling'
+  const bkName = config.bkName || config.rightSignerName || '................................................'
+  const bkNip = config.bkNip || config.rightSignerNip || ''
+
+  const kesiswaanTitle = config.kesiswaanTitle || 'Waka Kesiswaan'
+  const kesiswaanName = config.kesiswaanName || '................................................'
+  const kesiswaanNip = config.kesiswaanNip || ''
+
+  const kepsekTitle = config.kepsekTitle || config.leftSignerTitle || 'Kepala SMP Budi Mulia Jakarta'
+  const kepsekName = config.kepsekName || config.leftSignerName || 'Septian Ruswadi, S.Pd.'
+  const kepsekNip = config.kepsekNip || config.leftSignerNip || ''
+
+  // Tanggal Dokumen di atas Kolom Kanan
   doc.setFont('times', 'normal')
-  doc.setFontSize(9.5)
+  doc.setFontSize(9)
   doc.setTextColor(15, 23, 42)
+  doc.text(`${kota}, ${tanggalCetak}`, col3Center, curY, { align: 'center' })
 
-  // Sisi Kiri: Mengetahui Kepala Sekolah
-  doc.text('Mengetahui,', leftCenterX, curY, { align: 'center' })
+  const headerY = curY + 4.8
+
+  // Header Kolom 1: Guru BK (Penyusun)
   doc.setFont('times', 'bold')
-  doc.text(config.leftSignerTitle || 'Kepala SMP Budi Mulia Jakarta', leftCenterX, curY + 4.8, { align: 'center' })
+  doc.setFontSize(9)
+  doc.text(bkTitle, col1Center, headerY, { align: 'center' })
 
-  // Sisi Kanan: Koordinator BK / Kesiswaan / Petugas
+  // Header Kolom 2: Waka Kesiswaan
+  doc.setFont('times', 'bold')
+  doc.setFontSize(9)
+  doc.text(kesiswaanTitle, col2Center, headerY, { align: 'center' })
+
+  // Header Kolom 3: Mengetahui, Kepala Sekolah
   doc.setFont('times', 'normal')
-  doc.text(`${kota}, ${tanggalCetak}`, rightCenterX, curY, { align: 'center' })
+  doc.setFontSize(8.5)
+  doc.text('Mengetahui,', col3Center, headerY, { align: 'center' })
   doc.setFont('times', 'bold')
-  doc.text(config.rightSignerTitle || 'Koordinator BK / Kesiswaan', rightCenterX, curY + 4.8, { align: 'center' })
+  doc.setFontSize(9)
+  doc.text(kepsekTitle, col3Center, headerY + 4.2, { align: 'center' })
 
   // Ruang Tanda Tangan
-  const nameY = curY + 26
-
-  // Nama Kepala Sekolah
-  doc.setFont('times', 'bold')
-  const leftName = config.leftSignerName || 'Septian Ruswadi, S.Pd.'
-  doc.text(leftName, leftCenterX, nameY, { align: 'center' })
-  const leftNameWidth = Math.max(doc.getTextWidth(leftName) + 4, 42)
+  const nameY = curY + 28
   doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.3)
-  doc.line(leftCenterX - leftNameWidth / 2, nameY + 1, leftCenterX + leftNameWidth / 2, nameY + 1)
 
-  if (config.leftSignerNip) {
+  // 1. Kolom 1 (Guru BK)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(9)
+  doc.text(bkName, col1Center, nameY, { align: 'center' })
+  const w1 = Math.min(Math.max(doc.getTextWidth(bkName) + 4, 38), 54)
+  doc.line(col1Center - w1 / 2, nameY + 1, col1Center + w1 / 2, nameY + 1)
+  if (bkNip) {
     doc.setFont('times', 'normal')
-    doc.setFontSize(8.5)
-    doc.text(`NIP/NIK: ${config.leftSignerNip}`, leftCenterX, nameY + 4.8, { align: 'center' })
+    doc.setFontSize(8)
+    doc.text(`NIP/NIK: ${bkNip}`, col1Center, nameY + 4.5, { align: 'center' })
   }
 
-  // Nama Penyusun / Guru BK
+  // 2. Kolom 2 (Waka Kesiswaan)
   doc.setFont('times', 'bold')
-  doc.setFontSize(9.5)
-  const rightName = config.rightSignerName || '................................................'
-  doc.text(rightName, rightCenterX, nameY, { align: 'center' })
-  const rightNameWidth = Math.max(doc.getTextWidth(rightName) + 4, 42)
-  doc.line(rightCenterX - rightNameWidth / 2, nameY + 1, rightCenterX + rightNameWidth / 2, nameY + 1)
-
-  if (config.rightSignerNip) {
+  doc.setFontSize(9)
+  doc.text(kesiswaanName, col2Center, nameY, { align: 'center' })
+  const w2 = Math.min(Math.max(doc.getTextWidth(kesiswaanName) + 4, 38), 54)
+  doc.line(col2Center - w2 / 2, nameY + 1, col2Center + w2 / 2, nameY + 1)
+  if (kesiswaanNip) {
     doc.setFont('times', 'normal')
-    doc.setFontSize(8.5)
-    doc.text(`NIP/NIK: ${config.rightSignerNip}`, rightCenterX, nameY + 4.8, { align: 'center' })
+    doc.setFontSize(8)
+    doc.text(`NIP/NIK: ${kesiswaanNip}`, col2Center, nameY + 4.5, { align: 'center' })
+  }
+
+  // 3. Kolom 3 (Kepala Sekolah)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(9)
+  doc.text(kepsekName, col3Center, nameY, { align: 'center' })
+  const w3 = Math.min(Math.max(doc.getTextWidth(kepsekName) + 4, 38), 54)
+  doc.line(col3Center - w3 / 2, nameY + 1, col3Center + w3 / 2, nameY + 1)
+  if (kepsekNip) {
+    doc.setFont('times', 'normal')
+    doc.setFontSize(8)
+    doc.text(`NIP/NIK: ${kepsekNip}`, col3Center, nameY + 4.5, { align: 'center' })
   }
 
   return nameY + 10

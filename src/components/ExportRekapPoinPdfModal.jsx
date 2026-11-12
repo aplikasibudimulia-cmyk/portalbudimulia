@@ -67,14 +67,21 @@ export default function ExportRekapPoinPdfModal({
   const [showSignature, setShowSignature] = useState(true)
   const [kotaSurat, setKotaSurat] = useState('Jakarta')
   const [tanggalSurat, setTanggalSurat] = useState(() => new Date().toISOString().slice(0, 10))
-  const [leftSignerTitle, setLeftSignerTitle] = useState('Kepala SMP Budi Mulia Jakarta')
-  const [leftSignerName, setLeftSignerName] = useState('Septian Ruswadi, S.Pd.')
-  const [leftSignerNip, setLeftSignerNip] = useState('')
-  const [rightSignerTitle, setRightSignerTitle] = useState('Koordinator BK / Kesiswaan')
-  const [rightSignerName, setRightSignerName] = useState(
+
+  // 3 Penandatangan Resmi (Kepala Sekolah, Waka Kesiswaan, Guru BK)
+  const [kepsekTitle, setKepsekTitle] = useState('Kepala SMP Budi Mulia Jakarta')
+  const [kepsekName, setKepsekName] = useState('Septian Ruswadi, S.Pd.')
+  const [kepsekNip, setKepsekNip] = useState('')
+
+  const [kesiswaanTitle, setKesiswaanTitle] = useState('Waka Kesiswaan')
+  const [kesiswaanName, setKesiswaanName] = useState('')
+  const [kesiswaanNip, setKesiswaanNip] = useState('')
+
+  const [bkTitle, setBkTitle] = useState('Guru Bimbingan Konseling (BK)')
+  const [bkName, setBkName] = useState(
     session?.nama_guru && session.nama_guru !== 'Admin' ? session.nama_guru : ''
   )
-  const [rightSignerNip, setRightSignerNip] = useState('')
+  const [bkNip, setBkNip] = useState('')
 
   // State Data Transaksi Poin Lengkap dari DB
   const [allRecords, setAllRecords] = useState([])
@@ -95,8 +102,8 @@ export default function ExportRekapPoinPdfModal({
       setKelasScope('all')
       setSelectedClasses([])
     }
-    if (session?.nama_guru && session.nama_guru !== 'Admin' && !rightSignerName) {
-      setRightSignerName(session.nama_guru)
+    if (session?.nama_guru && session.nama_guru !== 'Admin' && !bkName) {
+      setBkName(session.nama_guru)
     }
   }, [isOpen, initialKelas, preselectedStudent, session])
 
@@ -361,12 +368,23 @@ export default function ExportRekapPoinPdfModal({
           showSignature,
           kotaSurat: kotaSurat.trim() || 'Jakarta',
           tanggalSurat,
-          leftSignerTitle: leftSignerTitle.trim(),
-          leftSignerName: leftSignerName.trim(),
-          leftSignerNip: leftSignerNip.trim(),
-          rightSignerTitle: rightSignerTitle.trim(),
-          rightSignerName: rightSignerName.trim(),
-          rightSignerNip: rightSignerNip.trim(),
+          // 3 Penandatangan Resmi
+          kepsekTitle: kepsekTitle.trim(),
+          kepsekName: kepsekName.trim(),
+          kepsekNip: kepsekNip.trim(),
+          kesiswaanTitle: kesiswaanTitle.trim(),
+          kesiswaanName: kesiswaanName.trim(),
+          kesiswaanNip: kesiswaanNip.trim(),
+          bkTitle: bkTitle.trim(),
+          bkName: bkName.trim(),
+          bkNip: bkNip.trim(),
+          // Kompatibilitas mundur
+          leftSignerTitle: kepsekTitle.trim(),
+          leftSignerName: kepsekName.trim(),
+          leftSignerNip: kepsekNip.trim(),
+          rightSignerTitle: bkTitle.trim(),
+          rightSignerName: bkName.trim(),
+          rightSignerNip: bkNip.trim(),
           customFilename:
             kelasScope === 'single_student' && preselectedStudent
               ? `Laporan-Poin-${preselectedStudent.nama_lengkap.replace(/\s+/g, '-')}-${preselectedStudent.kelas}.pdf`
@@ -1066,61 +1084,114 @@ export default function ExportRekapPoinPdfModal({
                 </div>
 
                 {showSignature && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
-                    <div className="space-y-2">
-                      <p className="text-[11px] font-extrabold text-indigo-900 uppercase">Penandatangan Kiri (Mengetahui)</p>
-                      <input
-                        type="text"
-                        value={leftSignerTitle}
-                        onChange={(e) => setLeftSignerTitle(e.target.value)}
-                        placeholder="Jabatan (mis: Kepala SMP Budi Mulia Jakarta)"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
-                      />
-                      <input
-                        type="text"
-                        value={leftSignerName}
-                        onChange={(e) => setLeftSignerName(e.target.value)}
-                        placeholder="Nama Lengkap & Gelar"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
-                      />
-                      <input
-                        type="text"
-                        value={leftSignerNip}
-                        onChange={(e) => setLeftSignerNip(e.target.value)}
-                        placeholder="NIP / NIK (Opsional)"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-[11px] font-extrabold text-indigo-900 uppercase">Penandatangan Kanan (Penyusun)</p>
-                      <input
-                        type="text"
-                        value={rightSignerTitle}
-                        onChange={(e) => setRightSignerTitle(e.target.value)}
-                        placeholder="Jabatan (mis: Koordinator BK / Wali Kelas)"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
-                      />
-                      <input
-                        type="text"
-                        value={rightSignerName}
-                        onChange={(e) => setRightSignerName(e.target.value)}
-                        placeholder="Nama Guru BK / Kesiswaan / Wali Kelas"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
-                      />
-                      <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2.5 border-b border-slate-100 gap-2">
+                      <p className="text-[11px] font-extrabold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                        ✍️ Blok Pengesahan (3 Tanda Tangan Resmi)
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-slate-500">Tempat & Tanggal:</span>
                         <input
                           type="text"
                           value={kotaSurat}
                           onChange={(e) => setKotaSurat(e.target.value)}
                           placeholder="Kota (Jakarta)"
-                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                          className="w-24 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
                         />
                         <input
                           type="date"
                           value={tanggalSurat}
                           onChange={(e) => setTanggalSurat(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                          className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {/* Kolom 1: Guru BK */}
+                      <div className="space-y-1.5 p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] font-bold text-slate-700">1. Guru BK (Penyusun)</p>
+                          <span className="text-[9.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">Kiri</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={bkTitle}
+                          onChange={(e) => setBkTitle(e.target.value)}
+                          placeholder="Jabatan (mis: Guru Bimbingan Konseling)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold"
+                        />
+                        <input
+                          type="text"
+                          value={bkName}
+                          onChange={(e) => setBkName(e.target.value)}
+                          placeholder="Nama Lengkap Guru BK"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
+                        />
+                        <input
+                          type="text"
+                          value={bkNip}
+                          onChange={(e) => setBkNip(e.target.value)}
+                          placeholder="NIP / NIK (Opsional)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-600"
+                        />
+                      </div>
+
+                      {/* Kolom 2: Waka Kesiswaan */}
+                      <div className="space-y-1.5 p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] font-bold text-slate-700">2. Waka Kesiswaan</p>
+                          <span className="text-[9.5px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">Tengah</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={kesiswaanTitle}
+                          onChange={(e) => setKesiswaanTitle(e.target.value)}
+                          placeholder="Jabatan (mis: Waka Kesiswaan)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold"
+                        />
+                        <input
+                          type="text"
+                          value={kesiswaanName}
+                          onChange={(e) => setKesiswaanName(e.target.value)}
+                          placeholder="Nama Lengkap Waka Kesiswaan"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
+                        />
+                        <input
+                          type="text"
+                          value={kesiswaanNip}
+                          onChange={(e) => setKesiswaanNip(e.target.value)}
+                          placeholder="NIP / NIK (Opsional)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-600"
+                        />
+                      </div>
+
+                      {/* Kolom 3: Kepala Sekolah */}
+                      <div className="space-y-1.5 p-2.5 bg-slate-50/70 rounded-xl border border-slate-200/80">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] font-bold text-slate-700">3. Kepala Sekolah (Mengetahui)</p>
+                          <span className="text-[9.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">Kanan</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={kepsekTitle}
+                          onChange={(e) => setKepsekTitle(e.target.value)}
+                          placeholder="Jabatan (mis: Kepala SMP Budi Mulia Jakarta)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold"
+                        />
+                        <input
+                          type="text"
+                          value={kepsekName}
+                          onChange={(e) => setKepsekName(e.target.value)}
+                          placeholder="Nama Lengkap Kepala Sekolah"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
+                        />
+                        <input
+                          type="text"
+                          value={kepsekNip}
+                          onChange={(e) => setKepsekNip(e.target.value)}
+                          placeholder="NIP / NIK (Opsional)"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-600"
                         />
                       </div>
                     </div>
