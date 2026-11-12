@@ -767,7 +767,7 @@ BEGIN
     NEW.created_at := COALESCE(NEW.created_at, NOW());
     RETURN NEW;
   ELSIF TG_OP = 'UPDATE' THEN
-    IF (NEW.status IS DISTINCT FROM OLD.status OR NEW.poin IS DISTINCT FROM OLD.poin)
+    IF (NEW.status IS DISTINCT FROM OLD.status OR NEW.poin_diajukan IS DISTINCT FROM OLD.poin_diajukan)
        AND NOT public.fn_is_authorized_staff() THEN
       BEGIN
         INSERT INTO public.activity_log (aktor, aksi, detail, created_at)
@@ -780,7 +780,7 @@ BEGIN
       EXCEPTION WHEN OTHERS THEN NULL;
       END;
       NEW.status := OLD.status;
-      NEW.poin := OLD.poin;
+      NEW.poin_diajukan := OLD.poin_diajukan;
       NEW.reviewed_by := OLD.reviewed_by;
       NEW.reviewed_at := OLD.reviewed_at;
     END IF;
