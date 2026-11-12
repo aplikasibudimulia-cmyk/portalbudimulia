@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "QJJUASDQMV.com.ebudimulia.portal",
+        "paths": [
+          "/login*",
+          "/login/*",
+          "*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "QJJUASDQMV.com.ebudimulia.portal"
+    ]
+  }
+}

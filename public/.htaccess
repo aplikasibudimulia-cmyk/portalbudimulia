@@ -9,6 +9,13 @@
   AddType font/woff2 .woff2
 </IfModule>
 
+<Files "apple-app-site-association">
+  ForceType application/json
+  <IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+  </IfModule>
+</Files>
+
 # ── Encoding ────────────────────────────────────────────────────────────────
 AddDefaultCharset UTF-8
 

@@ -47,6 +47,28 @@ function Login() {
   const [showOpenInApp, setShowOpenInApp] = useState(() => {
     return Boolean(initialParams.u && initialParams.p && typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent))
   })
+  const isIOSDevice = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent)
+
+  const handleOpenNativeApp = (e) => {
+    e.preventDefault()
+    const roleCode = loginRole === 'Orang Tua' ? 'ortu' : loginRole === 'Guru / Staff' ? 'guru' : 'siswa'
+    const schemeUrl = `ebudimulia://login?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&r=${roleCode}`
+
+    const start = Date.now()
+    window.location.href = schemeUrl
+
+    setTimeout(() => {
+      // Jika browser masih aktif setelah 1.8 detik (artinya aplikasi native belum terpasang atau tidak merespons)
+      if (Date.now() - start < 2500) {
+        if (isIOSDevice) {
+          setNotification({
+            type: 'warning',
+            message: 'Jika aplikasi belum terpasang atau muncul pesan error di iPhone, silakan pasang eBudiMulia via TestFlight di bawah atau langsung masuk lewat formulir web ini.'
+          })
+        }
+      }
+    }, 1800)
+  }
 
   const saveAccountToHistory = (account) => {
     try {
@@ -729,21 +751,39 @@ function Login() {
 
           {/* Banner Buka di Aplikasi Native Android/iOS jika dibuka di web mobile */}
           {showOpenInApp && username && password && !Capacitor.isNativePlatform() && (
-            <a
-              href={`ebudimulia://login?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&r=${loginRole === 'Orang Tua' ? 'ortu' : loginRole === 'Guru / Staff' ? 'guru' : 'siswa'}`}
-              className="mb-4 flex items-center justify-between p-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-2xl shadow-md hover:opacity-95 transition no-underline"
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="text-2xl">📱</span>
-                <div className="text-left leading-tight">
-                  <div className="font-bold text-xs">Punya Aplikasi eBudiMulia?</div>
-                  <div className="text-[11px] text-blue-100">Buka langsung di aplikasi HP Anda</div>
+            <div className="mb-4 p-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-2xl shadow-md">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-2xl shrink-0">📱</span>
+                  <div className="text-left leading-tight truncate">
+                    <div className="font-bold text-xs">Punya Aplikasi eBudiMulia?</div>
+                    <div className="text-[11px] text-blue-100 truncate">Buka langsung di aplikasi HP Anda</div>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleOpenNativeApp}
+                  className="text-xs bg-white text-indigo-700 font-extrabold px-3 py-1.5 rounded-xl shadow-sm shrink-0 hover:bg-blue-50 active:scale-95 transition cursor-pointer"
+                >
+                  Buka Aplikasi →
+                </button>
               </div>
-              <span className="text-xs bg-white text-indigo-700 font-extrabold px-3 py-1.5 rounded-xl shadow-sm shrink-0">
-                Buka Aplikasi →
-              </span>
-            </a>
+
+              {isIOSDevice && (
+                <div className="mt-2.5 pt-2 border-t border-indigo-400/30 flex items-center justify-between text-[11px]">
+                  <span className="text-blue-100">Belum punya aplikasi di iPhone?</span>
+                  <a
+                    href="https://testflight.apple.com/join/cezmdyqH"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-yellow-300 hover:text-yellow-200 underline inline-flex items-center gap-1"
+                  >
+                    <span>Pasang via TestFlight</span>
+                    <span>↗</span>
+                  </a>
+                </div>
+              )}
+            </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-5">
