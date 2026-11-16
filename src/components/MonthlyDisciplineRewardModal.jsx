@@ -10,6 +10,57 @@ const MONTH_NAMES = [
 const POS_PKET_CATALOG_ID = 'bbee71cd-1424-4497-8795-54980b5ed0f9'
 const REWARD_POINTS = 4
 
+/**
+ * Mengambil NISN siswa yang SUDAH menerima / mengajukan reward POS-PKET-1 pada bulan tertentu.
+ * - Query difilter per bulan di server + dipaginasi penuh (anti batas 1000 baris Supabase).
+ * - Mencakup: reward massal sebelumnya, pengajuan mandiri yang sudah disetujui (point_records),
+ *   serta pengajuan mandiri yang masih pending / sudah disetujui (pengajuan_poin_positif).
+ */
+async function fetchClaimedNisnSet(year, month, namaBulan) {
+  const mm = String(month).padStart(2, '0')
+  const lastDay = new Date(year, month, 0).getDate()
+  const startDate = `${year}-${mm}-01`
+  const endDate = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`
+  const claimed = new Set()
+  const pageSize = 1000
+
+  const paginate = async (buildQuery) => {
+    let from = 0
+    while (true) {
+      const { data, error } = await buildQuery().range(from, from + pageSize - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      for (const r of data) if (r.nisn) claimed.add(r.nisn)
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+  }
+
+  // 1. point_records: tanggal di bulan tsb, ATAU keterangan menyebut "<Bulan> <Tahun>", ATAU created_at di bulan tsb
+  await paginate(() => supabase
+    .from('point_records')
+    .select('nisn')
+    .eq('kode_katalog', 'POS-PKET-1')
+    .or(`and(tanggal.gte.${startDate},tanggal.lte.${endDate}),keterangan.ilike.%${namaBulan} ${year}%,and(created_at.gte.${startDate}T00:00:00,created_at.lte.${endDate}T23:59:59)`)
+    .order('id', { ascending: true }))
+
+  // 2. pengajuan mandiri siswa (pending / disetujui) pada bulan tsb
+  try {
+    await paginate(() => supabase
+      .from('pengajuan_poin_positif')
+      .select('nisn')
+      .eq('kode_katalog', 'POS-PKET-1')
+      .in('status', ['pending', 'disetujui'])
+      .gte('created_at', `${startDate}T00:00:00`)
+      .lte('created_at', `${endDate}T23:59:59`)
+      .order('id', { ascending: true }))
+  } catch (e) {
+    console.warn('Gagal membaca pengajuan_poin_positif untuk cek duplikat:', e)
+  }
+
+  return claimed
+}
+
 export default function MonthlyDisciplineRewardModal({
   isOpen,
   onClose,
@@ -105,36 +156,13 @@ export default function MonthlyDisciplineRewardModal({
       // B. Ambil catatan point_records untuk mendeteksi apakah siswa sudah pernah dapat reward di bulan ini
       //    (baik dari proses massal ini MAUPUN dari pengajuan poin mandiri oleh siswa yang sudah disetujui)
       const namaBulan = MONTH_NAMES[selectedMonth - 1]
-      const monthStr2 = String(selectedMonth).padStart(2, '0')
 
-      // Cari semua point_records dengan kode_katalog POS-PKET-1
-      const { data: existingRecords, error: recErr } = await supabase
-        .from('point_records')
-        .select('nisn, keterangan, tanggal, created_at')
-        .eq('kode_katalog', 'POS-PKET-1')
-
-      if (recErr) console.warn('Gagal membaca existing point_records:', recErr)
-
-      const claimedNisnSet = new Set()
-      if (existingRecords) {
-        for (const r of existingRecords) {
-          const ketLower = (r.keterangan || '').toLowerCase()
-          const tanggal = r.tanggal || ''
-
-          // Deteksi 1: Reward bulanan massal (keterangan mengandung nama bulan + tahun)
-          const matchByKeterangan = ketLower.includes(namaBulan.toLowerCase()) && ketLower.includes(String(selectedYear))
-
-          // Deteksi 2: Pengajuan mandiri siswa yang tanggalnya jatuh di bulan yang sama
-          const matchByTanggal = tanggal.startsWith(`${selectedYear}-${monthStr2}`)
-
-          // Deteksi 3: created_at jatuh di bulan yang sama (fallback jika tanggal kosong)
-          const createdMonth = (r.created_at || '').slice(0, 7) // "2026-10"
-          const matchByCreated = createdMonth === `${selectedYear}-${monthStr2}`
-
-          if (matchByKeterangan || matchByTanggal || matchByCreated) {
-            claimedNisnSet.add(r.nisn)
-          }
-        }
+      // Cek ke server (dipaginasi penuh & difilter per bulan) siapa saja yang sudah dapat/mengajukan reward bulan ini
+      let claimedNisnSet = new Set()
+      try {
+        claimedNisnSet = await fetchClaimedNisnSet(selectedYear, selectedMonth, namaBulan)
+      } catch (recErr) {
+        throw new Error('Gagal memeriksa riwayat reward bulan ini (' + (recErr.message || recErr) + '). Proses dibatalkan agar tidak terjadi poin ganda.')
       }
 
       // C. Agregasi data presensi per siswa
@@ -251,7 +279,18 @@ export default function MonthlyDisciplineRewardModal({
       const nowIso = new Date().toISOString()
 
       // Filter siswa terpilih
-      const targetStudents = eligibleList.filter(s => selectedNisns.has(s.nisn))
+      // Cek ulang SEGAR dari server tepat sebelum insert (mencegah poin ganda akibat proses ganda / pengajuan baru)
+      const freshClaimed = await fetchClaimedNisnSet(selectedYear, selectedMonth, namaBulan)
+      const allSelected = eligibleList.filter(s => selectedNisns.has(s.nisn))
+      const targetStudents = allSelected.filter(s => !freshClaimed.has(s.nisn))
+      const skippedCount = allSelected.length - targetStudents.length
+      if (targetStudents.length === 0) {
+        setEligibleList(prev => prev.map(s => freshClaimed.has(s.nisn) ? { ...s, isClaimed: true } : s))
+        setSelectedNisns(new Set())
+        setAlert({ type: 'warning', message: `Semua ${skippedCount} siswa terpilih ternyata sudah mendapat/mengajukan reward bulan ini. Tidak ada poin yang ditambahkan.` })
+        setProcessing(false)
+        return
+      }
 
       // Siapkan payload batch
       const recordsToInsert = targetStudents.map(s => ({
@@ -290,11 +329,11 @@ export default function MonthlyDisciplineRewardModal({
 
       setAlert({
         type: 'success',
-        message: `🎉 Berhasil! Sebanyak ${insertedCount} siswa telah menerima +${REWARD_POINTS} Poin Disiplin Bulanan (${namaBulan} ${selectedYear}). Total poin siswa otomatis diperbarui di database!`
+        message: `🎉 Berhasil! Sebanyak ${insertedCount} siswa telah menerima +${REWARD_POINTS} Poin Disiplin Bulanan (${namaBulan} ${selectedYear}). Total poin siswa otomatis diperbarui di database!${skippedCount > 0 ? ` (${skippedCount} siswa dilewati karena sudah mendapat/mengajukan reward bulan ini)` : ''}`
       })
 
       // Update local state isClaimed
-      setEligibleList(prev => prev.map(s => selectedNisns.has(s.nisn) ? { ...s, isClaimed: true } : s))
+      setEligibleList(prev => prev.map(s => (selectedNisns.has(s.nisn) || freshClaimed.has(s.nisn)) ? { ...s, isClaimed: true } : s))
       setSelectedNisns(new Set())
 
       if (onSuccess) onSuccess()
