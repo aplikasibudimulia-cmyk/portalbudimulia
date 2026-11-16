@@ -7,7 +7,7 @@ let _cachedLogoDataUrl = null
  * Memuat logo resmi sekolah (/logo_smp_budi_mulia.png) dan mengonversinya ke Base64 PNG berukuran optimal
  * agar ukuran file PDF tetap tajam saat dicetak dan ringan.
  */
-async function getSchoolLogoDataUrl(logoPath = '/logo_smp_budi_mulia.png') {
+export async function getSchoolLogoDataUrl(logoPath = '/logo_smp_budi_mulia.png') {
   if (_cachedLogoDataUrl) return _cachedLogoDataUrl
   if (typeof window === 'undefined' || typeof document === 'undefined') return null
 
@@ -100,7 +100,7 @@ function getStudentStatusInfo(student, pointTypeFilter) {
  * Menggambar Kop Surat Resmi SMP Budi Mulia Jakarta pada dokumen jsPDF
  * Mengembalikan koordinat Y setelah Kop Surat.
  */
-function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
+export function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
   const marginX = 14
   const startY = 10.5
 
@@ -167,7 +167,7 @@ function drawOfficialLetterhead(doc, config, logoDataUrl, pageWidth) {
 /**
  * Menggambar Footer Resmi & Nomor Halaman di seluruh lembar PDF
  */
-function drawAllPageFooters(doc, documentTitle) {
+export function drawAllPageFooters(doc, documentTitle) {
   const totalPages = doc.internal.getNumberOfPages()
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()

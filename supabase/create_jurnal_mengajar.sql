@@ -62,3 +62,10 @@ DROP TRIGGER IF EXISTS trg_jurnal_touch_updated_at ON public.jurnal_mengajar;
 CREATE TRIGGER trg_jurnal_touch_updated_at
   BEFORE UPDATE ON public.jurnal_mengajar
   FOR EACH ROW EXECUTE FUNCTION public.fn_jurnal_touch_updated_at();
+
+-- ------------------------------------------------------------------------------
+-- UPDATE: kehadiran siswa per pertemuan (mengikuti presensi harian), format JSON
+-- Aman dijalankan ulang. Wajib dijalankan jika tabel sudah dibuat sebelumnya.
+-- ------------------------------------------------------------------------------
+ALTER TABLE public.jurnal_mengajar
+  ADD COLUMN IF NOT EXISTS siswa_tidak_hadir_data JSONB NOT NULL DEFAULT '[]'::jsonb;

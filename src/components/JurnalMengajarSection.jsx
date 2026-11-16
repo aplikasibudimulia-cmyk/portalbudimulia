@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../supabaseClient'
 import { getTodayWIB } from '../utils/dateUtils'
+import { generateJurnalMengajarPDF } from '../utils/jurnalMengajarPdfExporter'
 
 const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
@@ -67,6 +69,22 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
+
+  // Kehadiran siswa (sinkron presensi harian)
+  const [classStudents, setClassStudents] = useState([]) // [{ nisn, nama, presensi }]
+  const [absentMap, setAbsentMap] = useState({}) // { nisn: 'S' | 'I' | 'A' }
+  const [loadingStudents, setLoadingStudents] = useState(false)
+
+  // Export PDF
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportCfg, setExportCfg] = useState({
+    dari: today.slice(0, 8) + '01',
+    sampai: today,
+    kelas: 'all',
+    kepsekNama: 'Septian Ruswadi, S.Pd.',
+    tempat: 'Jakarta'
+  })
 
   const showToast = (type, text) => {
     setToast({ type, text })
@@ -191,6 +209,60 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
 
   useEffect(() => { if (tab === 'riwayat') fetchHistory() }, [tab, fetchHistory])
 
+  const loadClassStudents = async (kelas, existing) => {
+    setLoadingStudents(true)
+    setClassStudents([])
+    setAbsentMap({})
+    try {
+      let eq = supabase.from('enrollment').select('nisn').eq('kelas', kelas)
+      if (activeTa?.id) eq = eq.eq('tahun_ajaran_id', activeTa.id)
+      const { data: enr, error: enrErr } = await eq
+      if (enrErr) throw enrErr
+      const nisns = [...new Set((enr || []).map(r => r.nisn))]
+      if (nisns.length === 0) return
+
+      const [{ data: sis }, { data: pres }] = await Promise.all([
+        supabase.from('siswa_permanent').select('nisn, nama_lengkap').in('nisn', nisns),
+        supabase.from('presensi_harian').select('siswa_nisn, status, tipe').eq('tanggal', date).in('siswa_nisn', nisns)
+      ])
+      const presMap = {}
+      for (const r of pres || []) {
+        // prioritaskan presensi masuk
+        if (!presMap[r.siswa_nisn] || r.tipe === 'masuk') presMap[r.siswa_nisn] = (r.status || '').toUpperCase()
+      }
+      const list = (sis || [])
+        .map(r => ({ nisn: r.nisn, nama: r.nama_lengkap, presensi: presMap[r.nisn] || null }))
+        .sort((a, b) => (a.nama || '').localeCompare(b.nama || ''))
+      setClassStudents(list)
+
+      const saved = Array.isArray(existing?.siswa_tidak_hadir_data) ? existing.siswa_tidak_hadir_data : null
+      const init = {}
+      if (saved) {
+        for (const r of saved) if (r?.nisn) init[r.nisn] = r.status || 'A'
+      } else {
+        // Jurnal baru: otomatis ikuti presensi harian (Sakit / Izin / Alpa)
+        for (const r of list) if (['S', 'I', 'A'].includes(r.presensi)) init[r.nisn] = r.presensi
+      }
+      setAbsentMap(init)
+    } catch (e) {
+      console.warn('Gagal memuat siswa kelas untuk jurnal:', e)
+    } finally {
+      setLoadingStudents(false)
+    }
+  }
+
+  const cycleAbsent = (nisn) => {
+    setAbsentMap(prev => {
+      const cur = prev[nisn]
+      const next = { ...prev }
+      if (!cur) next[nisn] = 'S'
+      else if (cur === 'S') next[nisn] = 'I'
+      else if (cur === 'I') next[nisn] = 'A'
+      else delete next[nisn]
+      return next
+    })
+  }
+
   const openForm = (group) => {
     const existing = journalsDay[group.jadwalId] || null
     setEditing({ group, existing })
@@ -202,7 +274,47 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
       catatan: existing.catatan || '',
       alasan: existing.alasan || ''
     } : emptyForm)
+    loadClassStudents(group.kelas, existing)
   }
+
+  const handleExport = async () => {
+    if (!exportCfg.dari || !exportCfg.sampai || exportCfg.dari > exportCfg.sampai) {
+      showToast('error', 'Rentang tanggal tidak valid.')
+      return
+    }
+    setExporting(true)
+    try {
+      let q = supabase
+        .from('jurnal_mengajar')
+        .select('*, mata_pelajaran:mata_pelajaran_id ( nama )')
+        .eq('guru_id', session.id)
+        .gte('tanggal', exportCfg.dari)
+        .lte('tanggal', exportCfg.sampai)
+        .order('tanggal', { ascending: true })
+        .order('jam_ke_awal', { ascending: true })
+      if (exportCfg.kelas !== 'all') q = q.eq('kelas', exportCfg.kelas)
+      const { data, error } = await q
+      if (error) throw error
+      await generateJurnalMengajarPDF({
+        journals: data || [],
+        guruNama: session?.nama_guru || '',
+        periodeDari: exportCfg.dari,
+        periodeSampai: exportCfg.sampai,
+        tahunAjaran: activeTa?.nama || '',
+        semester: `Semester ${semNum}`,
+        kepsekNama: exportCfg.kepsekNama,
+        tempat: exportCfg.tempat,
+        tanggalCetak: today
+      })
+      setExportOpen(false)
+    } catch (err) {
+      showToast('error', 'Gagal membuat PDF: ' + (err.message || err))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const kelasOptions = useMemo(() => [...new Set(jadwal.map(r => r.kelas))].sort(), [jadwal])
 
   const handleSave = async (e) => {
     e.preventDefault()
@@ -218,6 +330,9 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
     const g = editing.group
     setSaving(true)
     try {
+      const absentList = classStudents
+        .filter(st => absentMap[st.nisn])
+        .map(st => ({ nisn: st.nisn, nama: st.nama, status: absentMap[st.nisn] }))
       const payload = {
         tahun_ajaran_id: activeTa?.id || null,
         semester: semNum,
@@ -234,13 +349,22 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
         status: form.status,
         materi: form.status === 'terlaksana' ? form.materi.trim() : null,
         kegiatan: form.status === 'terlaksana' ? (form.kegiatan.trim() || null) : null,
-        siswa_tidak_hadir: form.siswa_tidak_hadir.trim() || null,
+        siswa_tidak_hadir: form.status === 'terlaksana' ? (absentList.map(a => `${a.nama} (${a.status})`).join(', ') || null) : null,
+        siswa_tidak_hadir_data: form.status === 'terlaksana' ? absentList : [],
         catatan: form.catatan.trim() || null,
         alasan: form.status === 'tidak_terlaksana' ? form.alasan.trim() : null
       }
-      const { error } = await supabase
+      let { error } = await supabase
         .from('jurnal_mengajar')
         .upsert(payload, { onConflict: 'guru_id,jadwal_id,tanggal' })
+      // Fallback jika kolom siswa_tidak_hadir_data belum dibuat di database
+      if (error && /siswa_tidak_hadir_data/.test(error.message || '')) {
+        delete payload.siswa_tidak_hadir_data
+        const retry = await supabase
+          .from('jurnal_mengajar')
+          .upsert(payload, { onConflict: 'guru_id,jadwal_id,tanggal' })
+        error = retry.error
+      }
       if (error) throw error
       showToast('success', 'Jurnal berhasil disimpan.')
       setEditing(null)
@@ -282,9 +406,15 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
 
   return (
     <div className="animate-slide-up space-y-5">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900">Jurnal Mengajar</h2>
-        <p className="text-slate-500 text-sm mt-1">Isi jurnal pembelajaran sesuai jadwal mengajar Anda. Bisa mengisi hari yang sudah lewat maupun yang akan datang.</p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Jurnal Mengajar</h2>
+          <p className="text-slate-500 text-sm mt-1">Isi jurnal pembelajaran sesuai jadwal mengajar Anda. Bisa mengisi hari yang sudah lewat maupun yang akan datang.</p>
+        </div>
+        <button onClick={() => setExportOpen(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 shadow-sm shrink-0">
+          📄 Export PDF
+        </button>
       </div>
 
       {toast && (
@@ -416,8 +546,8 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
         </>
       )}
 
-      {editing && (
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm p-0 sm:p-4" onClick={() => !saving && setEditing(null)}>
+      {editing && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-md p-0 sm:p-4" onClick={() => !saving && setEditing(null)}>
           <form onSubmit={handleSave} onClick={(e) => e.stopPropagation()}
             className="bg-white w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl shadow-2xl">
             <div className="px-5 py-4 border-b border-slate-100">
@@ -460,12 +590,46 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Siswa Tidak Hadir (opsional)</label>
-                <input className={inputCls} value={form.siswa_tidak_hadir}
-                  onChange={(e) => setForm(f => ({ ...f, siswa_tidak_hadir: e.target.value }))}
-                  placeholder="Nama siswa, pisahkan dengan koma" />
-              </div>
+              {form.status === 'terlaksana' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Siswa Tidak Hadir ({Object.keys(absentMap).length})
+                    </label>
+                    <span className="text-[10px] text-slate-400">Ketuk nama untuk ubah: Hadir → S → I → A</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-2">Otomatis mengikuti presensi harian {fmtTanggal(date)}. Bisa ditambah (mis. membolos pelajaran) atau dikurangi.</p>
+                  {loadingStudents ? (
+                    <div className="text-xs text-slate-400 py-3 text-center">Memuat daftar siswa...</div>
+                  ) : classStudents.length === 0 ? (
+                    <div className="text-xs text-slate-400 py-3 text-center bg-slate-50 rounded-xl">Daftar siswa kelas {editing.group.kelas} tidak ditemukan.</div>
+                  ) : (
+                    <div className="max-h-52 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                      {classStudents.map(st => {
+                        const mark = absentMap[st.nisn]
+                        const markCls = mark === 'S' ? 'bg-blue-100 text-blue-700'
+                          : mark === 'I' ? 'bg-amber-100 text-amber-700'
+                          : mark === 'A' ? 'bg-rose-100 text-rose-700'
+                          : 'bg-emerald-50 text-emerald-600'
+                        return (
+                          <button type="button" key={st.nisn} onClick={() => cycleAbsent(st.nisn)}
+                            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50">
+                            <span className="text-sm text-slate-800 truncate">{st.nama}</span>
+                            <span className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] text-slate-400" title="Status presensi harian">
+                                Presensi: {st.presensi || '—'}
+                              </span>
+                              <span className={`min-w-[44px] text-center text-[11px] font-bold px-2 py-0.5 rounded-md ${markCls}`}>
+                                {mark || 'Hadir'}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Catatan (opsional)</label>
                 <textarea rows={2} className={inputCls} value={form.catatan}
@@ -485,7 +649,53 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {exportOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-md p-0 sm:p-4" onClick={() => !exporting && setExportOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="font-bold text-slate-900 text-lg">Export Jurnal ke PDF</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Lengkap dengan kop surat & tanda tangan.</p>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dari Tanggal</label>
+                  <input type="date" className={inputCls} value={exportCfg.dari} onChange={(e) => setExportCfg(c => ({ ...c, dari: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Sampai Tanggal</label>
+                  <input type="date" className={inputCls} value={exportCfg.sampai} onChange={(e) => setExportCfg(c => ({ ...c, sampai: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Kelas</label>
+                <select className={inputCls} value={exportCfg.kelas} onChange={(e) => setExportCfg(c => ({ ...c, kelas: e.target.value }))}>
+                  <option value="all">Semua Kelas</option>
+                  {kelasOptions.map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Nama Kepala Sekolah (tanda tangan)</label>
+                <input className={inputCls} value={exportCfg.kepsekNama} onChange={(e) => setExportCfg(c => ({ ...c, kepsekNama: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tempat Penandatanganan</label>
+                <input className={inputCls} value={exportCfg.tempat} onChange={(e) => setExportCfg(c => ({ ...c, tempat: e.target.value }))} />
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-100 flex gap-2 justify-end">
+              <button onClick={() => setExportOpen(false)} disabled={exporting} className="px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200">Batal</button>
+              <button onClick={handleExport} disabled={exporting} className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60">
+                {exporting ? 'Membuat PDF...' : 'Unduh PDF'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   )
