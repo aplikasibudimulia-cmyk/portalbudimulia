@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { logActivity } from '../utils/logger'
 import SiswaDashboardWidgets from '../components/SiswaDashboardWidgets'
+import SiswaPresensiSection from '../components/SiswaPresensiSection'
 import SiswaNotificationPanel from '../components/SiswaNotificationPanel'
 import MultiAccountSwitcherModal from '../components/MultiAccountSwitcherModal'
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, requestAllInitialPermissions, initNativePushNotifications } from '../utils/pushNotif'
@@ -27,7 +28,6 @@ const lazySection = (loader) => {
 
 const SiswaNilaiSection = lazySection(() => import('../components/SiswaNilaiSection'))
 const SiswaCbtPortalSection = lazySection(() => import('../components/cbt/SiswaCbtPortalSection'))
-const SiswaPresensiSection = lazySection(() => import('../components/SiswaPresensiSection'))
 const SiswaProfilSection = lazySection(() => import('../components/SiswaProfilSection'))
 const SiswaPoinSection = lazySection(() => import('../components/SiswaPoinSection'))
 const SiswaPengajuanPoinSection = lazySection(() => import('../components/SiswaPengajuanPoinSection'))

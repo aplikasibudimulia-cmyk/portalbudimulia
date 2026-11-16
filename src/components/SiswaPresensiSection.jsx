@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
-import { Html5Qrcode } from 'html5-qrcode'
 import { useConfirm } from '../utils/useConfirm'
+
+let _Html5QrcodeClass = null
+async function getHtml5Qrcode() {
+  if (_Html5QrcodeClass) return _Html5QrcodeClass
+  const mod = await import('html5-qrcode')
+  _Html5QrcodeClass = mod.Html5Qrcode
+  return _Html5QrcodeClass
+}
 import { requestNotifPermission, showLocalNotif, isNotifGranted, subscribeToPushNotification, clearPresensiNotif } from '../utils/pushNotif'
 import { getCameraStream, processFileToSelfie } from '../utils/cameraUtils'
 import { sendFCMPushNotification } from '../utils/fcmSender'
@@ -88,9 +95,10 @@ export default function SiswaPresensiSection({ studentData }) {
     return () => clearInterval(timer)
   }, [])
 
-  // Trigger background queue sync saat komponen mount
+  // Trigger background queue sync & pre-warm QR scanner library saat komponen mount
   useEffect(() => {
     processPresensiQueue().catch(() => {})
+    getHtml5Qrcode().catch(() => {})
   }, [])
 
   // Listener untuk pembaruan status sinkronisasi presensi lokal ke server
@@ -177,7 +185,9 @@ export default function SiswaPresensiSection({ studentData }) {
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
   const [geofenceConfig, setGeofenceConfig] = useState(() => {
     if (cachedData?.geofenceConfig) return cachedData.geofenceConfig
-    const geoAktif = cachedSchoolSettings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
+    const geoSetting = cachedSchoolSettings.find(s => s.setting_key === 'geofence_aktif')?.setting_value
+    // Default ke true jika pengaturan belum termuat di cache agar pilihan mode (Scan QR & GPS) langsung muncul instan 0ms
+    const geoAktif = geoSetting !== undefined ? geoSetting === 'true' : true
     const geoLat = parseFloat(cachedSchoolSettings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
     const geoLng = parseFloat(cachedSchoolSettings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
     const geoRadius = parseInt(cachedSchoolSettings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
@@ -399,7 +409,8 @@ export default function SiswaPresensiSection({ studentData }) {
         setPresensiMasukMode(mMode)
 
         // Geofence config
-        const geoAktif = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value === 'true'
+        const geoSetting = settings.find(s => s.setting_key === 'geofence_aktif')?.setting_value
+        const geoAktif = geoSetting !== undefined ? geoSetting === 'true' : true
         const geoLat = parseFloat(settings.find(s => s.setting_key === 'geofence_lat')?.setting_value || '')
         const geoLng = parseFloat(settings.find(s => s.setting_key === 'geofence_lng')?.setting_value || '')
         const geoRadius = parseInt(settings.find(s => s.setting_key === 'geofence_radius_meter')?.setting_value || '200', 10)
@@ -674,6 +685,7 @@ export default function SiswaPresensiSection({ studentData }) {
 
     setTimeout(async () => {
       try {
+        const Html5Qrcode = await getHtml5Qrcode()
         const html5QrCode = new Html5Qrcode('qr-reader')
         scannerRef.current = html5QrCode
         
@@ -724,6 +736,7 @@ export default function SiswaPresensiSection({ studentData }) {
       tempDiv.style.display = 'none'
       document.body.appendChild(tempDiv)
 
+      const Html5Qrcode = await getHtml5Qrcode()
       const html5QrCode = new Html5Qrcode(tempId)
       const decodedText = await html5QrCode.scanFile(file, false)
       try { await html5QrCode.clear() } catch {}
