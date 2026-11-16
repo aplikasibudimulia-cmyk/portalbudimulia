@@ -28,6 +28,10 @@ export default function AdminPersonalisasiSection() {
     forceUpdate: false,
     playStoreUrl: 'https://play.google.com/store/apps/details?id=com.ebudimulia.portal',
     appStoreUrl: '',
+    iosLatestVersion: '',
+    iosLatestBuild: '',
+    iosMinVersion: '',
+    iosForceUpdate: false,
     updateTitle: 'Pembaruan Aplikasi Tersedia 🚀',
     updateNotes: 'Peningkatan performa dan kestabilan sistem.'
   })
@@ -57,6 +61,10 @@ export default function AdminPersonalisasiSection() {
         if (item.setting_key === 'app_force_update') newVerConfig.forceUpdate = item.setting_value === 'true'
         if (item.setting_key === 'app_playstore_url') newVerConfig.playStoreUrl = item.setting_value
         if (item.setting_key === 'app_appstore_url') newVerConfig.appStoreUrl = item.setting_value
+        if (item.setting_key === 'app_ios_latest_version') newVerConfig.iosLatestVersion = item.setting_value || ''
+        if (item.setting_key === 'app_ios_latest_build') newVerConfig.iosLatestBuild = item.setting_value || ''
+        if (item.setting_key === 'app_ios_min_version') newVerConfig.iosMinVersion = item.setting_value || ''
+        if (item.setting_key === 'app_ios_force_update') newVerConfig.iosForceUpdate = item.setting_value === 'true'
         if (item.setting_key === 'app_update_title') newVerConfig.updateTitle = item.setting_value
         if (item.setting_key === 'app_update_notes') newVerConfig.updateNotes = item.setting_value
       })
@@ -84,6 +92,10 @@ export default function AdminPersonalisasiSection() {
         { setting_key: 'app_force_update', setting_value: appVersionConfig.forceUpdate.toString() },
         { setting_key: 'app_playstore_url', setting_value: appVersionConfig.playStoreUrl },
         { setting_key: 'app_appstore_url', setting_value: appVersionConfig.appStoreUrl || '' },
+        { setting_key: 'app_ios_latest_version', setting_value: (appVersionConfig.iosLatestVersion || '').trim() },
+        { setting_key: 'app_ios_latest_build', setting_value: (appVersionConfig.iosLatestBuild || '').trim() },
+        { setting_key: 'app_ios_min_version', setting_value: (appVersionConfig.iosMinVersion || '').trim() },
+        { setting_key: 'app_ios_force_update', setting_value: appVersionConfig.iosForceUpdate.toString() },
         { setting_key: 'app_update_title', setting_value: appVersionConfig.updateTitle },
         { setting_key: 'app_update_notes', setting_value: appVersionConfig.updateNotes }
       ]
@@ -286,6 +298,43 @@ export default function AdminPersonalisasiSection() {
           />
           <p className="text-xs text-slate-400 mt-1">Gunakan baris baru untuk setiap poin perbaikan agar rapi di tampilan siswa.</p>
         </div>
+      </div>
+
+      {/* Pengaturan Versi iOS & Apple App Store */}
+      <div className="bg-white border-none rounded-xl shadow-sm p-6">
+        <h3 className="text-lg font-bold text-slate-800 mb-1">🍎 Pembaruan Aplikasi iOS (Apple App Store)</h3>
+        <p className="text-sm text-slate-500 mb-4">
+          Nomor versi iOS berbeda dari Android. Isi sesuai versi &amp; build di App Store Connect. Pop-up update iPhone hanya aktif jika <strong>Link Apple App Store</strong> di atas terisi, dan field versi di bawah diisi.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Versi Terbaru (App Store)</label>
+            <input type="text" placeholder="Contoh: 1.9.0" value={appVersionConfig.iosLatestVersion}
+              onChange={(e) => setAppVersionConfig(p => ({ ...p, iosLatestVersion: e.target.value }))}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-semibold" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Build Terbaru</label>
+            <input type="text" placeholder="Contoh: 20" value={appVersionConfig.iosLatestBuild}
+              onChange={(e) => setAppVersionConfig(p => ({ ...p, iosLatestBuild: e.target.value }))}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-semibold" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Versi Minimum Wajib</label>
+            <input type="text" placeholder="Contoh: 1.8.8" value={appVersionConfig.iosMinVersion}
+              onChange={(e) => setAppVersionConfig(p => ({ ...p, iosMinVersion: e.target.value }))}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-semibold" />
+          </div>
+        </div>
+        <label className="flex items-center gap-3 p-3.5 border border-amber-200 bg-amber-50/50 rounded-xl cursor-pointer hover:bg-amber-50 transition-colors">
+          <input type="checkbox" className="w-4 h-4 text-amber-600 rounded"
+            checked={appVersionConfig.iosForceUpdate}
+            onChange={(e) => setAppVersionConfig(p => ({ ...p, iosForceUpdate: e.target.checked }))} />
+          <div>
+            <span className="text-sm font-bold text-slate-800">Wajibkan Pembaruan iOS</span>
+            <p className="text-xs text-slate-500 mt-0.5">Jika dicentang, iPhone dengan versi di bawah &quot;Versi Terbaru&quot; tidak bisa memakai aplikasi sampai update di App Store. Pastikan versi baru sudah live di App Store sebelum mencentang.</p>
+          </div>
+        </label>
       </div>
 
       <div className="bg-white border-none rounded-xl shadow-sm p-6">

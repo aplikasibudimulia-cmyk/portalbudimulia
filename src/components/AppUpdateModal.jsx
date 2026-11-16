@@ -107,11 +107,13 @@ export default function AppUpdateModal() {
         return
       }
 
+      // iOS memakai nomor versi/build SENDIRI (berbeda dari Android). Jika belum diisi admin,
+      // JANGAN fallback ke angka Android agar iPhone tidak terkunci keliru.
       const latestVersion = isIos
-        ? (settings.app_ios_latest_version || settings.app_latest_version || curVersion)
+        ? (settings.app_ios_latest_version || curVersion)
         : (settings.app_latest_version || curVersion)
       const latestBuild = isIos
-        ? (settings.app_ios_latest_build || settings.app_latest_build || curBuild)
+        ? (settings.app_ios_latest_build || curBuild)
         : (settings.app_latest_build || curBuild)
       const minVersion = isIos
         ? (settings.app_ios_min_version || '1.0')
@@ -120,7 +122,7 @@ export default function AppUpdateModal() {
         ? (settings.app_ios_min_build || '1')
         : (settings.app_min_build || '1')
       const forceSetting = isIos
-        ? (settings.app_ios_force_update !== undefined ? settings.app_ios_force_update === 'true' : settings.app_force_update === 'true')
+        ? (settings.app_ios_force_update === 'true')
         : (settings.app_force_update === 'true')
 
       const playStoreUrl = settings.app_playstore_url || 'https://play.google.com/store/apps/details?id=com.ebudimulia.portal'
@@ -384,7 +386,7 @@ export default function AppUpdateModal() {
               >
                 Nanti Saja
               </button>
-            ) : (
+            ) : updateData.isIos ? null : (
               <button
                 onClick={handleExitApp}
                 className="w-full py-1 px-3 text-[11px] font-medium text-slate-400 hover:text-rose-600 transition-colors"
