@@ -7,6 +7,22 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 let isProcessingQueue = false
+let processingStartedAt = 0
+
+// Batas waktu tiap request ke server agar antrean tidak macet selamanya
+function withTimeout(promise, ms, label = 'TIMEOUT_SERVER') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms))
+  ])
+}
+
+function friendlyError(err) {
+  const msg = (err && (err.message || err.details || err.hint)) || String(err || '')
+  if (msg === 'TIMEOUT_SERVER') return 'Server tidak merespons (timeout)'
+  if (/failed to fetch|network|load failed/i.test(msg)) return 'Koneksi ke server gagal'
+  return msg || 'Kesalahan tidak diketahui'
+}
 
 /**
  * Mengambil seluruh daftar antrean presensi dari IndexedDB
@@ -255,9 +271,8 @@ export async function submitPresensiDirectOrQueue(item, timeoutMs = 3500) {
     updatedAt: new Date().toISOString()
   }
 
-  const isOnline = typeof navigator === 'undefined' || navigator.onLine
-
-  if (isOnline) {
+  // Selalu coba kirim langsung (navigator.onLine tidak akurat di WebView HP)
+  if (true) {
     try {
       // 1. FAST DIRECT UPSERT KE SUPABASE DENGAN TIMEOUT
       const upsertPromise = supabase.from('presensi_harian').upsert({
@@ -347,13 +362,14 @@ export async function submitPresensiDirectOrQueue(item, timeoutMs = 3500) {
  * Worker Background Sync: Mengunggah antrean yang tertunda ke Supabase
  */
 export async function processPresensiQueue() {
-  if (isProcessingQueue) return
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    console.log('[PresensiQueue] Perangkat offline, menunda sinkronisasi.')
-    return
+  if (isProcessingQueue) {
+    // Jika proses sebelumnya macet > 60 detik, paksa lepas kuncinya
+    if (Date.now() - processingStartedAt < 60000) return
+    console.warn('[PresensiQueue] Kunci proses macet, direset.')
   }
 
   isProcessingQueue = true
+  processingStartedAt = Date.now()
 
   try {
     let queue = await getPresensiQueue()
@@ -367,13 +383,10 @@ export async function processPresensiQueue() {
     console.log(`[PresensiQueue] Memulai silent sync untuk ${pendingItems.length} data...`)
 
     for (const item of pendingItems) {
-      // Jika internet putus di tengah jalan, hentikan loop
-      if (typeof navigator !== 'undefined' && !navigator.onLine) break
-
       try {
         // 1. FAST UPSERT KE TABEL presensi_harian TERLEBIH DAHULU (Prioritas Utama: Data Kehadiran Teks Masuk Server)
         let finalSelfieUrl = item.selfieUrl || null
-        const { error: upsertErr } = await supabase.from('presensi_harian').upsert({
+        const { error: upsertErr } = await withTimeout(supabase.from('presensi_harian').upsert({
           tanggal: item.tanggal,
           tahun_ajaran_id: item.tahun_ajaran_id || null,
           kelas: item.kelas || '-',
@@ -385,7 +398,7 @@ export async function processPresensiQueue() {
           selfie_url: finalSelfieUrl,
           keterangan: item.keterangan || '',
           updated_at: new Date().toISOString()
-        }, { onConflict: 'tanggal,siswa_nisn,tipe' })
+        }, { onConflict: 'tanggal,siswa_nisn,tipe' }), 15000)
 
         if (upsertErr) throw upsertErr
 
@@ -451,7 +464,7 @@ export async function processPresensiQueue() {
         const targetIndex = queue.findIndex(q => q.id === item.id)
         if (targetIndex !== -1) {
           queue[targetIndex].attempts = (queue[targetIndex].attempts || 0) + 1
-          queue[targetIndex].lastError = err.message || 'Network error'
+          queue[targetIndex].lastError = friendlyError(err)
           queue[targetIndex].syncStatus = 'failed'
           queue[targetIndex].updatedAt = new Date().toISOString()
           await savePresensiQueue(queue)
@@ -474,12 +487,19 @@ export async function forceSyncPendingQueue() {
       return { success: true, count: 0, message: 'Semua data telah tersinkronisasi.' }
     }
     await processPresensiQueue()
+    // Bila worker lain sedang berjalan, tunggu sebentar lalu cek ulang
+    await new Promise(r => setTimeout(r, 1500))
     const queueAfter = await getPresensiQueue()
     const remaining = queueAfter.filter(q => q.syncStatus === 'pending' || q.syncStatus === 'failed')
     if (remaining.length === 0) {
       return { success: true, count: pending.length, message: 'Seluruh data berhasil disinkronkan ke server sekolah!' }
     } else {
-      return { success: false, count: remaining.length, message: `${remaining.length} data masih belum terkirim. Pastikan internet Anda aktif.` }
+      const reason = remaining.find(q => q.lastError)?.lastError
+      return {
+        success: false,
+        count: remaining.length,
+        message: `${remaining.length} data masih belum terkirim.${reason ? `\n\nPenyebab: ${reason}` : ''}\n\nPastikan internet aktif, lalu coba lagi. Jika tetap gagal, screenshot pesan ini ke guru/IT.`
+      }
     }
   } catch (err) {
     return { success: false, count: 0, message: err.message || 'Gagal sinkronisasi' }
