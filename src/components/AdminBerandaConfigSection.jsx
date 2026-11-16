@@ -33,6 +33,8 @@ export default function AdminBerandaConfigSection() {
   })
   const [jadwalSemester, setJadwalSemester] = useState('2')
   const [linkGrupOrtu, setLinkGrupOrtu] = useState('')
+  const [waSupportNumber, setWaSupportNumber] = useState('')
+  const [waSupportEnabled, setWaSupportEnabled] = useState(true)
   const [showTagihanOrtu, setShowTagihanOrtu] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -72,6 +74,8 @@ export default function AdminBerandaConfigSection() {
         if (item.setting_key === 'show_jadwal_ortu') newShowJadwal.ortu = item.setting_value === 'true'
         if (item.setting_key === 'jadwal_semester_aktif') loadedSemester = item.setting_value || '2'
         if (item.setting_key === 'link_grup_ortu') setLinkGrupOrtu(item.setting_value || '')
+        if (item.setting_key === 'wa_support_number') setWaSupportNumber(item.setting_value || '')
+        if (item.setting_key === 'wa_support_enabled') setWaSupportEnabled(item.setting_value !== 'false')
         if (item.setting_key === 'show_tagihan_ortu') setShowTagihanOrtu(item.setting_value === 'true')
       })
       setShowProfile(newShowProfile)
@@ -110,6 +114,8 @@ export default function AdminBerandaConfigSection() {
         { setting_key: 'show_jadwal_ortu', setting_value: showJadwal.ortu.toString() },
         { setting_key: 'jadwal_semester_aktif', setting_value: jadwalSemester },
         { setting_key: 'link_grup_ortu', setting_value: linkGrupOrtu },
+        { setting_key: 'wa_support_number', setting_value: waSupportNumber.trim() },
+        { setting_key: 'wa_support_enabled', setting_value: waSupportEnabled.toString() },
         { setting_key: 'show_tagihan_ortu', setting_value: showTagihanOrtu.toString() }
       ]
  
@@ -336,6 +342,22 @@ export default function AdminBerandaConfigSection() {
           placeholder="https://chat.whatsapp.com/..."
           className="w-full max-w-lg px-3 py-2 border rounded-2xl text-sm"
         />
+      </div>
+
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800 mb-2">💬 WhatsApp Layanan Support (Tombol Melayang di Halaman Login)</h3>
+        <p className="text-xs text-slate-500 mb-2">Nomor WhatsApp admin/support yang dituju saat pengguna menekan tombol WhatsApp melayang di halaman login (Android, iOS, dan Web). Contoh: 08123456789.</p>
+        <input
+          type="tel"
+          value={waSupportNumber}
+          onChange={(e) => setWaSupportNumber(e.target.value)}
+          placeholder="08123456789"
+          className="w-full max-w-lg px-3 py-2 border rounded-2xl text-sm"
+        />
+        <label className="flex items-center gap-2 mt-2 cursor-pointer">
+          <input type="checkbox" checked={waSupportEnabled} onChange={(e) => setWaSupportEnabled(e.target.checked)} className="w-4 h-4" />
+          <span className="text-xs font-bold text-slate-800">Tampilkan tombol WhatsApp support di halaman login</span>
+        </label>
       </div>
     </div>
   )
