@@ -53,3 +53,4 @@ CREATE TRIGGER trg_guard_staff_cbt_pengaturan
 INSERT INTO public.cbt_pengaturan (id, is_cbt_active)
 VALUES (1, FALSE)
 ON CONFLICT (id) DO NOTHING;
+

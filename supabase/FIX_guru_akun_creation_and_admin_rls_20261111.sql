@@ -497,3 +497,4 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.fn_login(TEXT, TEXT, TEXT) TO anon, authenticated;
+

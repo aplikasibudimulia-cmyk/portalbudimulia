@@ -77,3 +77,4 @@ CREATE POLICY "allow_all_mata_pelajaran" ON public.mata_pelajaran FOR ALL TO ano
 
 -- 5. RELOAD SCHEMA POSTGREST
 NOTIFY pgrst, 'reload schema';
+

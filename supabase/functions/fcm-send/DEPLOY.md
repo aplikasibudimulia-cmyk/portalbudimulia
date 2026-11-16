@@ -35,3 +35,4 @@ Lalu kirim 1 notifikasi sungguhan (mis. catat poin ke akun uji) dan pastikan HP 
 Fungsi ini membatasi isi pesan (panjang, tautan hanya internal `/...`, gambar hanya https) dan laju
 per penerima (20/menit), tetapi **belum memverifikasi siapa pengirimnya**, karena aplikasi memakai sesi
 buatan sendiri (bukan Supabase Auth). Untuk otentikasi pengirim penuh diperlukan perubahan alur login.
+

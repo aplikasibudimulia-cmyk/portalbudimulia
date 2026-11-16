@@ -63,3 +63,4 @@ DROP TRIGGER IF EXISTS trg_guard_pengajuan_poin_status ON public.pengajuan_poin_
 CREATE TRIGGER trg_guard_pengajuan_poin_status
   BEFORE INSERT OR UPDATE OR DELETE ON public.pengajuan_poin_positif
   FOR EACH ROW EXECUTE FUNCTION public.fn_guard_pengajuan_poin_status();
+

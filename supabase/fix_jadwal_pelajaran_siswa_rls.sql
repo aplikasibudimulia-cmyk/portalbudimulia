@@ -127,3 +127,4 @@ WITH CHECK (true);
 
 -- 6. RELOAD SCHEMA POSTGREST
 NOTIFY pgrst, 'reload schema';
+
