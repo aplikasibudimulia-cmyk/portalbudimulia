@@ -86,7 +86,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
     const [{ data: prData }, { data: sesi }, { data: settings }] = await Promise.all([
       supabase.from('presensi_harian').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
       supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
-      supabase.from('pengaturan_sekolah').select('setting_key, setting_value')
+      supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%')
     ])
     setPresensiHariIni(prData || [])
     const evalResult = evaluatePresensiSession({ settings: settings || [], sesiPresensiRow: sesi })
@@ -183,7 +183,7 @@ export default function SiswaDashboardWidgets({ studentData, menuTypes, onNaviga
       .catch(err => console.warn('Widget berita error:', err))
 
     // 5. Settings (Countdown & Presensi)
-    supabase.from('pengaturan_sekolah').select('setting_key, setting_value')
+    supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%')
       .then(async ({ data: settingsData }) => {
         if (!settingsData) return
 

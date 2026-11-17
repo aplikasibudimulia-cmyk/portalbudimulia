@@ -119,7 +119,7 @@ export default function DashboardEksekutifSection({ session, activeTa, onNavigat
       setTopClassesViolations(topClasses)
 
       // 9. Fetch School Settings
-      const { data: sch } = await supabase.from('pengaturan_sekolah').select('*')
+      const { data: sch } = await supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%')
       if (sch) {
         const settings = { ...schoolSettings }
         sch.forEach(s => {

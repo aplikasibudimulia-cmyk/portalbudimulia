@@ -168,7 +168,7 @@ export default function AdminPresensiConfigSection() {
 
     const todayStr = getTodayWIB()
     const [{ data: pengaturan }, { data: subsSiswa }, { data: subsOrtu }, { data: sesiToday }] = await Promise.all([
-      supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
+      supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%'),
       supabase.from('push_subscriptions').select('nisn'),
       supabase.from('push_subscriptions_ortu').select('nisn_anak'),
       supabase.from('sesi_presensi').select('tanggal, dibuka_pada').eq('tanggal', todayStr).maybeSingle()

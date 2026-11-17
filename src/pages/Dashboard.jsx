@@ -564,7 +564,7 @@ function Dashboard() {
             ? supabase.rpc('fn_get_my_student_profile', { p_nisn: data.nisn, p_akun_id: data.akun_id }).then(r => ({ data: r.data?.data || null, error: r.error }))
             : supabase.from('siswa_permanent').select('nisn, nama_lengkap, no_whatsapp, alamat, kelurahan, kecamatan, kota, tempat_lahir, tanggal_lahir, no_hp, kontak_ortu').eq('nisn', data.nisn).maybeSingle()),
           supabase.from('jenis_pengumuman').select('*').eq('visible', true).order('urutan'),
-          supabase.from('pengaturan_sekolah').select('*'),
+          supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%'),
           data.nisn ? supabase.from('foto').select('cloudinary_url, tahun_ajaran_id').eq('nisn', data.nisn) : Promise.resolve({ data: [] })
         ])
         if (resBio?.error || resSettings?.error) initHadNetworkError = true
@@ -1088,7 +1088,7 @@ function Dashboard() {
     }
 
     const handleSettingsUpdate = async () => {
-      const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*')
+      const { data: pengaturan } = await supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%')
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
         const newShowFeature = { 

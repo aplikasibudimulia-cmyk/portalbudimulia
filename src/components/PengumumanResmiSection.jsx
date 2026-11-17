@@ -73,7 +73,7 @@ export default function PengumumanResmiSection({ session, activeTa }) {
       setKelasOptions(uniqueKelas)
 
       // 4. Fetch school profile settings
-      const { data: sch } = await supabase.from('pengaturan_sekolah').select('*')
+      const { data: sch } = await supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%')
       if (sch) {
         const settings = { ...schoolSettings }
         sch.forEach(s => {

@@ -27,7 +27,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
     const todayDateStr = getTodayWIB()
     try {
       const [{ data: settings }, { data: sesi }] = await Promise.all([
-        supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
+        supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%'),
         supabase.from('sesi_presensi').select('*').eq('tanggal', todayDateStr).maybeSingle()
       ])
 
@@ -463,7 +463,7 @@ export default function PiketDashboardSection({ session, activeTa, filterKelas }
       // Fetch school info
       const { data: settings } = await supabase
         .from('pengaturan_sekolah')
-        .select('setting_key, setting_value')
+        .select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%')
       const settingsMap = {}
       if (settings) settings.forEach(s => { settingsMap[s.setting_key] = s.setting_value })
 

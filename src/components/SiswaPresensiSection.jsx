@@ -264,7 +264,7 @@ export default function SiswaPresensiSection({ studentData }) {
       const results = await Promise.allSettled([
         supabase.from('presensi_harian')
           .select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn),
-        supabase.from('pengaturan_sekolah').select('setting_key, setting_value'),
+        supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%'),
         supabase.from('sesi_presensi').select('*').eq('tanggal', today).maybeSingle(),
         supabase.from('laporan_kendala_presensi').select('*').eq('tanggal', today).eq('siswa_nisn', studentData.nisn)
       ])

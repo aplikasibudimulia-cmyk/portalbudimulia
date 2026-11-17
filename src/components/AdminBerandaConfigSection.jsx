@@ -44,7 +44,7 @@ export default function AdminBerandaConfigSection() {
   }, [])
   
   const fetchSettings = async () => {
-    const { data } = await supabase.from('pengaturan_sekolah').select('*')
+    const { data } = await supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%')
     if (data) {
       const newShowProfile = { ...showProfile }
       const newShowFeature = { ...showFeature }

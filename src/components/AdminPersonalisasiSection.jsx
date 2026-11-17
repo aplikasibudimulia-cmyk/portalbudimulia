@@ -43,7 +43,7 @@ export default function AdminPersonalisasiSection() {
   }, [])
   
   const fetchSettings = async () => {
-    const { data } = await supabase.from('pengaturan_sekolah').select('*')
+    const { data } = await supabase.from('pengaturan_sekolah').select('*').not('setting_key', 'like', 'kartu_%')
     if (data) {
       const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
       const newVerConfig = { ...appVersionConfig }

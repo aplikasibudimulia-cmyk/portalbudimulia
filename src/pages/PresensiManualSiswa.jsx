@@ -68,7 +68,7 @@ export default function PresensiManualSiswa({ isSusulanMode = false }) {
 
   // ─── Load Settings ───────────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.from('pengaturan_sekolah').select('setting_key, setting_value').then(({ data }) => {
+    supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%').then(({ data }) => {
       if (data) {
         const jam = data.find(s => s.setting_key === 'jam_batas_hadir')?.setting_value
         if (jam) setJamBatasHadir(jam)

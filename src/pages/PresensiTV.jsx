@@ -185,7 +185,7 @@ export default function PresensiTV() {
 
   // Fetch settings, theme config & active year
   const fetchPengaturan = useCallback(async () => {
-    const { data } = await supabase.from('pengaturan_sekolah').select('setting_key, setting_value')
+    const { data } = await supabase.from('pengaturan_sekolah').select('setting_key, setting_value').not('setting_key', 'like', 'kartu_%')
     if (data) {
       const map = {}
       data.forEach(d => { map[d.setting_key] = d.setting_value })
