@@ -8,38 +8,25 @@ const corsHeaders = {
 };
 
 // Service Account Firebase eBudiMulia
-const SERVICE_ACCOUNT = {
-  project_id: "ebudimulia-d1a16",
-  client_email: "firebase-adminsdk-fbsvc@ebudimulia-d1a16.iam.gserviceaccount.com",
-  private_key: `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDDl0mCzZ1sNQ2Z
-hQSo4Nr0YXnqOX8ZuGrIm7RkCI0I1sYE7drpxT0jFbm2yHGaDCviIuvCly1NDL9+
-29X/esfD20et1oGp8XKz9OV4EByv711++tTfqMxdrku04wXSb6XxcjKzoxm9/3C+
-RIwGjIRFiMOoTXxVewpG2HuArcoM8BmlvvzCPw6XfPkU1zQFqOeyqo/bHwB7jRBa
-T32OflXn1BHdKj5OnvTxFV/R6WH2XigvZuA6xXU3FnnrnGClEeDPowFxSs8fKEP5
-ZSkSkboiZZELMu4tE7zsccHGFAmQkyKiwOgbn2HyvkAhTfs6xW5DoPU65H+ZN31v
-CbyhYcZPAgMBAAECggEAXush8RkQvw0GEw0jJEOu7m8Jp7oMbPJ62+z4P52IuBPm
-mEjH9q/SCh9Gd6ZRvyUN/NnemRodkWlQ22MbOLcgj/NwFzRky5DRjfSYkcob6eOb
-d36J5Rq5RvNJaTjNQAEPwpsdcOEDopl+4M9KNvllTYtgDGLCJoemBpiTYvCz/8+A
-cgEb1WALxjt67Sk0lHJfYCK9I7PdCLGrj5kTQNYd470xryrRsl7BfFJP3Hn7VqdP
-cJvFELa8dcyELwRYJYJENEoOcULxeecj0tQuBwIv1PqdiZWw63oSvp6RXcEBjkTt
-IhsyHFPNW1ztRgVLW85pARrcR0qVtR5Q+jUidlN8SQKBgQD9yF2mSRnN0zGUPKaN
-4uQVvokaT559r9J5bxN/o0Qfq/W5YBH5mohy+NslrfKyQtVFN51UxQyPCnq7+0iL
-BIk4ERv9oCKt8GeJGV8pVUP6SUvvSyxD4PbCFCe7p7ZWy9enQLLIJYHrp3eQvnc3
-4PBakyCJ913CT2I6V0IjDCZZ5wKBgQDFTMOn3uJQme39cZL1rCoj+5NErMHT/MVW
-T11v+OySW5sTRmBgxPiw0LIPz8Mwb0jYuuKycTAql4q2zIQ3fXnxjHB2mYeinE8q
-lwBUWdOFGpShk0+fdz6o7D+j/RBGWx+P6ozp6TaEhxZWLXCtJoVMjYA6DMXddZaT
-B3BfqVCzWQKBgQCWWh25hXeHLIckBqa6SuDMTRzW/LKuTftJPFh19xlGFk+3Ksab
-dUU/sFXNRfgSSmwl3OQWM8PT/uZl9mKtEdvl3qURpszE9jewztpFF6H1Z3VYaNXp
-xR8MLnq3v43UcGHsUfVZhHcrUQUSOPVSoq5jSuUtN+NRWkycudOSBgG2owKBgQCp
-PrJPnFgSwBhw4i4oY+k6OKIZtQAH8rrs0OPcG3IEEmSyYhpmqFCUjFFSUuyi7bNV
-hurUG1gwERLCwCli2FX0qH4InqbFDMS0ShfUQ8G4WhbJi24v4sBzc0UcTQba82vd
-rlv2g0Fq6d51SkFvpq2N/4vRQAezcx0ZPrZcuQcq8QKBgHJRAYZtw5UHTHEf7Q6o
-Y+sSzIMp6gX2dlqgjZqOqnhvoWzDcEDR8KvVT2hNzdYYmyhCcVoJ86il5NTTvgs8
-oZMNeeUdWAyT+SVkwsJr8S7e7kZOubZc88OnlfJTkNQSCsfgjJ3uUVUxRZjU9HN5
-JflIBeU2B5XmmmBxHTdH/8iO
------END PRIVATE KEY-----`
-};
+// Kunci Firebase TIDAK lagi disimpan di kode. Set lewat: supabase secrets set FIREBASE_SERVICE_ACCOUNT="$(cat file.json)"
+function loadFirebaseServiceAccount() {
+  try {
+    const raw = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
+    if (raw) {
+      const j = JSON.parse(raw);
+      return {
+        project_id: j.project_id || "",
+        client_email: j.client_email || "",
+        private_key: String(j.private_key || "").replace(/\\n/g, "\n"),
+      };
+    }
+  } catch (e) {
+    console.error("FIREBASE_SERVICE_ACCOUNT tidak valid:", e);
+  }
+  console.error("FIREBASE_SERVICE_ACCOUNT belum diatur di Supabase Secrets.");
+  return { project_id: "", client_email: "", private_key: "" };
+}
+const SERVICE_ACCOUNT = loadFirebaseServiceAccount();
 
 function base64UrlEncode(str: string | Uint8Array): string {
   let binary = "";

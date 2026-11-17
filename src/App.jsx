@@ -15,8 +15,8 @@ import { AdminRoute, GuruRoute, StudentRoute, ParentRoute } from './components/P
 // (mencegah halaman "berkedip" lalu kembali masuk ke dashboard).
 if (typeof window !== 'undefined' && !window.__ebmLogoutGuardInstalled) {
   window.__ebmLogoutGuardInstalled = true
-  const origSetItem = Storage.prototype.setItem
-  Storage.prototype.setItem = function (key, value) {
+  const origSetItem = window.Storage.prototype.setItem
+  window.Storage.prototype.setItem = function (key, value) {
     if (window.__ebudimuliaExplicitLogout && /^(siswa_session|guru_session|orangtua_session|ebm_session_token)$/.test(key)) return
     return origSetItem.call(this, key, value)
   }

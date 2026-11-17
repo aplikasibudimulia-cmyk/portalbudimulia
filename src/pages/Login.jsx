@@ -501,6 +501,16 @@ function Login() {
     if (localStorage.getItem('orangtua_session')) navigate('/dashboard-orang-tua')
   }, [navigate])
 
+  // Preload chunk halaman tujuan saat pengguna berada di layar Login agar transisi setelah klik "Masuk" instan (0ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loginRole === 'Siswa') import('./Dashboard').catch(() => {})
+      else if (loginRole === 'Orang Tua') import('./DashboardOrangTua').catch(() => {})
+      else import('./DashboardGuru').catch(() => {})
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [loginRole])
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoading(true)

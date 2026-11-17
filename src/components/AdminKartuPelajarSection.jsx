@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient'
 import KartuPelajarCard, { CARD_THEMES, formatAlamatLengkap, parseKetentuanList, serializeKetentuanList, parseMisiList, serializeMisiList } from './KartuPelajarCard'
 import { exportCardAsPdf, exportCardAsImage, exportBulkCardsAsPdf } from '../utils/kartuPelajarExporter'
 import { downloadWorkbook } from '../utils/fileDownloader'
+import { uploadSchoolImageWithFallback, optimizeStoredSchoolAssets } from '../utils/schoolAssetUploader'
 import { Capacitor } from '@capacitor/core'
 import { downloadStudentTemplateExcel, combineAlamatAndRtRw, cleanPhone, toTitleCase, parseDateToIso, formatAlamatJalan, extractRtRwFromRow } from '../utils/studentExcelHelper'
 
@@ -995,18 +996,39 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
   }
 
   // Handle upload gambar TTD atau Cap
-  const handleUploadAsset = (key, file) => {
+  const handleUploadAsset = async (key, file) => {
     if (!file) return
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Ukuran file maksimal 2 MB.')
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Ukuran file maksimal 5 MB.')
       return
     }
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const base64Url = e.target.result
-      setSettings(prev => ({ ...prev, [key]: base64Url }))
+    // Unggah ke Cloudinary (hanya simpan URL pendek di database); jika gagal pakai gambar terkompresi
+    const { url } = await uploadSchoolImageWithFallback(file)
+    if (!url) {
+      alert('Gagal memproses gambar. Coba file lain.')
+      return
     }
-    reader.readAsDataURL(file)
+    setSettings(prev => ({ ...prev, [key]: url }))
+  }
+
+  // Pindahkan cap/TTD lama (base64 berat) ke Cloudinary agar aplikasi lebih ringan
+  const [optimizingAssets, setOptimizingAssets] = useState(false)
+  const hasHeavyAssets = [settings.kartu_cap_url, settings.kartu_ttd_url, settings.kartu_logo_url].some(v => typeof v === 'string' && v.startsWith('data:image'))
+  const handleOptimizeAssets = async () => {
+    if (optimizingAssets) return
+    setOptimizingAssets(true)
+    try {
+      const res = await optimizeStoredSchoolAssets()
+      if (res.urls?.kartu_cap_url) setSettings(prev => ({ ...prev, kartu_cap_url: res.urls.kartu_cap_url }))
+      if (res.urls?.kartu_ttd_url) setSettings(prev => ({ ...prev, kartu_ttd_url: res.urls.kartu_ttd_url }))
+      alert(res.failed > 0
+        ? `Selesai sebagian: ${res.migrated} dioptimalkan, ${res.failed} gagal (data lama tetap aman).`
+        : `Berhasil! ${res.migrated} data gambar dipindahkan ke penyimpanan ringan.`)
+    } catch (err) {
+      alert('Gagal mengoptimalkan: ' + (err?.message || err))
+    } finally {
+      setOptimizingAssets(false)
+    }
   }
 
   // -------------------------------------------------------------
@@ -2612,6 +2634,17 @@ export default function AdminKartuPelajarSection({ students = [], activeTa = nul
                     />
                   </label>
                 </div>
+
+                {hasHeavyAssets && (
+                  <button
+                    type="button"
+                    onClick={handleOptimizeAssets}
+                    disabled={optimizingAssets}
+                    className="w-full p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {optimizingAssets ? 'Mengoptimalkan...' : '⚡ Optimalkan gambar cap/TTD tersimpan (membuat aplikasi lebih cepat)'}
+                  </button>
+                )}
 
                 {/* Upload Tanda Tangan */}
                 <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">

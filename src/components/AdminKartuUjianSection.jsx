@@ -23,6 +23,7 @@ import {
   downloadExamAccountTemplateExcel,
   parseExamAccountExcel
 } from '../utils/kartuUjianExporter'
+import { uploadSchoolImageWithFallback, optimizeStoredSchoolAssets } from '../utils/schoolAssetUploader'
 
 // Pilihan item untuk susunan kode peserta ujian
 const CODE_PART_OPTIONS = [
@@ -1274,25 +1275,12 @@ export default function AdminKartuUjianSection({
     updateOffsetField(activeMeta.id, 'y', (currentOffset.y || 0) + dy)
   }
 
-  // Upload aset tanda tangan atau cap sekolah langsung dari studio editor
+  // Upload aset tanda tangan atau cap sekolah langsung dari studio editor (Supabase Storage + Cloudinary fallback)
   const handleUploadSchoolAsset = async (field, file) => {
     if (!file) return
-    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'unsigned_budimulia'
-
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('upload_preset', uploadPreset)
-
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
-        method: 'POST',
-        body: formData
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        const url = data.secure_url
+      const { url } = await uploadSchoolImageWithFallback(file, field)
+      if (url) {
         if (field === 'kartu_ttd_url' || field === 'ttdUrl') {
           updateSettingField('ttdUrl', url)
           await supabase.from('pengaturan_sekolah').upsert({ setting_key: 'kartu_ttd_url', setting_value: url }, { onConflict: 'setting_key' })
@@ -1302,7 +1290,7 @@ export default function AdminKartuUjianSection({
         }
         alert('File berhasil diunggah dan disimpan ke sistem!')
       } else {
-        alert('Gagal mengunggah file ke Cloudinary.')
+        alert('Gagal mengunggah file.')
       }
     } catch (err) {
       console.error(err)

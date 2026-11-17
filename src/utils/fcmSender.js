@@ -86,8 +86,7 @@ export async function sendFCMPushNotification({
     })
 
     if (r.fallback) {
-      const legacy = await import('./fcmSenderLegacy')
-      return legacy.sendFCMPushNotification({ nisn, role, title, body, message, image, targetMenu, data })
+      return { success: false, error: 'Server notifikasi (fcm-send) belum aktif' }
     }
     return toResult(r)
   } catch (err) {
@@ -121,8 +120,7 @@ export async function sendFCMPushToWaliKelas({
     })
 
     if (r.fallback) {
-      const legacy = await import('./fcmSenderLegacy')
-      return legacy.sendFCMPushToWaliKelas({ kelas, tahunAjaranId, title, body, message, data })
+      return { success: false, error: 'Server notifikasi (fcm-send) belum aktif' }
     }
     return toResult(r)
   } catch (err) {

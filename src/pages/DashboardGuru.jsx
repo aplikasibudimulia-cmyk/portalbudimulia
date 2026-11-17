@@ -743,7 +743,15 @@ export default function DashboardGuru() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { requestConfirm, ConfirmModalComponent } = useConfirm()
-  const [session, setSession] = useState(null)
+  const [session, setSession] = useState(() => {
+    try {
+      const raw = localStorage.getItem('guru_session')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })
+  const lastFetchTimeRef = useRef(0)
   const [serverVerifiedAdmin, setServerVerifiedAdmin] = useState(false)
   const activeMenu = searchParams.get('menu') || 'dashboard'
   
@@ -865,7 +873,13 @@ export default function DashboardGuru() {
   })
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncToast, setSyncToast] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => {
+    try {
+      return !localStorage.getItem('guru_session')
+    } catch {
+      return true
+    }
+  })
   const [collapsedGroups, setCollapsedGroups] = useState({
     manajemenPengguna: false,
     akademikData: false,
@@ -1471,6 +1485,7 @@ export default function DashboardGuru() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        if (Date.now() - lastFetchTimeRef.current < 90000) return
         const rawSession = localStorage.getItem('guru_session')
         if (rawSession) {
           let parsed = null
@@ -1510,16 +1525,40 @@ export default function DashboardGuru() {
   }
 
   const fetchData = async (userData) => {
-    // 0. Refresh Guru Session Data with resilient fallback
+    lastFetchTimeRef.current = Date.now()
+    // 0. Refresh Guru Session Data + Pengaturan + Tahun Ajaran Aktif secara paralel (1x round-trip)
     let freshGuru = null
+    let schCalVal = null
+    let semVal = null
+    let activeTaData = null
     try {
-      const { data, error } = await supabase
-        .from('guru')
-        .select('id, nama_guru, kode, foto_url, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_bk(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
-        .eq('id', userData.id)
-        .single()
-      if (!error && data) {
-        freshGuru = data
+      const [guruRes, settingsRes, taRes] = await Promise.all([
+        supabase
+          .from('guru')
+          .select('id, nama_guru, kode, foto_url, guru_role(role_id, roles(nama)), guru_kelas(kelas, tahun_ajaran_id), guru_bk(kelas, tahun_ajaran_id), guru_mapel(kelas, tahun_ajaran_id, mata_pelajaran_id, mata_pelajaran(nama))')
+          .eq('id', userData.id)
+          .single(),
+        supabase
+          .from('pengaturan_sekolah')
+          .select('setting_key, setting_value')
+          .in('setting_key', ['show_calendar_guru', 'jadwal_semester_aktif']),
+        supabase
+          .from('tahun_ajaran')
+          .select('id, nama')
+          .eq('is_aktif', true)
+          .single()
+      ])
+      if (!guruRes.error && guruRes.data) {
+        freshGuru = guruRes.data
+      }
+      if (Array.isArray(settingsRes.data)) {
+        settingsRes.data.forEach(s => {
+          if (s.setting_key === 'show_calendar_guru') schCalVal = s.setting_value
+          if (s.setting_key === 'jadwal_semester_aktif') semVal = s.setting_value
+        })
+      }
+      if (taRes.data) {
+        activeTaData = taRes.data
       }
     } catch (e) {
       console.warn('Refresh guru error, attempting fallback:', e)
@@ -1586,6 +1625,7 @@ export default function DashboardGuru() {
         : (userData.mapels || [])
     }
     setSession(activeSession)
+    setLoading(false)
     localStorage.setItem('guru_session', JSON.stringify(activeSession))
     if (activeSession?.id) {
       initNativePushNotifications({ nisn: String(activeSession.id), role: 'Guru' })
@@ -1596,13 +1636,9 @@ export default function DashboardGuru() {
       setSelectedKelas(prev => prev || activeSession.kelas[0].kelas)
     }
 
-    // Fetch Kalender Akademik visibility settings for Guru
-    const { data: sch } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'show_calendar_guru').maybeSingle()
-    setShowCalendarGuru(sch ? sch.setting_value !== 'false' : true)
-
-    // Fetch active schedule semester config
-    const { data: semData } = await supabase.from('pengaturan_sekolah').select('setting_value').eq('setting_key', 'jadwal_semester_aktif').maybeSingle()
-    setJadwalSemester(semData ? semData.setting_value || '2' : '2')
+    setShowCalendarGuru(schCalVal !== null ? schCalVal !== 'false' : true)
+    const effectiveSem = semVal || '2'
+    setJadwalSemester(effectiveSem)
 
     // 1. Fetch features (cache-first + background sync)
     let currentFitur = new Set(fitur)
@@ -1633,8 +1669,11 @@ export default function DashboardGuru() {
       }
     }
 
-    // 2. Fetch Active Tahun Ajaran
-    const { data: activeTaData } = await supabase.from('tahun_ajaran').select('id, nama').eq('is_aktif', true).single()
+    // 2. Set Active Tahun Ajaran (dari hasil paralel di atas, atau fallback bila gagal)
+    if (!activeTaData) {
+      const { data: fallbackTa } = await supabase.from('tahun_ajaran').select('id, nama').eq('is_aktif', true).single()
+      activeTaData = fallbackTa
+    }
     if (activeTaData) {
       setActiveTa(prev => (prev?.id === activeTaData.id && prev?.nama === activeTaData.nama) ? prev : activeTaData)
     }
@@ -1689,19 +1728,26 @@ export default function DashboardGuru() {
         }
       }
 
-      // Merge with siswa_permanent for accurate phone & parent info
-      const { data: permStudents } = await supabase.from('siswa_permanent').select('nisn, nama_ortu, no_hp_ortu, no_whatsapp')
-      if (permStudents) {
-        const permMap = new Map(permStudents.map(p => [String(p.nisn || '').trim(), p]))
-        allData.forEach(s => {
-          const nisnStr = String(s.nisn || s.id || '').trim()
-          const perm = permMap.get(nisnStr)
-          if (perm) {
-            if (perm.no_hp_ortu) s.no_hp_ortu = perm.no_hp_ortu
-            if (perm.nama_ortu) s.nama_ortu = perm.nama_ortu
-            if (perm.no_whatsapp) s.no_whatsapp = perm.no_whatsapp
-          }
-        })
+      // Hanya ambil data kontak & foto untuk siswa yang diampu guru ini (bukan seluruh sekolah) secara paralel
+      const assignedNisns = Array.from(new Set(allData.map(s => String(s.nisn || s.id || '').trim()).filter(Boolean)))
+      if (assignedNisns.length > 0) {
+        const [{ data: permStudents }, { data: fotoData }] = await Promise.all([
+          supabase.from('siswa_permanent').select('nisn, nama_ortu, no_hp_ortu, no_whatsapp').in('nisn', assignedNisns),
+          supabase.from('foto').select('nisn, cloudinary_url, tahun_ajaran_id').in('nisn', assignedNisns)
+        ])
+        if (permStudents) {
+          const permMap = new Map(permStudents.map(p => [String(p.nisn || '').trim(), p]))
+          allData.forEach(s => {
+            const nisnStr = String(s.nisn || s.id || '').trim()
+            const perm = permMap.get(nisnStr)
+            if (perm) {
+              if (perm.no_hp_ortu) s.no_hp_ortu = perm.no_hp_ortu
+              if (perm.nama_ortu) s.nama_ortu = perm.nama_ortu
+              if (perm.no_whatsapp) s.no_whatsapp = perm.no_whatsapp
+            }
+          })
+        }
+        if (fotoData) setFotos(fotoData)
       }
 
       setStudents(allData)
@@ -1713,12 +1759,9 @@ export default function DashboardGuru() {
       setWaliStudents(allData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeWaliClasses.includes(s.kelas)))
       setMapelStudents(allData.filter(s => (activeTaData && s.tahun_ajaran_id == activeTaData.id) && activeMapelClasses.includes(s.kelas)))
 
-      const { data: fotoData } = await supabase.from('foto').select('*')
-      if (fotoData) setFotos(fotoData)
-
       // A. Fetch Jadwal Mengajar Hari Ini (Filter Semester Aktif)
       const hariIni = getDayNameWIB()
-      const activeSemNum = parseInt(jadwalSemester) || 2
+      const activeSemNum = parseInt(effectiveSem) || 2
       try {
         let jDataQuery = supabase
           .from('jadwal_pelajaran')

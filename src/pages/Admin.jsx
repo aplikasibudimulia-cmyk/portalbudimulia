@@ -2081,6 +2081,10 @@ function Admin() {
       fetchTahunAjarans()
       fetchStudents()
       fetchAnnouncement()
+      // Otomatis migrasikan gambar cap/TTD base64 berat ke Supabase Storage di latar belakang
+      import('../utils/schoolAssetUploader')
+        .then(m => m.optimizeStoredSchoolAssets())
+        .catch(() => {})
     })
     return () => subscription.unsubscribe()
   }, [navigate])
