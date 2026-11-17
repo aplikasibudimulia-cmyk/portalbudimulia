@@ -31,6 +31,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_token TEXT;
+  v_sess_foreign_id TEXT;
 BEGIN
   IF p_nisn IS NULL OR BTRIM(p_nisn) = '' THEN
     RETURN FALSE;
@@ -45,13 +46,31 @@ BEGIN
     RETURN FALSE;
   END IF;
 
-  RETURN EXISTS (
-    SELECT 1
-    FROM public.app_sessions s
-    WHERE s.session_token = v_token
-      AND s.expires_at > now()
-      AND s.foreign_id = p_nisn
-  );
+  SELECT s.foreign_id INTO v_sess_foreign_id
+  FROM public.app_sessions s
+  WHERE s.session_token = v_token
+    AND s.expires_at > now()
+  LIMIT 1;
+
+  IF v_sess_foreign_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- 1. Cocok langsung (foreign_id sesi = nisn target)
+  IF LOWER(TRIM(v_sess_foreign_id)) = LOWER(TRIM(p_nisn)) THEN
+    RETURN TRUE;
+  END IF;
+
+  -- 2. Cocok via akun_pengguna (jika satu NISN dan yang lain username siswa)
+  IF EXISTS (
+    SELECT 1 FROM public.akun_pengguna ap
+    WHERE (LOWER(TRIM(ap.foreign_id)) = LOWER(TRIM(v_sess_foreign_id)) OR LOWER(TRIM(ap.username)) = LOWER(TRIM(v_sess_foreign_id)))
+      AND (LOWER(TRIM(ap.foreign_id)) = LOWER(TRIM(p_nisn)) OR LOWER(TRIM(ap.username)) = LOWER(TRIM(p_nisn)))
+  ) THEN
+    RETURN TRUE;
+  END IF;
+
+  RETURN FALSE;
 END;
 $$;
 
