@@ -78,7 +78,14 @@ function Dashboard() {
   // Pengecekan Hak Akses CBT (Mode Rilis Publik vs Whitelist Tester)
   const [canAccessCbt, setCanAccessCbt] = useState(false)
 
-  const [menuTypes, setMenuTypes] = useState([])
+  const [menuTypes, setMenuTypes] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_menu_types')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
   
   // Sidebar state for mobile and desktop collapse
@@ -423,9 +430,23 @@ function Dashboard() {
   const [unreadNotifCount, setUnreadNotifCount] = useState(0)
   const [unreadPoinNotifCount, setUnreadPoinNotifCount] = useState(0)
 
-  // State Poin Siswa di Beranda
-  const [berandaPointRecords, setBerandaPointRecords] = useState([])
-  const [berandaStudentPoints, setBerandaStudentPoints] = useState(null)
+  // State Poin Siswa di Beranda (Cache Stale-While-Revalidate untuk render 0ms)
+  const [berandaPointRecords, setBerandaPointRecords] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_beranda_point_records')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
+  const [berandaStudentPoints, setBerandaStudentPoints] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_beranda_student_points')
+      return cached ? JSON.parse(cached) : null
+    } catch {
+      return null
+    }
+  })
   const [loadingBerandaPoints, setLoadingBerandaPoints] = useState(false)
   const [berandaPointTab, setBerandaPointTab] = useState('semua') // 'semua' | 'positif' | 'negatif'
 
@@ -452,19 +473,62 @@ function Dashboard() {
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [pengumuman, setPengumuman] = useState('')
   const [loggedTypes, setLoggedTypes] = useState([])
-  const [showFeatureConfig, setShowFeatureConfig] = useState({
-    presensi: true,
-    nilai: true,
-    poin: true,
-    poinTotal: true,
-    poinNegatif: true,
-    poinPositif: true,
-    poinLeaderboard: true,
-    poinTataTertib: true,
-    poinKatalog: true,
-    jadwal: true,
-    jadwalSemester: '2',
-    kartuPelajar: true
+  const [showFeatureConfig, setShowFeatureConfig] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_pengaturan_sekolah')
+      if (cached) {
+        const list = JSON.parse(cached)
+        const cfg = {
+          presensi: true,
+          nilai: true,
+          poin: true,
+          poinTotal: true,
+          poinNegatif: true,
+          poinPositif: true,
+          poinLeaderboard: true,
+          poinTataTertib: true,
+          poinKatalog: true,
+          jadwal: true,
+          jadwalSemester: '2',
+          kartuPelajar: true,
+          kalender: true,
+          tabunganOrtuSiswa: true,
+          tabunganWaliKelas: true
+        }
+        list.forEach(p => {
+          if (p.setting_key === 'show_feature_presensi') cfg.presensi = p.setting_value === 'true'
+          if (p.setting_key === 'show_feature_nilai') cfg.nilai = p.setting_value === 'true'
+          if (p.setting_key === 'show_feature_poin') cfg.poin = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_ortu_siswa') cfg.tabunganOrtuSiswa = p.setting_value === 'true'
+          if (p.setting_key === 'show_tabungan_wali_kelas') cfg.tabunganWaliKelas = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_total') cfg.poinTotal = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_negatif') cfg.poinNegatif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_positif') cfg.poinPositif = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_leaderboard') cfg.poinLeaderboard = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_tata_tertib') cfg.poinTataTertib = p.setting_value === 'true'
+          if (p.setting_key === 'show_poin_katalog') cfg.poinKatalog = p.setting_value === 'true'
+          if (p.setting_key === 'show_calendar_siswa') cfg.kalender = p.setting_value === 'true'
+          if (p.setting_key === 'show_jadwal_siswa') cfg.jadwal = p.setting_value === 'true'
+          if (p.setting_key === 'jadwal_semester_aktif') cfg.jadwalSemester = p.setting_value || '2'
+          if (p.setting_key === 'show_feature_kartu_pelajar') cfg.kartuPelajar = p.setting_value === 'true'
+        })
+        return cfg
+      }
+    } catch {}
+    return {
+      presensi: true,
+      nilai: true,
+      poin: true,
+      poinTotal: true,
+      poinNegatif: true,
+      poinPositif: true,
+      poinLeaderboard: true,
+      poinTataTertib: true,
+      poinKatalog: true,
+      jadwal: true,
+      jadwalSemester: '2',
+      kartuPelajar: true
+    }
   })
   const [recentNotifications, setRecentNotifications] = useState([])
   
@@ -512,13 +576,30 @@ function Dashboard() {
   const [photoUrls, setPhotoUrls] = useState([])
   const [photoIndex, setPhotoIndex] = useState(0)
 
-  // Global Profile Visibility State
-  const [showProfileConfig, setShowProfileConfig] = useState({
-    foto: true,
-    kelas: true,
-    nisn: true,
-    nipd: true,
-    tahun_ajaran: true
+  // Global Profile Visibility State (Cache Stale-While-Revalidate)
+  const [showProfileConfig, setShowProfileConfig] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_pengaturan_sekolah')
+      if (cached) {
+        const list = JSON.parse(cached)
+        const cfg = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }
+        list.forEach(p => {
+          if (p.setting_key === 'show_profile_foto') cfg.foto = p.setting_value === 'true'
+          if (p.setting_key === 'show_profile_kelas') cfg.kelas = p.setting_value === 'true'
+          if (p.setting_key === 'show_profile_nisn') cfg.nisn = p.setting_value === 'true'
+          if (p.setting_key === 'show_profile_nipd') cfg.nipd = p.setting_value === 'true'
+          if (p.setting_key === 'show_profile_tahun_ajaran') cfg.tahun_ajaran = p.setting_value === 'true'
+        })
+        return cfg
+      }
+    } catch {}
+    return {
+      foto: true,
+      kelas: true,
+      nisn: true,
+      nipd: true,
+      tahun_ajaran: true
+    }
   })
 
   const init = useCallback(async () => {
@@ -907,6 +988,7 @@ function Dashboard() {
       }
       const { data: ptData } = await ptQuery.order('semester', { ascending: false }).limit(1).maybeSingle()
       setBerandaStudentPoints(ptData || null)
+      try { localStorage.setItem('ebm_cached_beranda_student_points', JSON.stringify(ptData || null)) } catch {}
 
       // 2. Ambil catatan kasus poin positif & negatif
       let recQuery = supabase
@@ -923,6 +1005,7 @@ function Dashboard() {
         .order('created_at', { ascending: false })
 
       setBerandaPointRecords(recData || [])
+      try { localStorage.setItem('ebm_cached_beranda_point_records', JSON.stringify(recData || [])) } catch {}
     } catch (err) {
       console.error('Error fetching beranda point records:', err)
     } finally {

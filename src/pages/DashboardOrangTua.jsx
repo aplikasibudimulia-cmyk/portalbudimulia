@@ -50,7 +50,14 @@ function DashboardOrangTua() {
     const raw = localStorage.getItem('orangtua_session') || localStorage.getItem('siswa_session')
     return !raw
   })
-  const [menuTypes, setMenuTypes] = useState([])
+  const [menuTypes, setMenuTypes] = useState(() => {
+    try {
+      const cached = localStorage.getItem('ebm_cached_menu_types_ortu')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
 
   useEffect(() => {
@@ -456,6 +463,7 @@ function DashboardOrangTua() {
       })
 
       setMenuTypes(applicableTypes)
+      try { localStorage.setItem('ebm_cached_menu_types_ortu', JSON.stringify(applicableTypes)) } catch {}
       
       if (pengaturan) {
         const newShowProfile = { foto: true, kelas: true, nisn: true, nipd: true, tahun_ajaran: true }

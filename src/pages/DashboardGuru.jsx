@@ -945,10 +945,24 @@ export default function DashboardGuru() {
   const [students, setStudents] = useState([])
   const [waliStudents, setWaliStudents] = useState([])
   const [mapelStudents, setMapelStudents] = useState([])
-  const [menuTypes, setMenuTypes] = useState([])
+  const [menuTypes, setMenuTypes] = useState(() => {
+    try {
+      const cached = localStorage.getItem('guru_cached_menu_types')
+      return cached ? JSON.parse(cached) : []
+    } catch {
+      return []
+    }
+  })
   const [fotos, setFotos] = useState([])
   const [selectedStudent, setSelectedStudent] = useState(null)
-  const [activeTa, setActiveTa] = useState(null)
+  const [activeTa, setActiveTa] = useState(() => {
+    try {
+      const cached = localStorage.getItem('guru_cached_tahun_ajaran')
+      return cached ? JSON.parse(cached) : null
+    } catch {
+      return null
+    }
+  })
   const [siswaSearch, setSiswaSearch] = useState('')
 
   // Dashboard Guru Extra States
@@ -1559,6 +1573,7 @@ export default function DashboardGuru() {
       }
       if (taRes.data) {
         activeTaData = taRes.data
+        try { localStorage.setItem('guru_cached_tahun_ajaran', JSON.stringify(taRes.data)) } catch {}
       }
     } catch (e) {
       console.warn('Refresh guru error, attempting fallback:', e)
@@ -1983,7 +1998,10 @@ export default function DashboardGuru() {
     // 4. Fetch Jenis Pengumuman (if has permission)
     if (currentFitur.has('lihat_dokumen') || currentFitur.has('kelola_pengumuman')) {
       const { data: mTypes } = await supabase.from('jenis_pengumuman').select('*').neq('visible_guru', false).order('urutan')
-      if (mTypes) setMenuTypes(mTypes)
+      if (mTypes) {
+        setMenuTypes(mTypes)
+        try { localStorage.setItem('guru_cached_menu_types', JSON.stringify(mTypes)) } catch {}
+      }
     }
 
     setLoading(false)

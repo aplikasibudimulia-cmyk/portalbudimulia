@@ -211,6 +211,21 @@ function CbtLockSafetyWatcher() {
   return null
 }
 
+// Prefetch instan modul rute aktif di latar belakang (0ms delay pada start dingin)
+if (typeof window !== 'undefined') {
+  try {
+    if (localStorage.getItem('guru_session')) {
+      import('./pages/DashboardGuru')
+    } else if (localStorage.getItem('siswa_session')) {
+      import('./pages/Dashboard')
+    } else if (localStorage.getItem('orangtua_session')) {
+      import('./pages/DashboardOrangTua')
+    } else {
+      import('./pages/Login')
+    }
+  } catch {}
+}
+
 // Route-based Code Splitting (menghemat ukuran unduh awal aplikasi hingga 80%)
 const Login = lazyRetry(() => import('./pages/Login'))
 const Dashboard = lazyRetry(() => import('./pages/Dashboard'))
