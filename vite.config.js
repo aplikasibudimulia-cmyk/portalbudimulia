@@ -221,13 +221,6 @@ export default defineConfig({
     target: 'es2018',
     rollupOptions: {
       output: {
-        manualChunks: {
-          'pdf-lib': ['react-pdf', 'pdfjs-dist'],
-          'vendor-excel': ['exceljs'],
-          'vendor-pdf': ['jspdf'],
-          'vendor-canvas': ['html2canvas'],
-          'vendor-xlsx': ['xlsx'],
-        },
       },
     },
   },
