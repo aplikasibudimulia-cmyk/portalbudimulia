@@ -1204,8 +1204,7 @@ function Dashboard() {
     // 1. Bersihkan tanda sesi seketika secara sinkron tanpa menunggu server/jaringan
     window.__ebudimuliaExplicitLogout = true
     try {
-      localStorage.removeItem('siswa_session')
-      localStorage.removeItem('ebm_session_token')
+      ['siswa_session','guru_session','orangtua_session','ebm_session_token'].forEach(k => localStorage.removeItem(k))
       sessionStorage.clear()
     } catch {}
 
@@ -1215,7 +1214,7 @@ function Dashboard() {
     } catch {}
 
     // 3. Pindah langsung seketika ke halaman login (kecepatan 0ms)
-    window.location.replace('/login')
+    window.location.replace('/login?logout=1')
   }
 
   const handleChangePassword = async (e) => {

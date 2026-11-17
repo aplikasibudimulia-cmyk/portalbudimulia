@@ -11,6 +11,17 @@ import AppUpdateModal from './components/AppUpdateModal'
 import SecurityInterventionModal from './components/SecurityInterventionModal'
 import { AdminRoute, GuruRoute, StudentRoute, ParentRoute } from './components/ProtectedRoute'
 
+// Setelah tombol Keluar ditekan, blokir penulisan ulang sesi oleh proses async yang masih berjalan
+// (mencegah halaman "berkedip" lalu kembali masuk ke dashboard).
+if (typeof window !== 'undefined' && !window.__ebmLogoutGuardInstalled) {
+  window.__ebmLogoutGuardInstalled = true
+  const origSetItem = Storage.prototype.setItem
+  Storage.prototype.setItem = function (key, value) {
+    if (window.__ebudimuliaExplicitLogout && /^(siswa_session|guru_session|orangtua_session|ebm_session_token)$/.test(key)) return
+    return origSetItem.call(this, key, value)
+  }
+}
+
 const CbtLockTask = Capacitor.Plugins?.CbtLockTask || registerPlugin('CbtLockTask')
 
 /**

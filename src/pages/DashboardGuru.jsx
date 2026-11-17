@@ -2124,8 +2124,7 @@ export default function DashboardGuru() {
   const handleLogout = () => {
     window.__ebudimuliaExplicitLogout = true
     try {
-      localStorage.removeItem('guru_session')
-      localStorage.removeItem('ebm_session_token')
+      ['siswa_session','guru_session','orangtua_session','ebm_session_token'].forEach(k => localStorage.removeItem(k))
       sessionStorage.clear()
     } catch {}
 
@@ -2133,7 +2132,7 @@ export default function DashboardGuru() {
       supabase.auth.signOut().catch(() => {})
     } catch {}
 
-    window.location.replace('/login')
+    window.location.replace('/login?logout=1')
   }
 
   const handleResetKodeAkses = async () => {

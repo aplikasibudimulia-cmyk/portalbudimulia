@@ -2713,7 +2713,7 @@ function Admin() {
   const handleLogout = () => {
     window.__ebudimuliaExplicitLogout = true
     try {
-      localStorage.removeItem('ebm_session_token')
+      ['siswa_session','guru_session','orangtua_session','ebm_session_token'].forEach(k => localStorage.removeItem(k))
       sessionStorage.clear()
     } catch {}
 

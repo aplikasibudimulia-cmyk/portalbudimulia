@@ -488,6 +488,11 @@ function Login() {
       return
     }
 
+    if (params.get('logout') === '1') {
+      try { ['siswa_session','guru_session','orangtua_session','ebm_session_token'].forEach(k => localStorage.removeItem(k)) } catch {}
+      window.history.replaceState({}, '', '/login')
+      return
+    }
     if (params.get('add_account') === 'true' || params.get('switch') === 'true') {
       return
     }

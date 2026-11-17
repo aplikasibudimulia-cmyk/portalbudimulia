@@ -972,9 +972,7 @@ function DashboardOrangTua() {
   const handleLogout = () => {
     window.__ebudimuliaExplicitLogout = true
     try {
-      localStorage.removeItem('orangtua_session')
-      localStorage.removeItem('siswa_session')
-      localStorage.removeItem('ebm_session_token')
+      ['siswa_session','guru_session','orangtua_session','ebm_session_token'].forEach(k => localStorage.removeItem(k))
       sessionStorage.clear()
     } catch {}
 
@@ -982,7 +980,7 @@ function DashboardOrangTua() {
       supabase.auth.signOut().catch(() => {})
     } catch {}
 
-    window.location.replace('/login')
+    window.location.replace('/login?logout=1')
   }
 
   const handleChangePassword = async (e) => {
