@@ -30,7 +30,7 @@ export default function ValidasiKartuPelajar() {
         const { data } = await supabase
           .from('pengaturan_sekolah')
           .select('setting_key, setting_value')
-          .like('setting_key', 'kartu_%')
+          .like('setting_key', 'kartu_%').not('setting_key', 'like', 'kartu_ujian_%')
 
         if (data && data.length > 0) {
           const map = {}
