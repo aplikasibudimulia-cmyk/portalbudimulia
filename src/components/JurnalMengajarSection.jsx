@@ -83,6 +83,51 @@ function getDefaultSlots(hari) {
   ]
 }
 
+// Preset Metode / Kegiatan Pembelajaran untuk checklist cepat guru
+export const METODE_PRESETS = [
+  'Ceramah Interaktif',
+  'Tanya Jawab',
+  'Diskusi Kelompok',
+  'Latihan Soal / Mandiri',
+  'Presentasi Siswa',
+  'Praktikum / Eksperimen',
+  'Problem-Based Learning (PBL)',
+  'Project-Based Learning (PjBL)',
+  'Literasi & Refleksi',
+  'Kuis / Asesmen Formatif'
+]
+
+function parseKegiatan(kegiatanStr = '') {
+  if (!kegiatanStr) return { selected: [], custom: '', hasCustom: false }
+  const rawParts = kegiatanStr.split(',').map(s => s.trim()).filter(Boolean)
+  const selected = []
+  const customParts = []
+
+  for (const part of rawParts) {
+    const matched = METODE_PRESETS.find(p => p.toLowerCase() === part.toLowerCase())
+    if (matched) {
+      if (!selected.includes(matched)) selected.push(matched)
+    } else {
+      customParts.push(part)
+    }
+  }
+
+  const custom = customParts.join(', ')
+  return {
+    selected,
+    custom,
+    hasCustom: custom.length > 0
+  }
+}
+
+function buildKegiatan(selected = [], hasCustom = false, custom = '') {
+  const list = [...selected]
+  if (hasCustom && custom && custom.trim()) {
+    list.push(custom.trim())
+  }
+  return list.join(', ')
+}
+
 function deduplicateJadwalRows(rows) {
   const map = new Map()
   for (const r of rows) {
@@ -167,6 +212,11 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
   const [availableTps, setAvailableTps] = useState([])
   const [loadingTps, setLoadingTps] = useState(false)
   const [selectedTpId, setSelectedTpId] = useState('')
+
+  // Kegiatan / Metode Pembelajaran (Checklist Multi-Select & Custom)
+  const [selectedMetode, setSelectedMetode] = useState([])
+  const [customMetode, setCustomMetode] = useState('')
+  const [hasCustomMetode, setHasCustomMetode] = useState(false)
 
   // Kehadiran siswa (sinkron presensi harian)
   const [classStudents, setClassStudents] = useState([]) // [{ nisn, nama, presensi }]
@@ -569,12 +619,42 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
     setSelectedTpId(tpId)
     const tp = availableTps.find(t => t.id === tpId)
     if (!tp) return
+    const defaultKegiatan = form.kegiatan || 'Tanya Jawab, Diskusi Kelompok, Latihan Soal / Mandiri'
+    const parsed = parseKegiatan(defaultKegiatan)
+    setSelectedMetode(parsed.selected)
+    setCustomMetode(parsed.custom)
+    setHasCustomMetode(parsed.hasCustom)
     setForm(f => ({
       ...f,
       bab: tp.bab_nama || f.bab || '',
       materi: tp.deskripsi ? `${tp.nama}: ${tp.deskripsi}` : (tp.nama || f.materi),
-      kegiatan: f.kegiatan || 'Pembahasan materi, tanya jawab, dan latihan terpadu'
+      kegiatan: defaultKegiatan
     }))
+  }
+
+  // Handler Checklist Metode Pembelajaran
+  const handleToggleMetode = (m) => {
+    setSelectedMetode(prev => {
+      const next = prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]
+      const built = buildKegiatan(next, hasCustomMetode, customMetode)
+      setForm(f => ({ ...f, kegiatan: built }))
+      return next
+    })
+  }
+
+  const handleToggleCustom = () => {
+    setHasCustomMetode(prev => {
+      const next = !prev
+      const built = buildKegiatan(selectedMetode, next, customMetode)
+      setForm(f => ({ ...f, kegiatan: built }))
+      return next
+    })
+  }
+
+  const handleCustomMetodeChange = (val) => {
+    setCustomMetode(val)
+    const built = buildKegiatan(selectedMetode, true, val)
+    setForm(f => ({ ...f, kegiatan: built }))
   }
 
   // 6. Muat daftar siswa kelas & presensi harian
@@ -635,11 +715,16 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
     const existing = journalsDay[group.jadwalId] || null
     setEditing({ group, existing })
     setSelectedTpId('')
+    const initKegiatan = existing ? (existing.kegiatan || '') : ''
+    const parsed = parseKegiatan(initKegiatan)
+    setSelectedMetode(parsed.selected)
+    setCustomMetode(parsed.custom)
+    setHasCustomMetode(parsed.hasCustom)
     setForm(existing ? {
       status: existing.status || 'terlaksana',
       bab: existing.bab || '',
       materi: existing.materi || '',
-      kegiatan: existing.kegiatan || '',
+      kegiatan: initKegiatan,
       sertakan_absen: existing.sertakan_absen !== false,
       siswa_tidak_hadir: existing.siswa_tidak_hadir || '',
       catatan: existing.catatan || '',
@@ -1397,12 +1482,77 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
                       placeholder="Contoh: Menghitung luas dan keliling juring lingkaran" />
                   </div>
 
-                  {/* Input Kegiatan Pembelajaran */}
+                  {/* Kegiatan / Metode Pembelajaran (Checklist Cepat Multi-Select + Opsi Lainnya) */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Kegiatan / Metode (opsional)</label>
-                    <textarea rows={2} className={inputCls} value={form.kegiatan}
-                      onChange={(e) => setForm(f => ({ ...f, kegiatan: e.target.value }))}
-                      placeholder="Contoh: Diskusi kelompok terpandu dan latihan soal mandiri" />
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700">Kegiatan / Metode Pembelajaran (opsional)</label>
+                      <span className="text-[10px] text-slate-400">Bisa pilih lebih dari 1</span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                      {METODE_PRESETS.map((m) => {
+                        const isChecked = selectedMetode.includes(m)
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => handleToggleMetode(m)}
+                            className={`px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 select-none ${
+                              isChecked
+                                ? 'bg-indigo-600 text-white font-bold shadow-xs'
+                                : 'bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 font-medium'
+                            }`}
+                          >
+                            <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] font-bold ${
+                              isChecked ? 'bg-white text-indigo-700' : 'border border-slate-300 text-transparent'
+                            }`}>
+                              ✓
+                            </span>
+                            <span>{m}</span>
+                          </button>
+                        )
+                      })}
+
+                      {/* Checklist Lainnya */}
+                      <button
+                        type="button"
+                        onClick={handleToggleCustom}
+                        className={`px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1.5 select-none ${
+                          hasCustomMetode
+                            ? 'bg-indigo-600 text-white font-bold shadow-xs'
+                            : 'bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 font-medium'
+                        }`}
+                      >
+                        <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] font-bold ${
+                          hasCustomMetode ? 'bg-white text-indigo-700' : 'border border-slate-300 text-transparent'
+                        }`}>
+                          ✓
+                        </span>
+                        <span>✍️ Lainnya...</span>
+                      </button>
+                    </div>
+
+                    {/* Input ketik mandiri jika "Lainnya" dicentang */}
+                    {hasCustomMetode && (
+                      <div className="mt-2 animate-fade-in">
+                        <input
+                          type="text"
+                          className={inputCls}
+                          value={customMetode}
+                          onChange={(e) => handleCustomMetodeChange(e.target.value)}
+                          placeholder="Ketik kegiatan / metode lainnya (contoh: Kuis Kahoot, Praktik Lapangan, dsb)..."
+                          autoFocus
+                        />
+                      </div>
+                    )}
+
+                    {/* Pratinjau Teks Tersusun di Jurnal */}
+                    {form.kegiatan && (
+                      <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600">
+                        <span className="font-bold text-slate-700">Tersusun di Jurnal: </span>
+                        <span className="text-slate-800 font-medium">{form.kegiatan}</span>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : form.status === 'libur' ? (
