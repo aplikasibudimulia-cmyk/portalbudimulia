@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.jurnal_mengajar (
   waktu_mulai         TIME,
   waktu_selesai       TIME,
   status              TEXT NOT NULL DEFAULT 'terlaksana'
-                      CHECK (status IN ('terlaksana', 'tidak_terlaksana')),
+                      CHECK (status IN ('terlaksana', 'tidak_terlaksana', 'libur')),
   materi              TEXT,
   kegiatan            TEXT,
   siswa_tidak_hadir   TEXT,
