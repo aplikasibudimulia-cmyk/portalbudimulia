@@ -5,7 +5,9 @@ import { getTodayWIB } from '../utils/dateUtils'
 import { generateJurnalMengajarPDF } from '../utils/jurnalMengajarPdfExporter'
 
 const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
+const HARI_LIST = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
+const ROMAN_NUMERALS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 
 const parseYmd = (s) => {
   const [y, m, d] = s.split('-').map(Number)
@@ -20,15 +22,95 @@ const fmtTanggal = (s) => {
 }
 const hhmm = (t) => (t || '').slice(0, 5)
 
+function timeToMinutes(t) {
+  if (!t) return 0
+  const [h, m] = t.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function addMinutes(timeStr, mins) {
+  if (!timeStr) return ''
+  const [h, m] = timeStr.split(':').map(Number)
+  const total = (h || 0) * 60 + (m || 0) + (mins || 0)
+  const newH = Math.floor(total / 60) % 24
+  const newM = total % 60
+  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
+}
+
+const getWeekdayInSameWeek = (currentDateStr, targetDayName) => {
+  const d = parseYmd(currentDateStr)
+  const currentDayIdx = d.getUTCDay()
+  const targetDayIdx = HARI.indexOf(targetDayName)
+  if (targetDayIdx === -1) return currentDateStr
+  const currentMonBased = currentDayIdx === 0 ? 7 : currentDayIdx
+  const targetMonBased = targetDayIdx === 0 ? 7 : targetDayIdx
+  const diffDays = targetMonBased - currentMonBased
+  const targetDate = new Date(d)
+  targetDate.setUTCDate(d.getUTCDate() + diffDays)
+  return toYmd(targetDate)
+}
+
+function getJamBadgeText(jamAwal, jamAkhir) {
+  if (!jamAwal) return '-'
+  if (!jamAkhir || jamAkhir === jamAwal) return `${jamAwal}`
+  return `${jamAwal}–${jamAkhir}`
+}
+
+function getRomanBadgeText(jamAwal, jamAkhir) {
+  if (!jamAwal) return '-'
+  const r1 = ROMAN_NUMERALS[jamAwal] || `${jamAwal}`
+  if (!jamAkhir || jamAkhir === jamAwal) return r1
+  const r2 = ROMAN_NUMERALS[jamAkhir] || `${jamAkhir}`
+  return `${r1}–${r2}`
+}
+
+function getDefaultSlots(hari) {
+  return [
+    { urutan: 1, jam_ke: null, label: 'PERSIAPAN KBM & DOA / G L S', tipe: 'persiapan', waktu_mulai: '06:30:00', durasi_menit: 30 },
+    { urutan: 2, jam_ke: 1, label: 'I', tipe: 'pelajaran', waktu_mulai: '07:00:00', durasi_menit: 40 },
+    { urutan: 3, jam_ke: 2, label: 'II', tipe: 'pelajaran', waktu_mulai: '07:40:00', durasi_menit: 40 },
+    { urutan: 4, jam_ke: 3, label: 'III', tipe: 'pelajaran', waktu_mulai: '08:20:00', durasi_menit: 40 },
+    { urutan: 5, jam_ke: null, label: 'ISTIRAHAT 1', tipe: 'istirahat', waktu_mulai: '09:00:00', durasi_menit: 30 },
+    { urutan: 6, jam_ke: 4, label: 'IV', tipe: 'pelajaran', waktu_mulai: '09:30:00', durasi_menit: 40 },
+    { urutan: 7, jam_ke: 5, label: 'V', tipe: 'pelajaran', waktu_mulai: '10:10:00', durasi_menit: 40 },
+    { urutan: 8, jam_ke: 6, label: 'VI', tipe: 'pelajaran', waktu_mulai: '10:50:00', durasi_menit: 40 },
+    { urutan: 9, jam_ke: 7, label: 'VII', tipe: 'pelajaran', waktu_mulai: '11:30:00', durasi_menit: 40 },
+    { urutan: 10, jam_ke: null, label: 'ISTIRAHAT 2', tipe: 'istirahat', waktu_mulai: '12:10:00', durasi_menit: 20 },
+    { urutan: 11, jam_ke: 8, label: 'VIII', tipe: 'pelajaran', waktu_mulai: '12:30:00', durasi_menit: 40 },
+    { urutan: 12, jam_ke: 9, label: 'IX', tipe: 'pelajaran', waktu_mulai: '13:10:00', durasi_menit: 40 },
+    { urutan: 13, jam_ke: 10, label: 'X', tipe: 'pelajaran', waktu_mulai: '13:50:00', durasi_menit: 40 },
+    { urutan: 14, jam_ke: null, label: 'Bersih Kelas & Pulang', tipe: 'penutup', waktu_mulai: '14:30:00', durasi_menit: 10 }
+  ]
+}
+
+function deduplicateJadwalRows(rows) {
+  const map = new Map()
+  for (const r of rows) {
+    const key = `${r.hari}_${r.jam_ke}_${r.kelas}`
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, r)
+    } else {
+      if ((existing.waktu_selesai === '00:00:00' || !existing.waktu_selesai) && r.waktu_selesai && r.waktu_selesai !== '00:00:00') {
+        map.set(key, r)
+      }
+    }
+  }
+  return Array.from(map.values())
+}
+
 /** Gabungkan jam pelajaran berurutan (kelas & mapel sama) menjadi 1 pertemuan. */
 function groupSlots(rows) {
-  const sorted = [...rows].sort((a, b) => a.jam_ke - b.jam_ke)
+  const deduped = deduplicateJadwalRows(rows)
+  const sorted = [...deduped].sort((a, b) => a.jam_ke - b.jam_ke)
   const groups = []
   for (const r of sorted) {
     const last = groups[groups.length - 1]
     if (last && last.kelas === r.kelas && last.mapelId === (r.mata_pelajaran?.id || null) && r.jam_ke === last.jamAkhir + 1) {
       last.jamAkhir = r.jam_ke
-      last.waktuSelesai = r.waktu_selesai
+      if (r.waktu_selesai && r.waktu_selesai !== '00:00:00') {
+        last.waktuSelesai = r.waktu_selesai
+      }
       continue
     }
     groups.push({
@@ -132,6 +214,48 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
     return () => { cancelled = true }
   }, [session?.id, activeTa?.id, semNum])
 
+  // Slot Waktu Master Sekolah (dari jadwal_slot_waktu)
+  const [masterSlots, setMasterSlots] = useState([])
+  const [loadingSlots, setLoadingSlots] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setLoadingSlots(true)
+      try {
+        let q = supabase
+          .from('jadwal_slot_waktu')
+          .select('*')
+        if (activeTa?.id) q = q.eq('tahun_ajaran_id', activeTa.id)
+        if (semNum) q = q.eq('semester', semNum)
+        const { data, error } = await q.order('urutan', { ascending: true })
+        if (error) throw error
+        if (!cancelled && data && data.length > 0) {
+          setMasterSlots(data)
+        }
+      } catch (err) {
+        console.warn('Gagal memuat slot waktu master:', err)
+      } finally {
+        if (!cancelled) setLoadingSlots(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTa?.id, semNum])
+
+  // Waktu saat ini (update tiap 30 detik untuk deteksi LIVE)
+  const [nowMinutes, setNowMinutes] = useState(() => {
+    const d = new Date()
+    return d.getHours() * 60 + d.getMinutes()
+  })
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const d = new Date()
+      setNowMinutes(d.getHours() * 60 + d.getMinutes())
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
   const jadwalByHari = useMemo(() => {
     const map = {}
     for (const r of jadwal) (map[r.hari] ||= []).push(r)
@@ -140,7 +264,169 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
     return out
   }, [jadwal])
 
-  const groupsToday = jadwalByHari[hariOf(date)] || []
+  const selectedHari = hariOf(date)
+  const groupsToday = jadwalByHari[selectedHari] || []
+
+  // Susun Master Timeline: Istirahat, Jam Kosong, dan Kartu Mengajar (Hijau / Merah / Libur)
+  const timelineRows = useMemo(() => {
+    let daySlots = masterSlots.filter(s => s.hari === selectedHari)
+    if (daySlots.length === 0) {
+      daySlots = getDefaultSlots(selectedHari)
+    }
+
+    // Deduplikasi slot master berdasarkan urutan + jam_ke + label
+    const seenUrutan = new Set()
+    const uniqueSlots = []
+    for (const s of daySlots) {
+      const key = `${s.urutan || ''}_${s.jam_ke || ''}_${s.label || ''}`
+      if (!seenUrutan.has(key)) {
+        seenUrutan.add(key)
+        uniqueSlots.push(s)
+      }
+    }
+
+    const calculatedSlots = uniqueSlots.map(slot => {
+      const start = slot.waktu_mulai ? hhmm(slot.waktu_mulai) : '07:00'
+      const dur = slot.durasi_menit || 40
+      const end = (slot.waktu_selesai && slot.waktu_selesai !== '00:00:00')
+        ? hhmm(slot.waktu_selesai)
+        : addMinutes(start, dur)
+      return {
+        ...slot,
+        _start: start,
+        _end: end
+      }
+    })
+
+    const rows = []
+    const coveredJams = new Set()
+    const coveredGroupKeys = new Set()
+
+    for (const slot of calculatedSlots) {
+      // 1. Break / Istirahat
+      if (slot.tipe === 'istirahat' || String(slot.label || '').toUpperCase().includes('ISTIRAHAT')) {
+        rows.push({
+          type: 'break',
+          id: slot.id || `break_${slot.urutan}`,
+          label: slot.label || 'ISTIRAHAT',
+          durasi: slot.durasi_menit || 30,
+          start: slot._start,
+          end: slot._end,
+          slot
+        })
+        continue
+      }
+
+      // 2. Persiapan KBM, Upacara, Doa pagi, Blok khusus, atau Penutup
+      if (slot.jam_ke == null && (slot.tipe === 'persiapan' || slot.tipe === 'penutup' || slot.tipe === 'blok_khusus')) {
+        rows.push({
+          type: 'special',
+          id: slot.id || `special_${slot.urutan}`,
+          label: slot.label,
+          durasi: slot.durasi_menit,
+          start: slot._start,
+          end: slot._end,
+          slot
+        })
+        continue
+      }
+
+      // 3. Jam Pelajaran (bernomor)
+      const jamNum = Number(slot.jam_ke) || slot.urutan
+      if (coveredJams.has(jamNum)) {
+        continue
+      }
+
+      const match = groupsToday.find(g => jamNum >= g.jamAwal && jamNum <= g.jamAkhir)
+      if (match) {
+        for (let j = match.jamAwal; j <= match.jamAkhir; j++) {
+          coveredJams.add(j)
+        }
+        coveredGroupKeys.add(match.key)
+
+        const jrn = journalsDay[match.jadwalId] || null
+        rows.push({
+          type: 'teaching',
+          id: match.key,
+          group: match,
+          journal: jrn,
+          jamAwal: match.jamAwal,
+          jamAkhir: match.jamAkhir,
+          start: hhmm(match.waktuMulai) || slot._start,
+          end: (match.waktuSelesai && match.waktuSelesai !== '00:00:00') ? hhmm(match.waktuSelesai) : slot._end,
+          slot
+        })
+      } else {
+        // Guru TIDAK mengajar di jam ini -> Tampilkan Jam Kosong
+        rows.push({
+          type: 'empty',
+          id: slot.id || `empty_${jamNum}`,
+          jam_ke: slot.jam_ke || jamNum,
+          label: slot.label || `${jamNum}`,
+          start: slot._start,
+          end: slot._end,
+          durasi: slot.durasi_menit || 40,
+          slot
+        })
+      }
+    }
+
+    // Safeguard: Kelompok jadwal guru yang mungkin di luar slot standar tetap ditampilkan
+    for (const g of groupsToday) {
+      if (!coveredGroupKeys.has(g.key)) {
+        const jrn = journalsDay[g.jadwalId] || null
+        rows.push({
+          type: 'teaching',
+          id: g.key,
+          group: g,
+          journal: jrn,
+          jamAwal: g.jamAwal,
+          jamAkhir: g.jamAkhir,
+          start: hhmm(g.waktuMulai),
+          end: hhmm(g.waktuSelesai)
+        })
+      }
+    }
+
+    return rows.sort((a, b) => (a.start || '').localeCompare(b.start || ''))
+  }, [masterSlots, selectedHari, groupsToday, journalsDay])
+
+  // Live Slot (hanya saat melihat Hari Ini)
+  const liveSlot = useMemo(() => {
+    if (date !== today) return null
+    return timelineRows.find(r => {
+      const sMin = timeToMinutes(r.start)
+      const eMin = timeToMinutes(r.end)
+      return nowMinutes >= sMin && nowMinutes < eMin
+    })
+  }, [timelineRows, date, today, nowMinutes])
+
+  // Ringkasan angka KBM harian
+  const dailyStats = useMemo(() => {
+    let teachingCount = 0
+    let filledCount = 0
+    let needFillCount = 0
+    let holidayCount = 0
+    let emptyCount = 0
+
+    for (const r of timelineRows) {
+      if (r.type === 'teaching') {
+        teachingCount++
+        const j = r.journal
+        if (j) {
+          if (j.status === 'libur') holidayCount++
+          else if (j.status === 'terlaksana') filledCount++
+          else if (j.status === 'tidak_terlaksana') holidayCount++
+        } else {
+          if (date <= today) needFillCount++
+        }
+      } else if (r.type === 'empty') {
+        emptyCount++
+      }
+    }
+
+    return { teachingCount, filledCount, needFillCount, holidayCount, emptyCount }
+  }, [timelineRows, date, today])
 
   // 2. Jurnal & Pengecekan Presensi pada tanggal terpilih
   const fetchDay = useCallback(async () => {
@@ -594,18 +880,74 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-2xl p-3">
-            <button onClick={() => setDate(addDays(date, -1))} className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-slate-700">←</button>
-            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)}
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold" />
-            <button onClick={() => setDate(addDays(date, 1))} className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-slate-700">→</button>
-            {date !== today && (
-              <button onClick={() => setDate(today)} className="px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 text-sm font-bold hover:bg-indigo-100">Hari Ini</button>
-            )}
-            <span className="ml-auto text-sm font-bold text-slate-700">{fmtTanggal(date)}</span>
+          {/* 1. Bar Navigasi Hari (Senin - Jumat) Seperti Jadwal Pelajaran */}
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide items-center">
+            {HARI_LIST.map((hari) => {
+              const isTodayTab = hariOf(today) === hari
+              const isActive = selectedHari === hari
+              return (
+                <button
+                  key={hari}
+                  type="button"
+                  onClick={() => setDate(getWeekdayInSameWeek(date, hari))}
+                  className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 border ${
+                    isActive
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <span>{hari}</span>
+                  {isTodayTab && (
+                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500'}`} />
+                  )}
+                </button>
+              )
+            })}
           </div>
 
-          {/* Banner jika tanggal terpilih tidak ada presensi sekolah (Hari Libur) */}
+          {/* 2. Toolbar Tanggal & Info Semester */}
+          <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-2xl p-3 shadow-2xs">
+            <button onClick={() => setDate(addDays(date, -1))} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 transition">←</button>
+            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)}
+              className="px-3 py-2 border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button onClick={() => setDate(addDays(date, 1))} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 transition">→</button>
+            {date !== today && (
+              <button onClick={() => setDate(today)} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-bold hover:bg-indigo-100 transition">Hari Ini</button>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 hidden sm:inline-block">
+                Semester {semNum} (Aktif)
+              </span>
+              <span className="text-sm font-bold text-slate-800">{fmtTanggal(date)}</span>
+            </div>
+          </div>
+
+          {/* 3. Ringkasan Status Harian Guru (Pill Counters) */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-semibold border border-slate-200/80">
+              📚 <strong>{dailyStats.teachingCount}</strong> Jadwal Mengajar
+            </span>
+            <span className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200">
+              ✅ <strong>{dailyStats.filledCount}</strong> Terisi (Hijau)
+            </span>
+            {dailyStats.needFillCount > 0 && (
+              <span className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-800 font-bold border border-rose-200 animate-pulse-subtle">
+                ⚠️ <strong>{dailyStats.needFillCount}</strong> Perlu Diisi (Merah)
+              </span>
+            )}
+            {dailyStats.holidayCount > 0 && (
+              <span className="px-3 py-1.5 rounded-xl bg-sky-50 text-sky-800 font-semibold border border-sky-200">
+                🏖️ <strong>{dailyStats.holidayCount}</strong> Libur / Jam Kosong
+              </span>
+            )}
+            {dailyStats.emptyCount > 0 && (
+              <span className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-500 font-medium border border-slate-200/60 hidden sm:inline-flex">
+                ☕ <strong>{dailyStats.emptyCount}</strong> Jam Kosong
+              </span>
+            )}
+          </div>
+
+          {/* 4. Banner jika tanggal terpilih tidak ada presensi sekolah (Hari Libur) */}
           {dayPresensiCount === 0 && date <= today && (
             <div className="p-4 bg-sky-50 border border-sky-200 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-fade-in">
               <div className="flex items-center gap-2.5">
@@ -627,46 +969,299 @@ export default function JurnalMengajarSection({ session, activeTa, semester }) {
             </div>
           )}
 
-          {loadingJadwal || loadingDay ? (
-            <div className="py-12 text-center text-slate-400 text-sm">Memuat jadwal...</div>
-          ) : groupsToday.length === 0 ? (
-            <div className="py-12 text-center bg-white border border-slate-200 rounded-2xl">
+          {/* 5. LIVE WIDGET: Jika Jam KBM Sedang Berlangsung Hari Ini */}
+          {date === today && liveSlot && (
+            <div className="py-2.5 px-3.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs animate-fade-in">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span className="font-bold shrink-0 text-emerald-900">Sedang Berlangsung:</span>
+                <span className="font-bold truncate text-emerald-950">
+                  {liveSlot.type === 'teaching'
+                    ? `${liveSlot.group.mapelNama} · Kelas ${liveSlot.group.kelas}`
+                    : liveSlot.type === 'break'
+                    ? (liveSlot.label || 'Istirahat')
+                    : liveSlot.type === 'empty'
+                    ? 'Jam Kosong / Tidak Ada Jam Mengajar'
+                    : (liveSlot.label || 'Kegiatan')}
+                </span>
+                {liveSlot.type === 'teaching' && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    liveSlot.journal ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+                  }`}>
+                    {liveSlot.journal ? 'Terisi' : 'Perlu Diisi'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0 font-mono text-[11px]">
+                <span className="font-semibold text-emerald-800">{liveSlot.start} – {liveSlot.end}</span>
+                {liveSlot.type === 'teaching' && (
+                  <button
+                    onClick={() => openForm(liveSlot.group)}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-xs shadow-2xs transition ${
+                      liveSlot.journal ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-rose-600 text-white hover:bg-rose-700'
+                    }`}
+                  >
+                    {liveSlot.journal ? 'Edit ✏️' : 'Isi Jurnal ✍️'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 6. TIMELINE JADWAL & JURNAL (Format Timeline Kartu Interaktif) */}
+          {loadingJadwal || loadingDay || loadingSlots ? (
+            <div className="py-14 text-center bg-white border border-slate-200 rounded-3xl p-8">
+              <div className="w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-sm font-semibold text-slate-600">Menyinkronkan jadwal mengajar &amp; jurnal...</p>
+            </div>
+          ) : timelineRows.length === 0 ? (
+            <div className="py-12 text-center bg-white border border-slate-200 rounded-3xl p-8">
               <p className="text-3xl mb-2">📅</p>
-              <p className="text-sm font-semibold text-slate-700">Tidak ada jadwal mengajar pada hari {hariOf(date)}.</p>
-              <p className="text-xs text-slate-400 mt-1">Jurnal mengikuti Jadwal Pelajaran yang diatur admin (semester {semNum}).</p>
+              <p className="text-sm font-semibold text-slate-700">Tidak ada slot jadwal pada hari {selectedHari}.</p>
+              <p className="text-xs text-slate-400 mt-1">Jurnal mengikuti master jadwal pelajaran sekolah (semester {semNum}).</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {groupsToday.map(g => {
-                const st = statusOf(g)
-                const j = journalsDay[g.jadwalId]
-                return (
-                  <div key={g.key} className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
-                          Jam ke-{g.jamAwal}{g.jamAkhir !== g.jamAwal ? `–${g.jamAkhir}` : ''}
+            <div className="space-y-2.5">
+              {timelineRows.map((row) => {
+                const isLive = date === today && liveSlot?.id === row.id
+
+                // A. Break / Istirahat
+                if (row.type === 'break') {
+                  return (
+                    <div
+                      key={row.id}
+                      className={`py-2 px-3.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-all ${
+                        isLive
+                          ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-300 font-bold'
+                          : 'bg-amber-50/70 border-amber-200/80 text-amber-950'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 rounded-md bg-amber-200/70 text-amber-800 font-bold text-xs flex items-center justify-center shrink-0">
+                          ☕
                         </span>
-                        <span className="text-xs text-slate-500 font-mono">{hhmm(g.waktuMulai)} – {hhmm(g.waktuSelesai)}</span>
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
+                        <div className="truncate">
+                          <span className="font-bold uppercase tracking-wide">{row.label}</span>
+                          <span className="text-[11px] text-amber-800/80 ml-1.5 font-normal">({row.durasi}m)</span>
+                        </div>
                       </div>
-                      <p className="font-bold text-slate-900">{g.mapelNama} · Kelas {g.kelas}</p>
-                      {j && (
-                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">
-                          {j.status === 'libur' ? `🏖️ Libur / Kegiatan: ${j.alasan || '-'}` : (
-                            j.status === 'tidak_terlaksana' ? `⛔ Jam Kosong: ${j.alasan || '-'}` : (
-                              `${j.bab ? `[${j.bab}] ` : ''}${j.materi || '-'}`
-                            )
-                          )}
-                        </p>
-                      )}
+                      <span className="font-mono text-xs font-semibold text-amber-900 bg-white/90 px-2 py-0.5 rounded border border-amber-200 shrink-0">
+                        {row.start} – {row.end}
+                      </span>
                     </div>
-                    <button onClick={() => openForm(g)}
-                      className={`px-4 py-2.5 rounded-xl text-sm font-bold transition shrink-0 ${j ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-                      {j ? 'Edit Jurnal' : 'Isi Jurnal'}
-                    </button>
-                  </div>
-                )
+                  )
+                }
+
+                // B. Persiapan KBM / Upacara / Doa pagi / Blok khusus / Penutup
+                if (row.type === 'special') {
+                  return (
+                    <div
+                      key={row.id}
+                      className={`py-2 px-3.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-all ${
+                        isLive
+                          ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-300 font-bold'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 rounded-md bg-slate-200/80 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0 font-mono">
+                          0
+                        </span>
+                        <div className="truncate">
+                          <span className="font-bold uppercase tracking-wide">{row.label}</span>
+                          {row.durasi && (
+                            <span className="text-[11px] text-slate-400 ml-1.5 font-normal">({row.durasi}m)</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs font-semibold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0">
+                        {row.start} – {row.end}
+                      </span>
+                    </div>
+                  )
+                }
+
+                // C. Jam Kosong (Guru Tidak Ada Jadwal Mengajar)
+                if (row.type === 'empty') {
+                  return (
+                    <div
+                      key={row.id}
+                      className={`py-2.5 px-3.5 rounded-xl border border-dashed flex items-center justify-between gap-3 text-xs transition-all ${
+                        isLive
+                          ? 'bg-slate-100 border-slate-300 ring-1 ring-slate-400'
+                          : 'bg-slate-50/60 border-slate-200 text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 text-slate-400 font-bold text-xs flex items-center justify-center shrink-0 font-mono">
+                          {row.label}
+                        </span>
+                        <div className="truncate flex items-center gap-1.5">
+                          <span className="font-bold text-slate-600">☕ Jam Kosong</span>
+                          <span className="text-slate-400 hidden sm:inline">• Tidak Ada Jam Mengajar</span>
+                        </div>
+                      </div>
+                      <span className="font-mono text-[11px] text-slate-400 bg-white/70 px-2 py-0.5 rounded border border-slate-200/80 shrink-0">
+                        {row.start} – {row.end}
+                      </span>
+                    </div>
+                  )
+                }
+
+                // D. Kartu Mengajar Guru: HIJAU (Terisi) | MERAH (Perlu Diisi) | SKY (Libur) | AMBER (Tidak Terlaksana) | SLATE (Akan Datang)
+                if (row.type === 'teaching') {
+                  const { group, journal, jamAwal, jamAkhir, start, end } = row
+                  const jamBadge = getJamBadgeText(jamAwal, jamAkhir)
+
+                  const isFilled = journal?.status === 'terlaksana'
+                  const isLibur = journal?.status === 'libur'
+                  const isNotHeld = journal?.status === 'tidak_terlaksana'
+                  const isNeedFill = !journal && date <= today
+                  const isFuture = !journal && date > today
+
+                  // Visual Theme
+                  let containerCls = 'bg-white border-slate-200 hover:border-indigo-400'
+                  let badgeCls = 'bg-slate-100 text-slate-700 border-slate-200'
+                  let pillCls = 'bg-slate-100 text-slate-700 border-slate-200'
+                  let statusText = 'Belum Diisi'
+
+                  if (isFilled) {
+                    containerCls = 'bg-emerald-50/70 border-emerald-300 hover:border-emerald-500 ring-1 ring-emerald-200/60 shadow-xs'
+                    pillCls = 'bg-emerald-600 text-white shadow-xs'
+                    badgeCls = 'bg-emerald-600 text-white'
+                    statusText = '✅ Jurnal Terisi'
+                  } else if (isNeedFill) {
+                    containerCls = 'bg-rose-50/70 border-rose-300 hover:border-rose-500 ring-2 ring-rose-200 shadow-xs animate-pulse-subtle'
+                    pillCls = 'bg-rose-600 text-white shadow-xs'
+                    badgeCls = 'bg-rose-600 text-white'
+                    statusText = '⚠️ Perlu Diisi'
+                  } else if (isLibur) {
+                    containerCls = 'bg-sky-50/70 border-sky-300 hover:border-sky-400'
+                    pillCls = 'bg-sky-600 text-white'
+                    badgeCls = 'bg-sky-600 text-white'
+                    statusText = '🏖️ Libur / Kegiatan'
+                  } else if (isNotHeld) {
+                    containerCls = 'bg-amber-50/70 border-amber-300 hover:border-amber-400'
+                    pillCls = 'bg-amber-600 text-white'
+                    badgeCls = 'bg-amber-600 text-white'
+                    statusText = '⛔ Tidak Terlaksana'
+                  } else if (isFuture) {
+                    containerCls = 'bg-white border-slate-200 hover:border-indigo-300'
+                    pillCls = 'bg-slate-100 text-slate-700 border border-slate-200'
+                    badgeCls = 'bg-slate-100 text-slate-600 border border-slate-200'
+                    statusText = '🕒 Akan Datang'
+                  }
+
+                  return (
+                    <div
+                      key={row.id}
+                      onClick={() => openForm(group)}
+                      className={`group relative p-3 sm:p-4 rounded-2xl border transition-all cursor-pointer hover:shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${containerCls} ${
+                        isLive ? 'ring-2 ring-emerald-500 border-emerald-500' : ''
+                      }`}
+                    >
+                      <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                        {/* Jam Ke Pill */}
+                        <div className={`w-11 sm:w-12 h-11 sm:h-12 rounded-xl flex flex-col items-center justify-center shrink-0 font-bold transition-transform group-hover:scale-105 ${pillCls}`}>
+                          <span className="text-[8px] uppercase tracking-wider opacity-85 leading-none">JAM</span>
+                          <span className="text-xs sm:text-sm font-black leading-none mt-0.5">{jamBadge}</span>
+                        </div>
+
+                        {/* Mapel, Kelas, dan Ringkasan Jurnal */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="font-bold text-sm sm:text-base text-slate-900 truncate">
+                              {group.mapelNama}
+                            </h4>
+                            <span className="text-xs font-bold text-slate-700 bg-white/90 border border-slate-200/80 px-2 py-0.5 rounded-lg shrink-0">
+                              Kelas {group.kelas}
+                            </span>
+                            <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full shrink-0 shadow-2xs ${badgeCls}`}>
+                              {statusText}
+                            </span>
+                            {isLive && (
+                              <span className="text-[9px] font-black bg-emerald-600 text-white px-1.5 py-0.2 rounded uppercase animate-pulse shrink-0">
+                                LIVE
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Subtitle / Konten Jurnal */}
+                          {isFilled && journal && (
+                            <div className="mt-1 space-y-0.5 text-xs">
+                              {journal.bab && (
+                                <div className="font-bold text-emerald-900 truncate">
+                                  📘 Bab: {journal.bab}
+                                </div>
+                              )}
+                              {journal.materi && (
+                                <div className="text-slate-700 line-clamp-2">
+                                  <span className="font-semibold text-slate-900">Materi:</span> {journal.materi}
+                                </div>
+                              )}
+                              {journal.sertakan_absen !== false && journal.siswa_tidak_hadir && (
+                                <div className="text-rose-700 font-medium truncate text-[11px]">
+                                  👥 Siswa Absen: {journal.siswa_tidak_hadir}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {isNeedFill && (
+                            <p className="text-xs text-rose-700 font-medium mt-1">
+                              👉 Ketuk di sini untuk mengisi Bab, Materi KBM, dan Presensi Siswa
+                            </p>
+                          )}
+
+                          {isLibur && journal && (
+                            <p className="text-xs text-sky-800 font-medium mt-1 truncate">
+                              Keterangan: {journal.alasan || 'Hari Libur / Kegiatan Sekolah'}
+                            </p>
+                          )}
+
+                          {isNotHeld && journal && (
+                            <p className="text-xs text-amber-800 font-medium mt-1 truncate">
+                              Alasan: {journal.alasan || 'Tidak terlaksana'}
+                            </p>
+                          )}
+
+                          {isFuture && (
+                            <p className="text-xs text-slate-400 mt-1">
+                              Jadwal KBM mendatang. Ketuk jika ingin mengisi lebih awal.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bagian Kanan: Jam & Tombol Action */}
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                        <span className="font-mono text-xs font-bold text-slate-700 bg-white/90 px-2.5 py-1 rounded-lg border border-slate-200 shrink-0">
+                          {start} – {end}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openForm(group)
+                          }}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-xl transition shadow-2xs ${
+                            isFilled
+                              ? 'bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
+                              : isNeedFill
+                              ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs'
+                              : isLibur
+                              ? 'bg-white hover:bg-sky-100 text-sky-700 border border-sky-300'
+                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                          }`}
+                        >
+                          {isFilled ? 'Edit Jurnal ✏️' : isNeedFill ? 'Isi Jurnal ✍️' : isLibur ? 'Edit Libur ✏️' : 'Isi Jurnal'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                }
+
+                return null
               })}
             </div>
           )}
