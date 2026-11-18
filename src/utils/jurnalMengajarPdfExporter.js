@@ -113,17 +113,32 @@ export async function generateJurnalMengajarPDF({
 
   journals.forEach((j, idx) => {
     const tidak = j.status === 'tidak_terlaksana'
+    const libur = j.status === 'libur'
     const jam = j.jam_ke_awal === j.jam_ke_akhir || !j.jam_ke_akhir ? `${j.jam_ke_awal ?? '-'}` : `${j.jam_ke_awal}-${j.jam_ke_akhir}`
+    
+    let materiText = '-'
+    if (libur) {
+      materiText = `(Libur / Kegiatan) ${j.alasan || ''}`
+    } else if (tidak) {
+      materiText = `(Tidak terlaksana) ${j.alasan || ''}`
+    } else {
+      materiText = j.bab ? `[${j.bab}] ${j.materi || ''}` : (j.materi || '-')
+    }
+
+    let statusText = 'Terlaksana'
+    if (libur) statusText = 'Libur'
+    else if (tidak) statusText = 'Tidak Terlaksana'
+
     const cells = [
       String(idx + 1),
       tglPendek(j.tanggal),
       jam,
       j.kelas || '-',
       j.mata_pelajaran?.nama || '-',
-      tidak ? `(Tidak terlaksana) ${j.alasan || ''}` : (j.materi || '-'),
-      tidak ? '-' : (j.kegiatan || '-'),
-      j.siswa_tidak_hadir || '-',
-      tidak ? 'Tidak Terlaksana' : 'Terlaksana'
+      materiText,
+      (tidak || libur) ? '-' : (j.kegiatan || '-'),
+      (tidak || libur || j.sertakan_absen === false) ? '-' : (j.siswa_tidak_hadir || 'Nihil'),
+      statusText
     ]
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
