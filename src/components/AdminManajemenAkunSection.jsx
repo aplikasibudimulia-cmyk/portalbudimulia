@@ -32,7 +32,7 @@ const FallbackAvatar = ({ name, className = '' }) => (
   </div>
 )
 
-export default function AdminManajemenAkunSection({ students, allFotos, activeTa, tahunAjarans, initialSearchQuery, onRefresh }) {
+export default function AdminManajemenAkunSection({ students = [], allFotos = [], activeTa = null, tahunAjarans = [], initialSearchQuery = '', onRefresh }) {
   const [activeTab, setActiveTab] = useState('murid')
   const [akunList, setAkunList] = useState([])
   const [guruList, setGuruList] = useState([])
@@ -436,7 +436,7 @@ export default function AdminManajemenAkunSection({ students, allFotos, activeTa
     const targetTa = selectedTaFilter === 'all' ? activeTa?.nama : selectedTaFilter
 
     // Group only students enrolled in the target academic year
-    students.forEach(std => {
+    (students || []).forEach(std => {
       if (targetTa && std.tahun_ajaran && std.tahun_ajaran.trim() !== targetTa.trim()) return
       const k = (std.kelas || '-').trim()
       if (k === '-' || !k) return

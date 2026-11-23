@@ -2701,18 +2701,18 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
         </div>
       )}
 
-      {/* ─── ROW 1: HEADER + MAPEL & SEMESTER CONTROLS (MATCHING INPUT NILAI GURU) ─── */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {/* ─── ROW 1: HEADER + MAPEL & SEMESTER CONTROLS (INVOZA STYLE) ─── */}
+      <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-2xs border border-slate-200/90 flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-extrabold text-slate-800 tracking-tight">
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
               Leger Nilai (Kurikulum)
             </h2>
             {realtimeConnected ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Terhubung langsung dengan database realtime">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Terhubung langsung dengan database realtime">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#009688]"></span>
                 </span>
                 Live Sync
               </span>
@@ -2722,7 +2722,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                 Tersinkron
               </span>
             )}
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full">
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full">
               <IconLock /> Mode Baca
             </span>
           </div>
@@ -2731,14 +2731,14 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
           </p>
         </div>
 
-        {/* Top Right: Mapel & Semester Dropdown Pills (matching Input Nilai design) */}
+        {/* Top Right: Mapel & Semester Dropdown Pills (Invoza clean white style) */}
         <div className="flex items-center gap-2 flex-wrap">
           {/* Mapel Selector */}
           <div className="relative">
             <select
               value={selectedMapelId}
               onChange={(e) => setSelectedMapelId(e.target.value)}
-              className="px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-extrabold text-xs rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs pr-8 transition-all hover:bg-indigo-100/60"
+              className="px-3.5 py-2 bg-white border border-slate-200 text-slate-800 font-bold text-xs rounded-xl outline-none focus:border-[#009688] focus:ring-2 focus:ring-[#009688]/20 cursor-pointer shadow-2xs pr-8 transition-all hover:border-slate-300"
             >
               {mapels.map(m => (
                 <option key={m.id} value={m.id}>
@@ -2753,7 +2753,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
             <select
               value={selectedSemesterId}
               onChange={(e) => setSelectedSemesterId(e.target.value)}
-              className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs pr-8 transition-all hover:border-slate-300"
+              className="px-3.5 py-2 bg-white border border-slate-200 text-slate-800 font-bold text-xs rounded-xl outline-none focus:border-[#009688] focus:ring-2 focus:ring-[#009688]/20 cursor-pointer shadow-2xs pr-8 transition-all hover:border-slate-300"
             >
               {semesters.map(s => (
                 <option key={s.id} value={s.id}>
@@ -2765,8 +2765,8 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
         </div>
       </div>
 
-      {/* ─── ROW 2: CLASS BUTTONS + KKM + EXPORT (MATCHING SCREENSHOT) ───── */}
-      <div className="bg-white rounded-2xl p-3 shadow-sm border border-slate-100 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+      {/* ─── ROW 2: CLASS BUTTONS + KKM + EXPORT (INVOZA CLEAN BAR) ───── */}
+      <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-2xs border border-slate-200/90 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
         {/* Left: Class Pills */}
         <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar py-0.5 flex-1">
           {/* Master Leger Seluruh Kelas */}
@@ -2775,8 +2775,8 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
             onClick={() => setActiveTabKelas('ALL')}
             className={`px-4 py-2 rounded-xl font-bold text-xs transition-all whitespace-nowrap border shrink-0 flex items-center gap-1.5 cursor-pointer ${
               activeTabKelas === 'ALL'
-                ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm shadow-emerald-600/20'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:border-emerald-300 hover:bg-emerald-100'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100'
             }`}
           >
             <span>🏆 Seluruh Kelas (Master Leger)</span>
@@ -2793,8 +2793,8 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                   onClick={() => setActiveTabKelas(c)}
                   className={`px-4 py-2 rounded-xl font-bold text-xs transition-all whitespace-nowrap border shrink-0 cursor-pointer ${
                     isActive
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                      : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-slate-50 hover:text-indigo-600'
+                      ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                   }`}
                 >
                   Kelas {c}
@@ -2808,14 +2808,14 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
 
           {/* Guru Pengampu Info Badge */}
           {activeTabKelas === 'ALL' ? (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-800 font-semibold shrink-0">
-              <span className="text-emerald-600">Rekapitulasi:</span>
-              <span className="font-bold">Seluruh Guru &amp; Mapel</span>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 font-semibold shrink-0">
+              <span className="text-slate-400">Rekapitulasi:</span>
+              <span className="font-bold text-slate-800">Seluruh Guru &amp; Mapel</span>
             </div>
           ) : currentGuruPengampu ? (
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 font-semibold shrink-0">
               <span className="text-slate-400">Guru:</span>
-              <span className="text-indigo-900 font-bold">{currentGuruPengampu.nama_guru}</span>
+              <span className="text-slate-900 font-bold">{currentGuruPengampu.nama_guru}</span>
               {currentGuruPengampu.kode && (
                 <span className="font-mono text-slate-400">({currentGuruPengampu.kode})</span>
               )}
@@ -2839,7 +2839,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
               placeholder="Cari siswa..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-7 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white transition-all h-9"
+              className="w-full pl-7 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-[#009688]/20 focus:border-[#009688] focus:bg-white transition-all h-9"
             />
           </div>
 
@@ -2860,7 +2860,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
           <button
             onClick={() => fetchClassSheetData()}
             disabled={loading}
-            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all h-9 w-9 flex items-center justify-center shrink-0"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-600 rounded-xl border border-slate-200 transition-all h-9 w-9 flex items-center justify-center shrink-0 shadow-2xs"
             title="Muat Ulang Data Lembar Nilai"
           >
             <IconRefresh spinning={loading} />
@@ -2873,7 +2873,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                 setTempSettings({ ...raporSettings })
                 setShowSettingsModal(true)
               }}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all shadow-xs h-9 shrink-0 cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs h-9 shrink-0 cursor-pointer"
               title="Pengaturan Format Rapor & Penilaian (Kurikulum & Admin)"
             >
               <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2888,10 +2888,10 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
           {isKurikulumOrAdmin && (
             <button
               onClick={() => openPtsAuditModal()}
-              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all shadow-xs h-9 shrink-0 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all shadow-2xs h-9 shrink-0 cursor-pointer"
               title="Cek Status Pengaturan Lingkup Materi / BAB Rapor PTS untuk Setiap Mapel"
             >
-              <svg className="w-4 h-4 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg className="w-4 h-4 text-[#009688]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 11 12 14 22 4" />
                 <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
@@ -2911,7 +2911,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
               setShowExportModal(true)
             }}
             disabled={isExporting}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50 h-9 shrink-0 cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2 bg-[#009688] hover:bg-[#00897B] text-white rounded-xl text-xs font-bold transition-all shadow-xs shadow-[#009688]/20 disabled:opacity-50 h-9 shrink-0 cursor-pointer"
             title="Export Format Excel Standar Kurikulum (Pilih Seluruh / Beberapa Kelas)"
           >
             {isExporting ? (
@@ -2931,10 +2931,10 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
           {onNavigateToRapor && (
             <button
               onClick={() => onNavigateToRapor('rapor_siswa')}
-              className="flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs h-9 shrink-0 cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-xs font-bold transition-all shadow-2xs h-9 shrink-0 cursor-pointer"
               title="Buka Cetak Rapor Siswa Resmi"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
               <span>Rapor Siswa</span>
@@ -2943,29 +2943,47 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
         </div>
       </div>
 
-      {/* ─── SUMMARY KPI STRIP (HANYA MUNCUL PADA TAB KELAS INDIVIDUAL) ───── */}
+      {/* ─── SUMMARY KPI CARDS (INVOZA METRIC CARDS) ───── */}
       {activeTabKelas !== 'ALL' && (
-        <div className="space-y-2.5">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-            <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">Siswa ({activeTabKelas})</span>
-              <span className="text-xs font-extrabold text-slate-800">{students.length} siswa</span>
-            </div>
-            <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">Jumlah BAB</span>
-              <span className="text-xs font-extrabold text-indigo-700">{uniqueBabsClass.length} BAB ({orderedKomponen.length} TP)</span>
-            </div>
-            <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">Rata-rata Kelas</span>
-              <span className="text-xs font-extrabold text-indigo-700">{classStats.average} / 100</span>
-            </div>
-            <div className="bg-white px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">Ketuntasan KKM ({kkm})</span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-extrabold text-emerald-600">{classStats.tuntasPercent}%</span>
-                <span className="text-[10px] text-slate-400">({classStats.tuntasCount} siswa)</span>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {/* KPI 1: Siswa */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Siswa Aktif</span>
+              <div className="mt-1.5 flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-slate-900">{students.length}</span>
+                <span className="text-[11px] font-semibold text-slate-500">Kelas {activeTabKelas}</span>
               </div>
             </div>
+
+            {/* KPI 2: Materi BAB */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Materi Kurikulum</span>
+              <div className="mt-1.5 flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-slate-900">{uniqueBabsClass.length} <span className="text-xs font-bold text-slate-400">BAB</span></span>
+                <span className="text-[11px] font-semibold text-[#009688]">{orderedKomponen.length} TP</span>
+              </div>
+            </div>
+
+            {/* KPI 3: Rata-rata */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Rata-Rata Kelas</span>
+              <div className="mt-1.5 flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-slate-900">{classStats.average}</span>
+                <span className="text-[11px] font-semibold text-slate-400">Skala 100</span>
+              </div>
+            </div>
+
+            {/* KPI 4: Ketuntasan KKM */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ketuntasan KKM ({kkm})</span>
+              <div className="mt-1.5 flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-emerald-600">{classStats.tuntasPercent}%</span>
+                <span className="text-[11px] font-semibold text-slate-500">{classStats.tuntasCount} siswa</span>
+              </div>
+            </div>
+
+            {/* KPI 5: Audit */}
             {isKurikulumOrAdmin && (
               <div 
                 onClick={() => {
@@ -2973,21 +2991,29 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                     setFilterOnlyMissing(prev => !prev)
                   }
                 }}
-                className={`px-3.5 py-2 rounded-xl border shadow-2xs flex items-center justify-between transition-all ${
+                className={`p-4 rounded-2xl border shadow-2xs flex flex-col justify-between transition-all ${
                   activeSheetMissingAudit.count > 0
-                    ? 'bg-rose-50/90 border-rose-300 hover:bg-rose-100 text-rose-800 cursor-pointer'
-                    : 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
+                    ? 'bg-rose-50/70 border-rose-200 hover:bg-rose-100/70 cursor-pointer'
+                    : 'bg-white border-slate-200/90'
                 }`}
                 title={activeSheetMissingAudit.count > 0 ? "Klik untuk memfilter siswa dengan nilai kosong pada TP berdeskripsi" : "Semua TP berdeskripsi telah dinilai"}
               >
-                <span className="text-xs font-bold flex items-center gap-1">
-                  {activeSheetMissingAudit.count > 0 ? '🚨 Audit Nilai (-)' : '✓ Audit Nilai'}
-                </span>
-                <span className="text-xs font-black">
-                  {activeSheetMissingAudit.count > 0 
-                    ? `${activeSheetMissingAudit.count} Nilai (${activeSheetMissingAudit.studentCount} Siswa)`
-                    : 'Lengkap'}
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Audit Capaian TP</span>
+                  {activeSheetMissingAudit.count > 0 ? (
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-baseline justify-between">
+                  <span className={`text-xl font-extrabold ${activeSheetMissingAudit.count > 0 ? 'text-rose-700' : 'text-slate-900'}`}>
+                    {activeSheetMissingAudit.count > 0 ? `${activeSheetMissingAudit.count} Kosong` : 'Lengkap'}
+                  </span>
+                  <span className={`text-[11px] font-semibold ${activeSheetMissingAudit.count > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {activeSheetMissingAudit.count > 0 ? `${activeSheetMissingAudit.studentCount} Siswa` : 'Tervalidasi'}
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -3176,10 +3202,10 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
           </div>
         </div>
       ) : (
-        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px]">
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden flex flex-col min-h-[500px]">
         {loading ? (
           <div className="p-20 flex flex-col items-center justify-center text-slate-400 gap-3">
-            <div className="w-9 h-9 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+            <div className="w-9 h-9 border-3 border-slate-200 border-t-[#009688] rounded-full animate-spin" />
             <span className="text-xs font-bold text-slate-600">Memuat lembar nilai Kelas {activeTabKelas}...</span>
           </div>
         ) : students.length === 0 ? (
@@ -3193,7 +3219,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
             <div className="text-4xl mb-1">📚</div>
             <h3 className="font-bold text-slate-700 text-sm">Belum Ada Materi BAB di Kelas {activeTabKelas}</h3>
             <p className="text-xs text-slate-400">
-              Guru pengampu mata pelajaran <strong className="text-indigo-600">{mapels.find(m => m.id === selectedMapelId)?.nama}</strong> belum membuat BAB atau TP untuk Kelas {activeTabKelas}.
+              Guru pengampu mata pelajaran <strong className="text-slate-800">{mapels.find(m => m.id === selectedMapelId)?.nama}</strong> belum membuat BAB atau TP untuk Kelas {activeTabKelas}.
             </p>
           </div>
         ) : (
@@ -3202,9 +3228,9 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
               {/* Sticky Double Headers */}
               <thead className="sticky top-0 z-30 bg-slate-50 shadow-sm">
                 {/* Level 1 Header: NO, NAMA, NISN, BAB 1, PSTS, PSAS, NILAI AKHIR */}
-                <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
+                <tr className="bg-[#F8FAFC] border-b border-slate-200 text-slate-700 text-xs uppercase tracking-wider font-extrabold">
                   <th
-                    className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top"
+                    className="border-r border-slate-200 bg-[#F8FAFC] text-slate-700 p-0 align-top"
                     rowSpan={2}
                     style={{ position: 'sticky', top: 0, left: 0, zIndex: 30, minWidth: 40, maxWidth: 40, width: 40 }}
                   >
@@ -3212,7 +3238,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                   </th>
 
                   <th
-                    className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top"
+                    className="border-r border-slate-200 bg-[#F8FAFC] text-slate-700 p-0 align-top"
                     rowSpan={2}
                     style={{ position: 'sticky', top: 0, left: 40, zIndex: 30, minWidth: maxNamaWidth, maxWidth: maxNamaWidth, width: maxNamaWidth }}
                   >
@@ -3220,7 +3246,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
                   </th>
 
                   <th
-                    className="border-r border-slate-200 bg-indigo-50 text-indigo-700 p-0 align-top"
+                    className="border-r border-slate-200 bg-[#F8FAFC] text-slate-700 p-0 align-top"
                     rowSpan={2}
                     style={{ position: 'sticky', top: 0, left: 40 + maxNamaWidth, zIndex: 30, minWidth: 90, maxWidth: 90, width: 90 }}
                   >
@@ -3250,7 +3276,7 @@ export default function LegerNilaiKurikulumSection({ session, activeTa, onNaviga
 
                   {/* Nilai Akhir Group Header */}
                   <th
-                    className="px-4 py-2 min-w-[125px] bg-indigo-50 border-l border-indigo-200 text-center text-indigo-800 align-middle font-extrabold text-xs"
+                    className="px-4 py-2 min-w-[125px] bg-[#F8FAFC] border-l border-slate-200 text-center text-slate-800 align-middle font-extrabold text-xs"
                     rowSpan={2}
                   >
                     <div className="flex flex-col items-center justify-center gap-1">

@@ -316,7 +316,7 @@ export default function RedesignAdminPreview() {
           {/* SELURUH SUB-MENU ADMIN FULL-WIDTH LEBAR DAN BERSIH             */}
           {/* ============================================================== */}
           {activeMenu === 'manajemen_akun' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminManajemenAkunSection 
                 students={students} 
                 allFotos={fotos} 
@@ -329,7 +329,7 @@ export default function RedesignAdminPreview() {
           )}
 
           {activeMenu === 'kartu_pelajar' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminKartuPelajarSection 
                 students={students} 
                 allFotos={fotos} 
@@ -341,7 +341,7 @@ export default function RedesignAdminPreview() {
           )}
 
           {activeMenu === 'kartu_ujian' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminKartuUjianSection 
                 students={students} 
                 allFotos={fotos} 
@@ -353,79 +353,79 @@ export default function RedesignAdminPreview() {
           )}
 
           {activeMenu === 'rekap_poin' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <RekapPoinSiswaSection onNavigate={setActiveMenu} />
             </div>
           )}
 
           {activeMenu === 'catat_poin' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminCatatPoinSection onNavigate={setActiveMenu} />
             </div>
           )}
 
           {activeMenu === 'pengajuan_poin' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminPengajuanPoinSection onNavigate={setActiveMenu} />
             </div>
           )}
 
           {activeMenu === 'jadwal_pelajaran' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
             </div>
           )}
 
           {activeMenu === 'leger_nilai' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <LegerNilaiKurikulumSection session={session} activeTa={activeTa} onNavigateToRapor={() => setActiveMenu('rapor_siswa')} />
             </div>
           )}
 
           {activeMenu === 'rapor_siswa' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <RaporSiswaSection session={session} activeTa={activeTa} />
             </div>
           )}
 
           {activeMenu === 'ekskul_nilai' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminEkskulSection session={session} activeTa={activeTa} />
             </div>
           )}
 
           {activeMenu === 'tabungan_siswa' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <TabunganSiswaSection session={session} activeTa={activeTa} mode="admin" />
             </div>
           )}
 
           {activeMenu === 'tagihan_spp' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <TagihanSppSection session={session} activeTa={activeTa} readOnly={false} />
             </div>
           )}
 
           {activeMenu === 'manajemen_role' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminRoleSection />
             </div>
           )}
 
           {activeMenu === 'konsultasi_bk' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminBKKonsultasiSection />
             </div>
           )}
 
           {activeMenu === 'log_aktivitas' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminActivityLogSection onNavigate={setActiveMenu} />
             </div>
           )}
 
           {activeMenu === 'presensi_config' && (
-            <div className="w-full min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 lg:p-6">
+            <div className="w-full min-w-0">
               <AdminPresensiConfigSection onNavigate={setActiveMenu} />
             </div>
           )}
