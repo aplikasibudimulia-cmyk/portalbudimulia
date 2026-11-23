@@ -280,15 +280,20 @@ export default function PresensiTV() {
     const tokenValiditySec = Math.max(currentInterval * 3, 60)
     const expiresAt = new Date(Date.now() + tokenValiditySec * 1000).toISOString()
 
-    // Clean tokens older than tokenValiditySec and insert new one
-    const cutoff = new Date(Date.now() - tokenValiditySec * 1000).toISOString()
-    await supabase.from('qr_tokens').delete().lt('expires_at', cutoff)
-    const { data } = await supabase.from('qr_tokens').insert({
-      token: newToken,
-      expires_at: expiresAt
-    }).select().single()
+    // Push token baru via RPC aman (sekaligus bersihkan token expired di server)
+    try {
+      await supabase.rpc('fn_presensi_tv_push_token', {
+        p_token: newToken,
+        p_expires_at: expiresAt
+      })
+    } catch (e) {
+      console.warn('[PresensiTV] Gagal rpc push token, fallback insert:', e)
+      const cutoff = new Date(Date.now() - tokenValiditySec * 1000).toISOString()
+      await supabase.from('qr_tokens').delete().lt('expires_at', cutoff).catch(() => {})
+      await supabase.from('qr_tokens').insert({ token: newToken, expires_at: expiresAt }).catch(() => {})
+    }
 
-    setToken(data?.token || newToken)
+    setToken(newToken)
     setExpiresAt(new Date(expiresAt))
     return currentInterval
   }, [interval])

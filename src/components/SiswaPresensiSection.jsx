@@ -778,19 +778,26 @@ export default function SiswaPresensiSection({ studentData }) {
 
       if (!isCurrentlyOffline) {
         try {
-          const { data, error } = await supabase
-            .from('qr_tokens')
-            .select('*')
-            .eq('token', token)
-            .gt('expires_at', getServerNow().toISOString())
-            .maybeSingle()
+          // 1. Verifikasi aman via RPC Server (mencegah scraping seluruh token TV)
+          const { data: isValidRpc, error: rpcErr } = await supabase.rpc('fn_verify_qr_token', { p_token: token })
+          if (!rpcErr && typeof isValidRpc === 'boolean') {
+            if (isValidRpc) isVerified = true
+          } else {
+            // Fallback backward-compatible
+            const { data, error } = await supabase
+              .from('qr_tokens')
+              .select('*')
+              .eq('token', token)
+              .gt('expires_at', getServerNow().toISOString())
+              .maybeSingle()
 
-          if (!error && data) {
-            isVerified = true
-          } else if (error) {
-            // Jika gagal fetch karena jaringan putus/lemah, fallback ke verifikasi signature offline
-            if (verifyOfflineQrSignature(token, exp, sig) || /^[0-9a-f]{48}$/i.test(token)) {
+            if (!error && data) {
               isVerified = true
+            } else if (error) {
+              // Jika gagal fetch karena jaringan putus/lemah, fallback ke verifikasi signature offline
+              if (verifyOfflineQrSignature(token, exp, sig) || /^[0-9a-f]{48}$/i.test(token)) {
+                isVerified = true
+              }
             }
           }
         } catch {
