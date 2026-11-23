@@ -241,6 +241,7 @@ const ShowcaseRekapPoin = lazyRetry(() => import('./pages/ShowcaseRekapPoin'))
 const ValidasiKartuPelajar = lazyRetry(() => import('./pages/ValidasiKartuPelajar'))
 const CbtUjianSiswaPage = lazyRetry(() => import('./pages/CbtUjianSiswaPage'))
 const RaporDeskripsiTpPage = lazyRetry(() => import('./pages/RaporDeskripsiTpPage'))
+const RedesignDashboardPreview = lazyRetry(() => import('./pages/RedesignDashboardPreview'))
 
 /**
  * Root Router Cerdas:
@@ -636,6 +637,7 @@ function App() {
             <Route path="/validasi-kartu/:nisn" element={<ValidasiKartuPelajar />} />
             <Route path="/rapor/deskripsi-tp/:nisn" element={<RaporDeskripsiTpPage />} />
             <Route path="/cbt/ujian/:sesiId" element={<CbtUjianSiswaPage />} />
+            <Route path="/preview-redesign" element={<RedesignDashboardPreview />} />
           </Routes>
         </Suspense>
       </BrowserRouter>
