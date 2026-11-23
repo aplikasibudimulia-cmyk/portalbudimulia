@@ -1033,11 +1033,13 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
     try {
       if (drillLevel === 1) {
-        const { data: recs } = await supabase.from('point_records')
-          .select('kelas, poin_diberikan')
-          .eq('tahun_ajaran_id', activeTa.id)
-          .eq('semester', semester)
-          .limit(50000)
+        const recs = await fetchAllRows((from, to) =>
+          supabase.from('point_records')
+            .select('kelas, poin_diberikan')
+            .eq('tahun_ajaran_id', activeTa.id)
+            .eq('semester', semester)
+            .range(from, to)
+        )
 
         const drillMap = {}
         allClasses.forEach(k => {
@@ -1072,12 +1074,14 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
 
         const classNisns = new Set((classSiswa || []).map(cs => cs.nisn))
 
-        const { data: recs } = await supabase.from('point_records')
-          .select('nisn, poin_diberikan, semester')
-          .eq('tahun_ajaran_id', activeTa.id)
-          .limit(50000)
-          .eq('semester', semester)
-          .eq('kelas', drillKelas)
+        const recs = await fetchAllRows((from, to) =>
+          supabase.from('point_records')
+            .select('nisn, poin_diberikan, semester')
+            .eq('tahun_ajaran_id', activeTa.id)
+            .eq('semester', semester)
+            .eq('kelas', drillKelas)
+            .range(from, to)
+        )
 
         const pelMap = {}
         const presMap = {}
@@ -1114,16 +1118,17 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         setDrillDataList(list)
 
       } else if (drillLevel === 3 && drillSiswa) {
-        const { data: recs, error } = await supabase.from('point_records')
-          .select('nisn, nama_siswa, kelas, catalog_id, poin_diberikan, tanggal, semester, keterangan, created_at')
-          .eq('tahun_ajaran_id', activeTa.id)
-          .limit(50000)
-          .eq('semester', semester)
-          .eq('nisn', drillSiswa.nisn)
-          .order('tanggal', { ascending: false })
-          .order('created_at', { ascending: false })
+        const recs = await fetchAllRows((from, to) =>
+          supabase.from('point_records')
+            .select('nisn, nama_siswa, kelas, catalog_id, poin_diberikan, tanggal, semester, keterangan, created_at')
+            .eq('tahun_ajaran_id', activeTa.id)
+            .eq('semester', semester)
+            .eq('nisn', drillSiswa.nisn)
+            .order('tanggal', { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(from, to)
+        )
 
-        if (error) throw error
         setDrillDataList(recs || [])
       }
     } catch (err) {
@@ -1146,12 +1151,14 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
       const ExcelJS = await import('exceljs')
       const { saveAs } = await import('file-saver')
       
-      const { data: recs } = await supabase.from('point_records')
-        .select('nisn, poin_diberikan, semester, catalog_id')
-        .eq('tahun_ajaran_id', activeTa.id)
-        .limit(50000)
-        .eq('semester', semester)
-        .order('kelas').order('nama_siswa').order('tanggal')
+      const recs = await fetchAllRows((from, to) =>
+        supabase.from('point_records')
+          .select('nisn, poin_diberikan, semester, catalog_id')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', semester)
+          .order('kelas').order('nama_siswa').order('tanggal')
+          .range(from, to)
+      )
 
       const wb = new ExcelJS.Workbook()
       const ws = wb.addWorksheet('Rekap Poin Sekolah')

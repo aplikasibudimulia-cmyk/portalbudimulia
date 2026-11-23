@@ -4,6 +4,22 @@ import { supabase } from '../supabaseClient'
 import { useConfirm } from '../utils/useConfirm'
 import { sendFCMPushNotification } from '../utils/fcmSender'
 
+// Helper paginasi penuh untuk mengambil seluruh baris pengajuan (> 1000 baris)
+const fetchAllRows = async (queryBuilder, pageSize = 1000) => {
+  let allRows = []
+  let from = 0
+  while (true) {
+    const to = from + pageSize - 1
+    const { data, error } = await queryBuilder(from, to)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows = allRows.concat(data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
+
 export default function AdminPengajuanPoinSection({ session, activeTa, readOnly = false }) {
   const [activeTab, setActiveTab] = useState('pengajuan') // 'pengajuan' | 'ban'
   const [pengajuanList, setPengajuanList] = useState([])
@@ -89,22 +105,29 @@ export default function AdminPengajuanPoinSection({ session, activeTa, readOnly 
   const fetchPengajuan = async () => {
     if (!activeTa?.id) return
     setLoading(true)
-    let query = supabase.from('pengajuan_poin_positif').select('*')
-      .eq('tahun_ajaran_id', activeTa.id)
-      .order('created_at', { ascending: false })
+    try {
+      const data = await fetchAllRows((from, to) => {
+        let query = supabase.from('pengajuan_poin_positif').select('*')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .order('created_at', { ascending: false })
 
-    if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
-    if (search.trim()) query = query.or(`nama_siswa.ilike.%${search}%,nisn.ilike.%${search}%`)
+        if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
+        if (search.trim()) query = query.or(`nama_siswa.ilike.%${search}%,nisn.ilike.%${search}%`)
+        return query.range(from, to)
+      })
 
-    const { data } = await query
-    const list = data || []
-    setAllPengajuan(list)
-    if (filterStatus === 'all') {
-      setPengajuanList(list)
-    } else {
-      setPengajuanList(list.filter(p => p.status === filterStatus))
+      const list = data || []
+      setAllPengajuan(list)
+      if (filterStatus === 'all') {
+        setPengajuanList(list)
+      } else {
+        setPengajuanList(list.filter(p => p.status === filterStatus))
+      }
+    } catch (err) {
+      console.error('Gagal mengambil pengajuan poin:', err)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const fetchBanList = async () => {

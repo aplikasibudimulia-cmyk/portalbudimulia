@@ -5,6 +5,22 @@ import { downloadFile } from '../utils/fileDownloader'
 import { sendFCMPushNotification } from '../utils/fcmSender'
 import MonthlyDisciplineRewardModal from './MonthlyDisciplineRewardModal'
 
+// Helper paginasi penuh untuk mengambil seluruh baris point_records (> 1000 baris)
+const fetchAllRows = async (queryBuilder, pageSize = 1000) => {
+  let allRows = []
+  let from = 0
+  while (true) {
+    const to = from + pageSize - 1
+    const { data, error } = await queryBuilder(from, to)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows = allRows.concat(data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
+
 const getPoinColor = (p) => {
   if (p > 75) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
   if (p > 50) return 'text-yellow-700 bg-yellow-50 border-yellow-200'
@@ -225,34 +241,44 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const fetchRecords = async () => {
     if (!activeTa?.id) return
     setHistoryLoading(true)
-    let query = supabase.from('point_records')
-      .select('*', { count: 'exact' })
-      .eq('tahun_ajaran_id', activeTa.id)
-      .eq('semester', semester)
-      .order('created_at', { ascending: false })
+    try {
+      const buildBaseQuery = (withCount = false) => {
+        let q = supabase.from('point_records')
+          .select('*', withCount ? { count: 'exact' } : undefined)
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', semester)
+          .order('created_at', { ascending: false })
 
-    if (filterDateFrom && filterDateTo) {
-      const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
-      const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
-      query = query.gte('created_at', fromIso).lte('created_at', toIso)
-    } else if (filterDateFrom) {
-      const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
-      query = query.gte('created_at', fromIso)
-    } else if (filterDateTo) {
-      const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
-      query = query.lte('created_at', toIso)
+        if (filterDateFrom && filterDateTo) {
+          const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
+          const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
+          q = q.gte('created_at', fromIso).lte('created_at', toIso)
+        } else if (filterDateFrom) {
+          const fromIso = new Date(`${filterDateFrom}T00:00:00`).toISOString()
+          q = q.gte('created_at', fromIso)
+        } else if (filterDateTo) {
+          const toIso = new Date(`${filterDateTo}T23:59:59.999`).toISOString()
+          q = q.lte('created_at', toIso)
+        }
+
+        if (filterKelas !== 'all') q = q.eq('kelas', filterKelas)
+        return q
+      }
+
+      if (limitRows === 'all') {
+        const allData = await fetchAllRows((from, to) => buildBaseQuery(false).range(from, to))
+        setRecords(allData || [])
+        setTotalCount((allData || []).length)
+      } else {
+        const { data, count } = await buildBaseQuery(true).limit(parseInt(limitRows, 10))
+        setRecords(data || [])
+        setTotalCount(count || 0)
+      }
+    } catch (err) {
+      console.error('Error fetching point_records:', err)
+    } finally {
+      setHistoryLoading(false)
     }
-
-    if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
-    
-    if (limitRows !== 'all') {
-      query = query.limit(parseInt(limitRows, 10))
-    }
-
-    const { data, count } = await query
-    setRecords(data || [])
-    setTotalCount(count || 0)
-    setHistoryLoading(false)
   }
 
   // Student search with debounce
@@ -602,12 +628,13 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
     const fromIso = new Date(`${exportDateFrom}T00:00:00`).toISOString()
     const toIso = new Date(`${exportDateTo}T23:59:59.999`).toISOString()
 
-    let query = supabase.from('point_records').select('*')
-      .eq('tahun_ajaran_id', activeTa.id).eq('semester', semester)
-      .gte('created_at', fromIso).lte('created_at', toIso)
-    if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
-    query = query.order('created_at', { ascending: false })
-    const { data: rows } = await query
+    const rows = await fetchAllRows((from, to) => {
+      let query = supabase.from('point_records').select('*')
+        .eq('tahun_ajaran_id', activeTa.id).eq('semester', semester)
+        .gte('created_at', fromIso).lte('created_at', toIso)
+      if (filterKelas !== 'all') query = query.eq('kelas', filterKelas)
+      return query.order('created_at', { ascending: false }).range(from, to)
+    })
 
     const ExcelJS = await import('exceljs')
     const { saveAs } = await import('file-saver')
@@ -794,11 +821,14 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
 
     setRekalkulasiLoading(true)
     try {
-      // 1. Ambil semua point_records untuk TA & semester ini
-      const { data: allRecords } = await supabase.from('point_records')
-        .select('nisn, poin_diberikan')
-        .eq('tahun_ajaran_id', activeTa.id)
-        .eq('semester', semester)
+      // 1. Ambil semua point_records untuk TA & semester ini (paginasi penuh >1000 data)
+      const allRecords = await fetchAllRows((from, to) =>
+        supabase.from('point_records')
+          .select('nisn, poin_diberikan')
+          .eq('tahun_ajaran_id', activeTa.id)
+          .eq('semester', semester)
+          .range(from, to)
+      )
 
       // 2. Hitung total pengurangan poin per siswa
       const poinByNisn = {}

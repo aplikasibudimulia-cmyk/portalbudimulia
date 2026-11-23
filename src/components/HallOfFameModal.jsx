@@ -2,6 +2,22 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../supabaseClient'
 
+// Helper paginasi penuh untuk mengambil seluruh baris point_records (> 1000 baris)
+const fetchAllRows = async (queryBuilder, pageSize = 1000) => {
+  let allRows = []
+  let from = 0
+  while (true) {
+    const to = from + pageSize - 1
+    const { data, error } = await queryBuilder(from, to)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows = allRows.concat(data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
+
 // Helper tie-ranking yang adil: Nilai sama = Peringkat sama
 const assignTieRanks = (items, scoreFn) => {
   let currentRank = 1
@@ -148,18 +164,20 @@ export default function HallOfFameModal({
         end = today
       }
 
-      // Fetch point_records
-      let q = supabase
-        .from('point_records')
-        .select('*')
-        .gte('tanggal', start)
-        .lte('tanggal', end)
+      // Fetch seluruh point_records dengan paginasi (> 1000 data)
+      const recs = await fetchAllRows((from, to) => {
+        let q = supabase
+          .from('point_records')
+          .select('*')
+          .gte('tanggal', start)
+          .lte('tanggal', end)
+          .range(from, to)
 
-      if (activeTa?.id) {
-        q = q.or(`tahun_ajaran_id.eq.${activeTa.id},tahun_ajaran_id.is.null`)
-      }
-
-      const { data: recs } = await q
+        if (activeTa?.id) {
+          q = q.or(`tahun_ajaran_id.eq.${activeTa.id},tahun_ajaran_id.is.null`)
+        }
+        return q
+      })
       const records = recs || []
       const allNisns = Array.from(new Set(records.map(r => r.nisn)))
 
