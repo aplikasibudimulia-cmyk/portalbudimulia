@@ -21,16 +21,13 @@ import {
   Shield,
   ArrowUpRight,
   ChevronLeft,
-  Eye,
-  EyeOff,
-  SlidersHorizontal,
   FileCheck2,
-  Send,
   CreditCard,
   Grid,
   TrendingUp,
   Flame,
-  FlameKindling
+  BadgeCheck,
+  BookMarked
 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 
@@ -46,8 +43,7 @@ import SiswaProfilSection from '../components/SiswaProfilSection'
 export default function RedesignDashboardPreview() {
   const [viewMode, setViewMode] = useState('mobile_mockup')
   const [activeMenu, setActiveMenu] = useState(null)
-  const [activeSegment, setActiveSegment] = useState('akademik') // 'ringkasan', 'akademik', 'disiplin'
-  const [showPoin, setShowPoin] = useState(true)
+  const [activeTab, setActiveTab] = useState('hari_ini') // 'hari_ini', 'akademik', 'kesiswaan'
 
   // Ambil Data Sesi Siswa Riil
   const [student, setStudent] = useState(() => {
@@ -56,12 +52,12 @@ export default function RedesignDashboardPreview() {
       if (raw) return JSON.parse(raw)
     } catch (e) {}
     return {
-      nama: "Anselmus Mediari",
-      panggilan: "Gesta",
-      nisn: "890104481",
+      nama: "Axel Jonathan",
+      nisn: "0089218291",
       kelas: "8-A",
       waliKelas: "Anselmus M. Gestawan, S.Pd.",
-      tahun_ajaran: "2026/2027 Ganjil"
+      tahun_ajaran: "2026/2027 Ganjil",
+      foto: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"
     }
   })
 
@@ -97,7 +93,7 @@ export default function RedesignDashboardPreview() {
     loadStats()
   }, [student?.nisn])
 
-  // 8 Fitur Pilihan Grid Gaya Wondr dengan Palet Logo Budi Mulia (Navy, Crimson, Gold, Azure)
+  // 8 Fitur Pilihan Grid Gaya Wondr dengan Palet Budi Mulia
   const fiturBudiMulia = [
     { id: "PRESENSI", label: "Presensi QR", icon: QrCode, bg: "bg-[#0B2B7A] text-white shadow-blue-900/10" },
     { id: "JADWAL", label: "Jadwal", icon: CalendarDays, bg: "bg-[#1E50C8] text-white shadow-blue-600/10" },
@@ -109,7 +105,13 @@ export default function RedesignDashboardPreview() {
     { id: "MENU_LAIN", label: "Lihat Semua", icon: Grid, bg: "bg-white text-slate-700 border border-slate-200" },
   ]
 
-  const panggilanNama = student?.nama?.split(' ')[1] || student?.nama?.split(' ')[0] || "Gesta"
+  const jadwalHariIni = [
+    { jam: "07.00 - 08.20", mapel: "Matematika", guru: "Anselmus M. Gestawan, S.Pd.", ruang: "R. " + (student?.kelas || "8-A"), status: "Selesai" },
+    { jam: "08.20 - 09.40", mapel: "Bahasa Indonesia", guru: "Maria Fransiska, M.Pd.", ruang: "R. " + (student?.kelas || "8-A"), status: "Sedang Berlangsung" },
+    { jam: "10.00 - 11.20", mapel: "IPA Terpadu", guru: "Budi Santoso, M.Si.", ruang: "Lab IPA", status: "Akan Datang" },
+  ]
+
+  const panggilanNama = student?.nama?.split(' ')[0] || "Axel"
 
   return (
     <div className="min-h-screen bg-[#F0F3F8] font-sans antialiased text-slate-800 flex flex-col">
@@ -118,8 +120,8 @@ export default function RedesignDashboardPreview() {
       <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between text-xs sticky top-0 z-50">
         <div className="flex items-center gap-2">
           <div className="w-2.5 h-2.5 rounded-full bg-[#0B2B7A] border border-amber-400"></div>
-          <span className="font-extrabold text-[#0B2B7A] tracking-wider text-sm">wondr</span>
-          <span className="text-[10px] text-slate-400 font-bold">x SMP Budi Mulia</span>
+          <span className="font-extrabold text-[#0B2B7A] tracking-wider text-sm">eBudiMulia</span>
+          <span className="text-[10px] text-slate-400 font-bold">Portal Siswa</span>
         </div>
 
         <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
@@ -164,17 +166,26 @@ export default function RedesignDashboardPreview() {
             
             <div className="pb-24">
               
-              {/* TOP HEADER: Logo Navy Budi Mulia & Tombol Poin Emas */}
+              {/* TOP HEADER: Logo Asli eBudiMulia (Bukan Wondr Lagi!) */}
               <div className="px-5 pt-5 pb-2 flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-2xl font-black text-[#0B2B7A] tracking-tighter">wondr</span>
-                  <span className="text-[10px] font-extrabold text-[#D31725] uppercase mt-2">by Budi Mulia</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-[#0B2B7A] flex items-center justify-center text-white shadow-xs border border-amber-400">
+                    <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
+                  </div>
+                  <div>
+                    <h1 className="text-lg font-black tracking-tight text-[#0B2B7A] leading-none">
+                      eBudi<span className="text-[#D31725]">Mulia</span>
+                    </h1>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mt-0.5">
+                      SMP Budi Mulia
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => setActiveMenu('POIN')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-[#FFFDF0] shadow-2xs text-xs font-extrabold text-amber-900 hover:bg-amber-100/60 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-[#FFFDF0] shadow-2xs text-xs font-black text-amber-900 hover:bg-amber-100/60 transition-colors"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
                     <span>{stats.poinPositif} Poin</span>
@@ -207,8 +218,8 @@ export default function RedesignDashboardPreview() {
                   </div>
                 </div>
               ) : (
-                /* HALAMAN UTAMA BERANDA GAYA WONDR DENGAN WARNA LOGO BUDI MULIA */
-                <div className="px-5 space-y-5">
+                /* HALAMAN UTAMA BERANDA SISWA */
+                <div className="px-5 space-y-4">
                   
                   {/* Greeting & Action Icons Row */}
                   <div className="flex items-center justify-between pt-1">
@@ -217,7 +228,7 @@ export default function RedesignDashboardPreview() {
                         {panggilanNama.substring(0, 2).toUpperCase()}
                       </div>
                       <h2 className="text-lg font-black text-slate-900 tracking-tight">
-                        Hi, {panggilanNama}!
+                        Hi, {panggilanNama}! 👋
                       </h2>
                     </div>
 
@@ -240,163 +251,223 @@ export default function RedesignDashboardPreview() {
                     </div>
                   </div>
 
-                  {/* Segmented Pill Tabs Wondr dengan Aksen Emas (#F6C800) */}
+                  {/* 3 Tab Filter Fungsional: Hari Ini / Akademik / Kesiswaan */}
                   <div className="bg-slate-100 p-1 rounded-full flex items-center justify-between text-xs font-bold text-slate-600">
                     <button 
-                      onClick={() => setActiveSegment('ringkasan')}
+                      onClick={() => setActiveTab('hari_ini')}
                       className={`flex-1 py-2 rounded-full transition-all text-center ${
-                        activeSegment === 'ringkasan' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
+                        activeTab === 'hari_ini' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
                       }`}
                     >
-                      Ringkasan
+                      Hari Ini
                     </button>
                     <button 
-                      onClick={() => setActiveSegment('akademik')}
+                      onClick={() => setActiveTab('akademik')}
                       className={`flex-1 py-2 rounded-full transition-all text-center ${
-                        activeSegment === 'akademik' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
+                        activeTab === 'akademik' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
                       }`}
                     >
                       Akademik
                     </button>
                     <button 
-                      onClick={() => setActiveSegment('disiplin')}
+                      onClick={() => setActiveTab('kesiswaan')}
                       className={`flex-1 py-2 rounded-full transition-all text-center ${
-                        activeSegment === 'disiplin' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
+                        activeTab === 'kesiswaan' ? 'bg-[#F6C800] text-slate-950 font-black shadow-2xs' : 'hover:text-slate-900'
                       }`}
                     >
-                      Buku Saku
+                      Kesiswaan
                     </button>
                   </div>
 
-                  {/* KARTU UTAMA HORIZONTAL (ROYAL NAVY #0B2B7A DENGAN LOGO BUDI MULIA & STRIP MERAH #D31725) */}
+                  {/* KARTU IDENTITAS SISWA (Bukan Kartu ATM/Rekening Lagi!) */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-extrabold text-slate-900">Kartu Pelajar & Poin Kamu</h4>
+                      <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Kartu Pelajar Digital</h4>
                       <button 
                         onClick={() => setActiveMenu('PROFIL')}
                         className="text-xs font-bold text-[#0B2B7A] hover:underline"
                       >
-                        Lihat Kartu
+                        Detail Siswa →
                       </button>
                     </div>
 
-                    {/* Card Navy Budi Mulia Berwibawa */}
-                    <div className="relative rounded-3xl p-5 text-white shadow-xl overflow-hidden bg-gradient-to-br from-[#0B2B7A] via-[#103896] to-[#071E54] border border-blue-900">
+                    {/* Card Pelajar Budi Mulia dengan Foto, NISN, dan Kelas */}
+                    <div className="relative rounded-3xl p-4 sm:p-5 text-white shadow-xl overflow-hidden bg-gradient-to-br from-[#0B2B7A] via-[#103896] to-[#071E54] border border-blue-900">
                       
                       {/* Pola Strip Merah Obor & Lingkaran Emas di Latar */}
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-[#D31725]/30 rounded-bl-full pointer-events-none"></div>
+                      <div className="absolute top-0 right-0 w-28 h-28 bg-[#D31725]/30 rounded-bl-full pointer-events-none"></div>
                       <div className="absolute -left-10 -bottom-10 w-36 h-36 bg-[#F6C800]/15 rounded-full pointer-events-none"></div>
 
-                      <div className="flex items-center justify-between relative z-10">
+                      {/* Header Kartu */}
+                      <div className="flex items-center justify-between relative z-10 pb-3 border-b border-white/15">
                         <div className="flex items-center gap-1.5">
                           <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
                           <span className="text-[11px] font-black uppercase tracking-wider text-white">
-                            SMP BUDI MULIA
+                            SMP BUDI MULIA JAKARTA
                           </span>
                         </div>
-                        <span className="px-2.5 py-0.5 rounded-full bg-white/15 backdrop-blur-md text-[10px] font-black text-amber-300 border border-white/20">
-                          Kelas {student?.kelas}
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 backdrop-blur-md text-[10px] font-black text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                          <BadgeCheck className="w-3 h-3" /> Siswa Aktif
                         </span>
                       </div>
 
-                      <div className="mt-3.5 relative z-10">
-                        <span className="text-xl font-black tracking-widest font-mono text-white">
-                          {student?.nisn}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-white/15 flex items-center justify-between relative z-10">
-                        <div>
-                          <p className="text-[10px] text-blue-200 font-medium">Kredit Poin Apresiasi</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-lg font-black font-mono text-amber-400">
-                              {showPoin ? `${stats.poinPositif} POIN` : "••••••••"}
-                            </span>
-                            <button onClick={() => setShowPoin(!showPoin)} className="text-blue-200 hover:text-white">
-                              {showPoin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
+                      {/* Body Kartu: FOTO SISWA + NAMA + KELAS + NISN */}
+                      <div className="pt-3.5 flex items-center gap-3.5 relative z-10">
+                        {/* Foto Siswa Asli */}
+                        <div className="relative shrink-0">
+                          <img 
+                            src={student?.foto || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"}
+                            alt={student?.nama}
+                            className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-400 shadow-md"
+                          />
+                          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-[#0B2B7A] rounded-full"></div>
                         </div>
 
-                        <div className="text-right">
-                          <span className="text-[10px] text-blue-200 font-medium block">Status Disiplin</span>
-                          <span className="inline-block px-2.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[10px] font-black mt-0.5">
-                            BERSIH (0)
-                          </span>
+                        {/* Detail Info Siswa */}
+                        <div className="overflow-hidden flex-1">
+                          <h3 className="text-base font-black text-white truncate leading-tight">
+                            {student?.nama}
+                          </h3>
+                          <p className="text-xs font-semibold text-amber-300 mt-0.5">
+                            Kelas {student?.kelas} • Ruang Belajar
+                          </p>
+                          <p className="text-[11px] text-blue-200 font-mono mt-0.5">
+                            NISN: <span className="text-white font-bold tracking-wide">{student?.nisn}</span>
+                          </p>
                         </div>
                       </div>
+
+                      {/* Footer Kartu: Poin & Status Disiplin */}
+                      <div className="mt-3.5 pt-3 border-t border-white/15 flex items-center justify-between relative z-10 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          <span className="text-blue-100 text-[11px]">Kredit Poin:</span>
+                          <span className="font-black font-mono text-amber-400">+{stats.poinPositif}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-blue-100 text-[11px]">Kehadiran:</span>
+                          <span className="font-black text-emerald-400 font-mono">{stats.kehadiranPersen}%</span>
+                        </div>
+                      </div>
+
                     </div>
                   </div>
 
-                  {/* FITUR PILIHAN GRID (8 SQUIRCLE ICONS DENGAN WARNA LOGO RESMI) */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-extrabold text-slate-900">Fitur Pilihan Kamu</h4>
-                      <button className="text-xs font-bold text-[#0B2B7A] hover:underline">Atur</button>
-                    </div>
+                  {/* KONTEN BERDASARKAN TAB YANG DIPILIH */}
+                  {activeTab === 'hari_ini' && (
+                    <div className="space-y-4">
+                      {/* FITUR PILIHAN GRID (8 SQUIRCLE ICONS DENGAN WARNA LOGO RESMI) */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2.5">
+                          <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Layanan Utama Siswa</h4>
+                          <span className="text-[10px] text-slate-400">Pintasan Cepat</span>
+                        </div>
 
-                    <div className="grid grid-cols-4 gap-y-4 gap-x-2">
-                      {fiturBudiMulia.map((fitur) => {
-                        const IconC = fitur.icon
-                        return (
-                          <div 
-                            key={fitur.id}
-                            onClick={() => setActiveMenu(fitur.id === "MENU_LAIN" ? null : fitur.id)}
-                            className="flex flex-col items-center cursor-pointer group active:scale-95 transition-transform"
+                        <div className="grid grid-cols-4 gap-y-3.5 gap-x-2">
+                          {fiturBudiMulia.map((fitur) => {
+                            const IconC = fitur.icon
+                            return (
+                              <div 
+                                key={fitur.id}
+                                onClick={() => setActiveMenu(fitur.id === "MENU_LAIN" ? null : fitur.id)}
+                                className="flex flex-col items-center cursor-pointer group active:scale-95 transition-transform"
+                              >
+                                <div className={`w-13 h-13 sm:w-14 sm:h-14 rounded-2xl ${fitur.bg} flex items-center justify-center shadow-xs group-hover:shadow-md transition-shadow`}>
+                                  <IconC className="w-6 h-6 stroke-[2.2]" />
+                                </div>
+                                <span className="text-[11px] font-bold text-slate-800 text-center mt-1.5 leading-tight">
+                                  {fitur.label}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {/* BANNER MAPEL AKTIF HARI INI */}
+                      <div className="bg-[#FFFDF0] rounded-3xl p-4 shadow-xs border border-amber-200">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#D31725] text-white text-[10px] font-extrabold uppercase">
+                            Sedang Berlangsung
+                          </span>
+                          <span className="text-xs text-slate-500 font-mono font-bold">08.20 - 09.40 WIB</span>
+                        </div>
+                        <h3 className="text-sm font-black text-slate-900">
+                          Bahasa Indonesia — Kelas {student?.kelas}
+                        </h3>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          Guru: Maria Fransiska, M.Pd. • R. 8-A
+                        </p>
+                        <div className="mt-3 flex items-center justify-between pt-2 border-t border-amber-200/60">
+                          <span className="text-[11px] text-slate-500">Materi: Teks Eksplanasi</span>
+                          <button 
+                            onClick={() => setActiveMenu('JADWAL')}
+                            className="text-xs font-bold text-[#0B2B7A] hover:underline"
                           >
-                            <div className={`w-14 h-14 rounded-2xl ${fitur.bg} flex items-center justify-center shadow-xs group-hover:shadow-md transition-shadow`}>
-                              <IconC className="w-6 h-6 stroke-[2.2]" />
-                            </div>
-                            <span className="text-[11px] font-bold text-slate-800 text-center mt-2 leading-tight">
-                              {fitur.label}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  {/* BANNER INFORMASI JADWAL AKADEMIK */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-extrabold text-slate-900">Jadwal & Agenda Hari Ini</h4>
-                      <button 
-                        onClick={() => setActiveMenu('JADWAL')}
-                        className="text-xs font-bold text-[#0B2B7A] hover:underline"
-                      >
-                        Lihat Semua
-                      </button>
-                    </div>
-
-                    {/* Card Banner Melengkung dengan Aksen Biru-Emas Budi Mulia */}
-                    <div className="bg-[#FFFDF0] rounded-3xl p-5 shadow-xs border border-amber-200 relative overflow-hidden">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#D31725] text-white text-[10px] font-extrabold uppercase">
-                          Sesi Aktif
-                        </span>
-                        <span className="text-xs text-slate-500 font-semibold">08.20 - 09.40 WIB</span>
+                            Jadwal Hari Ini →
+                          </button>
+                        </div>
                       </div>
-                      <h3 className="text-base font-black text-slate-950 leading-snug">
-                        Bahasa Indonesia — Kelas {student?.kelas}
-                      </h3>
-                      <p className="text-xs text-slate-600 mt-1 font-medium">
-                        Guru: Maria Fransiska, M.Pd. • R. 8-A
-                      </p>
+                    </div>
+                  )}
+
+                  {activeTab === 'akademik' && (
+                    <div className="space-y-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-2xs">
+                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Jadwal Kelas Hari Ini</h4>
+                      <div className="divide-y divide-slate-100">
+                        {jadwalHariIni.map((j, idx) => (
+                          <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
+                            <div>
+                              <p className="font-bold text-slate-900">{j.mapel}</p>
+                              <p className="text-[11px] text-slate-500">{j.guru} • {j.ruang}</p>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-mono text-slate-400 block">{j.jam}</span>
+                              <span className={`text-[10px] font-bold ${j.status === 'Sedang Berlangsung' ? 'text-[#D31725]' : 'text-slate-500'}`}>
+                                {j.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                       <button 
-                        onClick={() => setActiveMenu('JADWAL')}
-                        className="mt-3 px-4 py-2 bg-[#0B2B7A] text-white text-xs font-bold rounded-xl shadow-xs hover:bg-[#08205C] transition-colors"
+                        onClick={() => setActiveMenu('NILAI')}
+                        className="w-full py-2 bg-[#0B2B7A] text-white font-bold text-xs rounded-xl hover:bg-[#08205C] transition-colors mt-2"
                       >
-                        Buka Jadwal Lengkap
+                        Lihat Transkrip Rapor TP Siswa
                       </button>
                     </div>
-                  </div>
+                  )}
+
+                  {activeTab === 'kesiswaan' && (
+                    <div className="space-y-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-2xs">
+                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Buku Saku & Kedisiplinan</h4>
+                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl border border-blue-100 text-xs">
+                        <div>
+                          <p className="text-[10px] text-blue-600 font-bold uppercase">Poin Prestasi</p>
+                          <p className="text-lg font-black text-[#0B2B7A]">+{stats.poinPositif} Poin</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-emerald-700 font-bold uppercase">Pelanggaran</p>
+                          <p className="text-lg font-black text-emerald-700">{stats.poinPelanggaran} Poin</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setActiveMenu('POIN')}
+                        className="w-full py-2 bg-[#F6C800] text-slate-950 font-black text-xs rounded-xl hover:bg-amber-400 transition-colors mt-2"
+                      >
+                        Buka Buku Saku Lengkap
+                      </button>
+                    </div>
+                  )}
 
                 </div>
               )}
 
             </div>
 
-            {/* FLOATING BOTTOM NAV BAR DENGAN TOMBOL SCAN QR PRESENSI DI TENGAH (#0B2B7A + GOLD) */}
+            {/* FLOATING BOTTOM NAV BAR DENGAN TOMBOL SCAN QR PRESENSI DI TENGAH */}
             <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-6 py-2.5 flex items-center justify-between z-40">
               
               <button 
@@ -415,7 +486,7 @@ export default function RedesignDashboardPreview() {
                 <span className="text-[10px]">Jadwal</span>
               </button>
 
-              {/* TOMBOL SCAN QR PRESENSI MELAYANG DI TENGAH (NAVY DENGAN IKON EMAS) */}
+              {/* TOMBOL SCAN QR PRESENSI MELAYANG DI TENGAH */}
               <div className="-mt-6">
                 <button 
                   onClick={() => setActiveMenu('PRESENSI')}
