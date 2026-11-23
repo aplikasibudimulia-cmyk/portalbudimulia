@@ -29,13 +29,16 @@ import {
   MoreHorizontal,
   TrendingUp,
   UserCheck,
-  AlertCircle,
-  HelpCircle,
-  Headphones
+  CreditCard,
+  FolderOpen,
+  DollarSign,
+  UserCog,
+  FileSpreadsheet,
+  Tv
 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 
-// Import Modul Komponen Asli Admin
+// Import Modul Komponen Asli Admin eBudimulia
 import AdminManajemenAkunSection from '../components/AdminManajemenAkunSection'
 import RekapPoinSiswaSection from '../components/RekapPoinSiswaSection'
 import AdminCatatPoinSection from '../components/AdminCatatPoinSection'
@@ -43,72 +46,150 @@ import AdminPengajuanPoinSection from '../components/AdminPengajuanPoinSection'
 import AdminJadwalPelajaranSection from '../components/AdminJadwalPelajaranSection'
 import AdminActivityLogSection from '../components/AdminActivityLogSection'
 import AdminPresensiConfigSection from '../components/AdminPresensiConfigSection'
+import AdminKartuPelajarSection from '../components/AdminKartuPelajarSection'
+import AdminKartuUjianSection from '../components/AdminKartuUjianSection'
+import LegerNilaiKurikulumSection from '../components/LegerNilaiKurikulumSection'
+import RaporSiswaSection from '../components/RaporSiswaSection'
+import TabunganSiswaSection from '../components/TabunganSiswaSection'
+import TagihanSppSection from '../components/TagihanSppSection'
+import AdminRoleSection from '../components/AdminRoleSection'
+import AdminEkskulSection from '../components/AdminEkskulSection'
+import AdminBKKonsultasiSection from '../components/AdminBKKonsultasiSection'
 
 export default function RedesignAdminPreview() {
   const [activeMenu, setActiveMenu] = useState('dashboard')
+  const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
 
+  // Data State Lengkap yang Diperlukan oleh Modul Admin
+  const [students, setStudents] = useState([])
+  const [fotos, setFotos] = useState([])
+  const [activeTa, setActiveTa] = useState(null)
+  const [tahunAjarans, setTahunAjarans] = useState([])
+  
   // Data Statistik Riil Sekolah dari Supabase
   const [stats, setStats] = useState({
     totalSiswa: 410,
     totalGuru: 28,
     totalPoinRecords: 3684,
     presensiTodayCount: 398,
-    presensiPersen: 97.2,
-    pengajuanPending: 12
+    presensiPersen: 97.2
   })
 
-  const [recentRecords, setRecentRecords] = useState([
-    { id: "#POIN-3684", siswa: "Axel Jonathan", kelas: "8-A", kategori: "Prestasi", poin: "+25", tanggal: "23-11-26", status: "Verified" },
-    { id: "#POIN-3683", siswa: "Clarissa Aurelia", kelas: "7-B", kategori: "Disiplin", poin: "+5", tanggal: "23-11-26", status: "Verified" },
-    { id: "#POIN-3682", siswa: "David Pratama", kelas: "9-A", kategori: "Organisasi", poin: "+10", tanggal: "23-11-26", status: "Pending" },
-    { id: "#POIN-3681", siswa: "Evelyn Nicole", kelas: "8-B", kategori: "Akademik", poin: "+15", tanggal: "22-11-26", status: "Verified" },
-    { id: "#POIN-3680", siswa: "Farhan Mahendra", kelas: "7-A", kategori: "Disiplin", poin: "+5", tanggal: "22-11-26", status: "Verified" },
-  ])
+  // Sesi Admin Pak Ansel
+  const session = {
+    username: "ebudimulia.anselmus",
+    nama_guru: "Anselmus Mediari Gestawan, S.Pd.",
+    role: "admin",
+    is_admin: true
+  }
 
-  // Load Real Data dari Database
-  useEffect(() => {
-    async function loadAdminRealStats() {
-      setLoading(true)
-      try {
-        const todayStr = new Date().toISOString().split('T')[0]
+  // Fetch Full Data yang Dibutuhkan oleh Manajemen Akun, Kartu Pelajar, dll
+  const loadFullAdminData = async () => {
+    setLoading(true)
+    try {
+      const todayStr = new Date().toISOString().split('T')[0]
 
-        const [resSiswa, resGuru, resPoin, resPresensiToday] = await Promise.all([
-          supabase.from('siswa_permanent').select('nisn', { count: 'exact', head: true }),
-          supabase.from('guru').select('id', { count: 'exact', head: true }),
-          supabase.from('point_records').select('id', { count: 'exact', head: true }),
-          supabase.from('presensi_siswa').select('id', { count: 'exact', head: true }).eq('tanggal', todayStr)
-        ])
+      const [resSiswa, resTa, resAllTa, resFotos, resGuru, resPoin, resPresensiToday] = await Promise.all([
+        supabase.from('siswa_lengkap').select('*').order('nama_lengkap'),
+        supabase.from('tahun_ajaran').select('*').eq('is_aktif', true).maybeSingle(),
+        supabase.from('tahun_ajaran').select('*').order('nama', { ascending: false }),
+        supabase.from('foto').select('*').order('created_at', { ascending: false }),
+        supabase.from('guru').select('id', { count: 'exact', head: true }),
+        supabase.from('point_records').select('id', { count: 'exact', head: true }),
+        supabase.from('presensi_siswa').select('id', { count: 'exact', head: true }).eq('tanggal', todayStr)
+      ])
 
-        setStats(prev => ({
-          ...prev,
-          totalSiswa: resSiswa?.count || 410,
-          totalGuru: resGuru?.count || 28,
-          totalPoinRecords: resPoin?.count || 3684,
-          presensiTodayCount: resPresensiToday?.count || 398,
-          presensiPersen: resSiswa?.count ? Math.round(((resPresensiToday?.count || 398) / resSiswa.count) * 100) : 97.2
-        }))
-      } catch (err) {
-        console.error("Gagal load admin stats:", err)
-      } finally {
-        setLoading(false)
-      }
+      if (resSiswa?.data) setStudents(resSiswa.data)
+      if (resTa?.data) setActiveTa(resTa.data)
+      if (resAllTa?.data) setTahunAjarans(resAllTa.data)
+      if (resFotos?.data) setFotos(resFotos.data)
+
+      setStats({
+        totalSiswa: resSiswa?.data?.length || 410,
+        totalGuru: resGuru?.count || 28,
+        totalPoinRecords: resPoin?.count || 3684,
+        presensiTodayCount: resPresensiToday?.count || 398,
+        presensiPersen: resSiswa?.data?.length ? Math.round(((resPresensiToday?.count || 398) / resSiswa.data.length) * 100) : 97.2
+      })
+
+    } catch (err) {
+      console.error("Gagal load full admin data:", err)
+    } finally {
+      setLoading(false)
     }
-    loadAdminRealStats()
+  }
+
+  useEffect(() => {
+    loadFullAdminData()
   }, [])
+
+  // SELURUH DAFTAR MENU LENGKAP ADMIN EBUDIMULIA
+  const allAdminMenuGroups = [
+    {
+      group: "Utama & Analitik",
+      items: [
+        { id: "dashboard", label: "Dashboard Utama", icon: Activity },
+        { id: "log_aktivitas", label: "Audit & Log Sistem", icon: Clock },
+      ]
+    },
+    {
+      group: "Kesiswaan & SDM",
+      items: [
+        { id: "manajemen_akun", label: "Manajemen Akun Siswa & Guru", icon: Users },
+        { id: "kartu_pelajar", label: "Cetak Kartu Pelajar", icon: CreditCard },
+        { id: "kartu_ujian", label: "Cetak Kartu Ujian", icon: FileText },
+        { id: "rekap_poin", label: "Rekap & Statistik Poin Siswa", icon: Shield },
+        { id: "catat_poin", label: "Catat Poin & Rekalkulasi", icon: Sparkles },
+        { id: "pengajuan_poin", label: "Verifikasi Pengajuan Poin", icon: CheckCircle2 },
+        { id: "konsultasi_bk", label: "Layanan Konseling BK", icon: Layers },
+      ]
+    },
+    {
+      group: "Kurikulum & Akademik",
+      items: [
+        { id: "jadwal_pelajaran", label: "Jadwal Pelajaran Kelas", icon: CalendarDays },
+        { id: "leger_nilai", label: "Leger Nilai Kurikulum", icon: FileSpreadsheet },
+        { id: "rapor_siswa", label: "Rapor & Capaian TP", icon: GraduationCap },
+        { id: "ekskul_nilai", label: "Penilaian Ekstrakurikuler", icon: Award },
+        { id: "presensi_qr", label: "Konfigurasi Presensi & QR", icon: QrCode },
+      ]
+    },
+    {
+      group: "Keuangan & Tata Usaha",
+      items: [
+        { id: "tabungan_siswa", label: "Buku Tabungan Siswa", icon: DollarSign },
+        { id: "tagihan_spp", label: "Tagihan SPP & Pembayaran", icon: FileText },
+      ]
+    },
+    {
+      group: "Pengaturan Sistem",
+      items: [
+        { id: "manajemen_role", label: "Hak Akses & Role Pengguna", icon: UserCog },
+      ]
+    }
+  ]
+
+  // Filter Search Menu
+  const filteredMenuGroups = allAdminMenuGroups.map(grp => ({
+    ...grp,
+    items: grp.items.filter(item => 
+      item.label.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  })).filter(grp => grp.items.length > 0)
 
   return (
     <div className="min-h-screen bg-[#F3F5F9] font-sans antialiased text-slate-800 flex selection:bg-[#009688]/20">
       
       {/* ============================================================== */}
-      {/* 1. SIDEBAR INVOZA STYLE (Clean White Card dengan Rounded Kiri)  */}
+      {/* 1. SIDEBAR INVOZA STYLE DENGAN SELURUH MENU LENGKAP            */}
       {/* ============================================================== */}
-      <aside className="w-64 bg-white border-r border-slate-200/80 flex flex-col justify-between shrink-0 sticky top-0 h-screen shadow-2xs z-40 select-none">
+      <aside className="w-68 bg-white border-r border-slate-200/80 flex flex-col justify-between shrink-0 sticky top-0 h-screen shadow-2xs z-40 select-none">
         
         <div className="flex flex-col h-full overflow-hidden">
           
           {/* Logo Brand Invoza Style: eBudiMulia */}
-          <div className="p-6 pb-4 flex items-center justify-between">
+          <div className="p-5 pb-3 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#009688] to-[#26A69A] flex items-center justify-center text-white shadow-sm shadow-[#009688]/20">
                 <Flame className="w-5 h-5 text-white fill-white" />
@@ -124,126 +205,62 @@ export default function RedesignAdminPreview() {
             </div>
           </div>
 
-          {/* Search Box Invoza Style */}
-          <div className="px-5 mb-3">
+          {/* Search Menu Box (Bisa Cari Seluruh Menu Seketika) */}
+          <div className="px-4 mb-2">
             <div className="flex items-center bg-[#F8FAFC] border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500">
               <Search className="w-3.5 h-3.5 text-slate-400 mr-2 shrink-0" />
               <input 
                 type="text" 
-                placeholder="Search..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari menu admin..." 
                 className="bg-transparent outline-none w-full text-xs text-slate-700 placeholder-slate-400"
               />
-              <kbd className="px-1.5 py-0.5 text-[9px] font-mono bg-white border border-slate-200 rounded text-slate-400">
-                /
-              </kbd>
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 text-xs">
+                  ✕
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Navigation Menu Categories (Persis seperti Invoza) */}
-          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-5">
-            
-            {/* Category 1: Main Menu */}
-            <div>
-              <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Main Menu
-              </p>
-              <div className="space-y-0.5">
-                {[
-                  { id: 'dashboard', label: 'Dashboard', icon: Activity },
-                  { id: 'rekap_poin', label: 'Rekap Poin Siswa', icon: Shield },
-                  { id: 'catat_poin', label: 'Catat Poin', icon: Sparkles },
-                  { id: 'pengajuan_poin', label: 'Verifikasi Poin', icon: CheckCircle2 },
-                ].map((item) => {
-                  const IconC = item.icon
-                  const isActive = activeMenu === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveMenu(item.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                        isActive
-                          ? 'bg-slate-900 text-white shadow-xs font-bold'
-                          : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                      }`}
-                    >
-                      <IconC className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
+          {/* Navigation Menu Categories (SELURUH MENU LENGKAP) */}
+          <div className="flex-1 overflow-y-auto px-3.5 py-2 space-y-4">
+            {filteredMenuGroups.map((grp, gIdx) => (
+              <div key={gIdx}>
+                <p className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  {grp.group}
+                </p>
+                <div className="space-y-0.5">
+                  {grp.items.map((item) => {
+                    const IconC = item.icon
+                    const isActive = activeMenu === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveMenu(item.id)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all text-left ${
+                          isActive
+                            ? 'bg-slate-900 text-white shadow-xs font-bold'
+                            : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
+                        }`}
+                      >
+                        <IconC className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-
-            {/* Category 2: Academic & Students */}
-            <div>
-              <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Akademik & Siswa
-              </p>
-              <div className="space-y-0.5">
-                {[
-                  { id: 'manajemen_akun', label: 'Manajemen Akun', icon: Users },
-                  { id: 'jadwal_pelajaran', label: 'Jadwal Pelajaran', icon: CalendarDays },
-                  { id: 'presensi_config', label: 'Presensi & QR', icon: QrCode },
-                ].map((item) => {
-                  const IconC = item.icon
-                  const isActive = activeMenu === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveMenu(item.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                        isActive
-                          ? 'bg-slate-900 text-white shadow-xs font-bold'
-                          : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                      }`}
-                    >
-                      <IconC className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Category 3: Insights & Settings */}
-            <div>
-              <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Insights & Logs
-              </p>
-              <div className="space-y-0.5">
-                {[
-                  { id: 'log_aktivitas', label: 'Audit Log Sistem', icon: Clock },
-                ].map((item) => {
-                  const IconC = item.icon
-                  const isActive = activeMenu === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveMenu(item.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                        isActive
-                          ? 'bg-slate-900 text-white shadow-xs font-bold'
-                          : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                      }`}
-                    >
-                      <IconC className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
+            ))}
           </div>
 
           {/* User Profile Sesi Admin di Bawah */}
-          <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-[#FAFAFA]">
+          <div className="p-3.5 border-t border-slate-100 flex items-center justify-between bg-[#FAFAFA]">
             <div className="flex items-center gap-2.5 overflow-hidden">
-              <img 
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80" 
-                alt="Profile" 
-                className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
-              />
+              <div className="w-8 h-8 rounded-full bg-[#009688] text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                AM
+              </div>
               <div className="overflow-hidden">
                 <p className="text-xs font-bold text-slate-900 truncate">Pak Anselmus</p>
                 <p className="text-[10px] text-slate-400 truncate">Administrator</p>
@@ -263,14 +280,14 @@ export default function RedesignAdminPreview() {
       </aside>
 
       {/* ============================================================== */}
-      {/* 2. MAIN WORKSPACE INVOZA (Lega, Bersih, Card Modern & Rapi)     */}
+      {/* 2. MAIN WORKSPACE CONTENT                                      */}
       {/* ============================================================== */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         
         {/* Top Header Toolbar */}
         <header className="px-8 pt-5 pb-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-            <span>Dashboard</span>
+            <button onClick={() => setActiveMenu('dashboard')} className="hover:text-slate-900">Dashboard</button>
             <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-900 font-bold uppercase tracking-wide">
               {activeMenu.replace(/_/g, ' ')}
@@ -278,15 +295,17 @@ export default function RedesignAdminPreview() {
           </div>
 
           <div className="flex items-center gap-3">
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              {activeTa?.nama || 'TA 2026/2027 Ganjil'} Aktif
+            </span>
+
             <button className="w-8 h-8 rounded-full bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:bg-slate-50 shadow-2xs">
               <Bell className="w-4 h-4" />
             </button>
             <button className="w-8 h-8 rounded-full bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:bg-slate-50 shadow-2xs">
               <Settings className="w-4 h-4" />
             </button>
-            <div className="w-8 h-8 rounded-full bg-[#009688] text-white flex items-center justify-center font-bold text-xs shadow-2xs">
-              AM
-            </div>
           </div>
         </header>
 
@@ -294,11 +313,42 @@ export default function RedesignAdminPreview() {
         <main className="px-8 py-4 space-y-6 max-w-7xl">
           
           {/* ============================================================== */}
-          {/* JIKA MEMILIH SUB-MENU: RENDER KOMPONEN NYATA PRODUKSI          */}
+          {/* SELURUH SUB-MENU ADMIN SUDAH DILENGKAPI PROPS ASLI LENGKAP     */}
           {/* ============================================================== */}
           {activeMenu === 'manajemen_akun' && (
             <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
-              <AdminManajemenAkunSection onNavigate={setActiveMenu} />
+              <AdminManajemenAkunSection 
+                students={students} 
+                allFotos={fotos} 
+                activeTa={activeTa}
+                tahunAjarans={tahunAjarans}
+                initialSearchQuery=""
+                onRefresh={loadFullAdminData}
+              />
+            </div>
+          )}
+
+          {activeMenu === 'kartu_pelajar' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <AdminKartuPelajarSection 
+                students={students} 
+                allFotos={fotos} 
+                activeTa={activeTa}
+                tahunAjarans={tahunAjarans}
+                onRefresh={loadFullAdminData}
+              />
+            </div>
+          )}
+
+          {activeMenu === 'kartu_ujian' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <AdminKartuUjianSection 
+                students={students} 
+                allFotos={fotos} 
+                activeTa={activeTa}
+                tahunAjarans={tahunAjarans}
+                onRefresh={loadFullAdminData}
+              />
             </div>
           )}
 
@@ -322,7 +372,49 @@ export default function RedesignAdminPreview() {
 
           {activeMenu === 'jadwal_pelajaran' && (
             <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
-              <AdminJadwalPelajaranSection onNavigate={setActiveMenu} />
+              <AdminJadwalPelajaranSection session={session} activeTa={activeTa} />
+            </div>
+          )}
+
+          {activeMenu === 'leger_nilai' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <LegerNilaiKurikulumSection session={session} activeTa={activeTa} onNavigateToRapor={() => setActiveMenu('rapor_siswa')} />
+            </div>
+          )}
+
+          {activeMenu === 'rapor_siswa' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <RaporSiswaSection session={session} activeTa={activeTa} />
+            </div>
+          )}
+
+          {activeMenu === 'ekskul_nilai' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <AdminEkskulSection session={session} activeTa={activeTa} />
+            </div>
+          )}
+
+          {activeMenu === 'tabungan_siswa' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <TabunganSiswaSection session={session} activeTa={activeTa} mode="admin" />
+            </div>
+          )}
+
+          {activeMenu === 'tagihan_spp' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <TagihanSppSection session={session} activeTa={activeTa} readOnly={false} />
+            </div>
+          )}
+
+          {activeMenu === 'manajemen_role' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <AdminRoleSection />
+            </div>
+          )}
+
+          {activeMenu === 'konsultasi_bk' && (
+            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6">
+              <AdminBKKonsultasiSection />
             </div>
           )}
 
@@ -339,12 +431,12 @@ export default function RedesignAdminPreview() {
           )}
 
           {/* ============================================================== */}
-          {/* DASHBOARD UTAMA PERSIS GAYA INVOZA                            */}
+          {/* DASHBOARD UTAMA OVERVIEW INVOZA                                */}
           {/* ============================================================== */}
           {activeMenu === 'dashboard' && (
             <div className="space-y-6">
               
-              {/* Title Header & Action Controls Baris Atas */}
+              {/* Title Header Baris Atas */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
@@ -357,13 +449,12 @@ export default function RedesignAdminPreview() {
 
                 <div className="flex items-center gap-2.5">
                   <div className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 flex items-center gap-2 shadow-2xs">
-                    <span>Semester Ganjil</span>
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{activeTa?.nama || 'Semester Ganjil'}</span>
                   </div>
 
                   <div className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 flex items-center gap-2 shadow-2xs">
                     <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                    <span>23 Nov, 2026</span>
+                    <span>24 Nov, 2026</span>
                   </div>
 
                   <button 
@@ -371,12 +462,12 @@ export default function RedesignAdminPreview() {
                     className="bg-[#009688] hover:bg-[#00897B] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs shadow-[#009688]/20 flex items-center gap-1.5 transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Export Rekap</span>
+                    <span>Export Rekap Poin</span>
                   </button>
                 </div>
               </div>
 
-              {/* 4 KPI METRIC CARDS INVOZA STYLE (Dengan Mini Chart & Percentage) */}
+              {/* 4 KPI METRIC CARDS INVOZA STYLE */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 
                 {/* Metric 1: Total Siswa */}
@@ -394,14 +485,14 @@ export default function RedesignAdminPreview() {
                     {stats.totalSiswa} <span className="text-xs font-semibold text-slate-400">Siswa</span>
                   </div>
                   <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                    <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                    <span className="text-emerald-600 font-bold">
                       +100% Terdaftar
                     </span>
                     <span className="text-slate-400">Kelas 7, 8, 9</span>
                   </div>
                 </div>
 
-                {/* Metric 2: Presensi Hari Ini (72% Gauge Style) */}
+                {/* Metric 2: Presensi Hari Ini */}
                 <div 
                   onClick={() => setActiveMenu('presensi_config')}
                   className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs hover:shadow-md transition-all cursor-pointer"
@@ -423,7 +514,7 @@ export default function RedesignAdminPreview() {
                   </div>
                 </div>
 
-                {/* Metric 3: Catatan Poin Disiplin (Mini Bar Chart) */}
+                {/* Metric 3: Catatan Poin Disiplin */}
                 <div 
                   onClick={() => setActiveMenu('rekap_poin')}
                   className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs hover:shadow-md transition-all cursor-pointer"
@@ -441,7 +532,7 @@ export default function RedesignAdminPreview() {
                     {stats.totalPoinRecords.toLocaleString('id-ID')}
                   </div>
                   <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                    <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                    <span className="text-emerald-600 font-bold">
                       ✓ Unlimited Ready
                     </span>
                     <span className="text-slate-400">Semester 1</span>
@@ -472,10 +563,10 @@ export default function RedesignAdminPreview() {
 
               </div>
 
-              {/* 3 KOLOM TENGAH: Overview Grafik + Pintasan Kerja Cepat Invoza Style */}
+              {/* 3 KOLOM TENGAH: Overview Grafik + Quick Actions */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* Kolom Kiri (2 Span): Revenue/Attendance Overview Graph Box */}
+                {/* Kolom Kiri: Overview Graph Box */}
                 <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-3xl p-6 shadow-2xs flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-4">
@@ -499,7 +590,6 @@ export default function RedesignAdminPreview() {
                       </div>
                     </div>
 
-                    {/* Ilustrasi Grafik Garis Wave Elegan Invoza Style */}
                     <div className="h-44 w-full bg-gradient-to-b from-[#009688]/5 to-transparent rounded-2xl border border-dashed border-[#009688]/30 p-4 flex items-center justify-center relative overflow-hidden">
                       <div className="text-center space-y-1">
                         <TrendingUp className="w-8 h-8 text-[#009688] mx-auto animate-pulse" />
@@ -515,12 +605,12 @@ export default function RedesignAdminPreview() {
                       onClick={() => setActiveMenu('rekap_poin')}
                       className="font-bold text-[#009688] hover:underline"
                     >
-                      Buka Laporan Detail →
+                      Buka Rekap Detail →
                     </button>
                   </div>
                 </div>
 
-                {/* Kolom Kanan (1 Span): Quick Action Invoza Style */}
+                {/* Kolom Kanan: Quick Action */}
                 <div className="bg-white border border-slate-200/90 rounded-3xl p-6 shadow-2xs flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
@@ -534,10 +624,10 @@ export default function RedesignAdminPreview() {
 
                     <div className="space-y-3">
                       {[
-                        { id: 'catat_poin', label: 'Catat Poin Baru', desc: 'Input apresiasi / pelanggaran siswa', icon: Sparkles, color: 'text-amber-600 bg-amber-50' },
-                        { id: 'pengajuan_poin', label: 'Verifikasi Pengajuan', desc: '12 piagam siswa menunggu review', icon: CheckCircle2, color: 'text-[#009688] bg-teal-50' },
-                        { id: 'manajemen_akun', label: 'Tambah Akun Siswa', desc: 'Registrasi peserta didik baru', icon: Users, color: 'text-blue-600 bg-blue-50' },
-                        { id: 'jadwal_pelajaran', label: 'Atur Jadwal Kelas', desc: 'Update slot waktu & guru mapel', icon: CalendarDays, color: 'text-indigo-600 bg-indigo-50' },
+                        { id: 'catat_poin', label: 'Catat Poin Baru', desc: 'Input apresiasi / pelanggaran', icon: Sparkles, color: 'text-amber-600 bg-amber-50' },
+                        { id: 'pengajuan_poin', label: 'Verifikasi Pengajuan', desc: 'Review bukti piagam siswa', icon: CheckCircle2, color: 'text-[#009688] bg-teal-50' },
+                        { id: 'manajemen_akun', label: 'Kelola Akun Siswa', desc: '410 siswa terdaftar aktif', icon: Users, color: 'text-blue-600 bg-blue-50' },
+                        { id: 'kartu_pelajar', label: 'Cetak Kartu Pelajar', desc: 'Desain barcode & foto siswa', icon: CreditCard, color: 'text-indigo-600 bg-indigo-50' },
                       ].map((act) => {
                         const IconComp = act.icon
                         return (
@@ -571,65 +661,6 @@ export default function RedesignAdminPreview() {
                   </div>
                 </div>
 
-              </div>
-
-              {/* TABEL DATA RECENT RECORDS PERSIS GAYA INVOZA */}
-              <div className="bg-white border border-slate-200/90 rounded-3xl p-6 shadow-2xs">
-                <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
-                  <div>
-                    <h3 className="text-sm font-extrabold text-slate-900">
-                      Recent Point Transactions
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Catatan kedisiplinan dan apresiasi terbaru siswa SMP Budi Mulia
-                    </p>
-                  </div>
-
-                  <button 
-                    onClick={() => setActiveMenu('rekap_poin')}
-                    className="text-xs font-bold text-[#009688] hover:underline flex items-center gap-1"
-                  >
-                    <span>View All Records (3.684)</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[#F8FAFC] text-slate-500 uppercase text-[10px] font-bold tracking-wider">
-                      <tr>
-                        <th className="px-4 py-3 rounded-l-xl">Record ID</th>
-                        <th className="px-4 py-3">Nama Siswa</th>
-                        <th className="px-4 py-3">Kelas</th>
-                        <th className="px-4 py-3">Kategori</th>
-                        <th className="px-4 py-3">Poin</th>
-                        <th className="px-4 py-3">Tanggal</th>
-                        <th className="px-4 py-3 text-center rounded-r-xl">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                      {recentRecords.map((r, i) => (
-                        <tr key={i} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="px-4 py-3 font-mono font-bold text-slate-900">{r.id}</td>
-                          <td className="px-4 py-3 font-bold text-slate-900">{r.siswa}</td>
-                          <td className="px-4 py-3 font-mono">{r.kelas}</td>
-                          <td className="px-4 py-3">{r.kategori}</td>
-                          <td className="px-4 py-3 font-mono font-bold text-[#009688]">{r.poin}</td>
-                          <td className="px-4 py-3 font-mono text-slate-400">{r.tanggal}</td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              r.status === 'Verified' 
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}>
-                              {r.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
               </div>
 
             </div>
