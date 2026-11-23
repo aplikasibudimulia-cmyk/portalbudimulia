@@ -1,11 +1,235 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import katex from 'katex'
-import { renderFormattedMath } from './CbtSoalRenderer'
+import { renderFormattedMath, normalizeMathFormula, latexToFriendlyMath } from './CbtSoalRenderer'
 import { useConfirm } from '../../utils/useConfirm'
 import { useToast } from '../../utils/useToast'
 import { parseDocxFile, validateQuestionsList } from '../../utils/cbt/cbtDocxParser'
 import { downloadSampleDocxTemplate } from '../../utils/cbt/cbtDocxTemplateHelper'
 import CbtDuplicateWarningModal from './CbtDuplicateWarningModal'
+
+// ============================================================================
+// HELPER VISUAL EQUATION STUDIO (GAYA MS WORD EQUATION EDITOR)
+// ============================================================================
+
+let visualBlockCounter = 1
+const nextBlockId = () => `vb_${Date.now()}_${visualBlockCounter++}`
+
+/**
+ * Ekstraksi seluruh rumus ($...$, $$...$$, atau rumus LaTeX/akar berdiri sendiri) dari suatu teks
+ * sehingga guru dapat mengklik rumus mana pun untuk langsung diedit secara visual.
+ */
+function extractEquationsFromField(text) {
+  if (!text || typeof text !== 'string') return []
+  const results = []
+  // 1. Cari yang terbungkus $$...$$ atau $...$
+  const dollarRegex = /\$\$([\s\S]+?)\$\$|\$([^\$\n]+?)\$/g
+  let m
+  while ((m = dollarRegex.exec(text)) !== null) {
+    const inner = (m[1] !== undefined ? m[1] : m[2]).trim()
+    if (inner) {
+      results.push({
+        index: results.length,
+        rawMatch: m[0],
+        innerFormula: inner,
+        friendlyLabel: latexToFriendlyMath(inner),
+        start: m.index,
+        end: m.index + m[0].length
+      })
+    }
+  }
+
+  // 2. Jika tidak ada simbol $, cari rumus LaTeX telanjang (\frac, \sqrt) atau bentuk akar alami (9√3, √12)
+  if (results.length === 0) {
+    const bareRegex = /(\\(?:frac\{(?:[^{}]|\{[^{}]*\})+\}\{(?:[^{}]|\{[^{}]*\})+\}|sqrt(?:\[[^\]]+\])?\{(?:[^{}]|\{[^{}]*\})+\})|[+\-]?\d*\s*[√∛∜]\s*(?:\([^()]+\)|[0-9a-zA-Z]+))/g
+    while ((m = bareRegex.exec(text)) !== null) {
+      const inner = m[0].trim()
+      results.push({
+        index: results.length,
+        rawMatch: m[0],
+        innerFormula: normalizeMathFormula(inner),
+        friendlyLabel: latexToFriendlyMath(normalizeMathFormula(inner)),
+        start: m.index,
+        end: m.index + m[0].length
+      })
+    }
+  }
+
+  return results
+}
+
+/**
+ * Memecah rumus LaTeX (misal: "\sqrt{12} + \sqrt{27} - \sqrt{48}" atau "9\sqrt{3}" atau "{8}^{x+2} = {16}^{x-1}")
+ * menjadi deretan Blok Visual Interaktif seperti kotak-kotak Equation di Microsoft Word.
+ */
+function parseLatexToVisualBlocks(latexStr) {
+  let s = normalizeMathFormula(String(latexStr || '').replace(/^\$+|\$+$/g, '').trim())
+  if (!s) {
+    return [{ id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '12' }]
+  }
+
+  const blocks = []
+  let safety = 0
+  while (s.length > 0 && safety++ < 120) {
+    s = s.trim()
+    if (!s) break
+
+    // Jika bukan blok pertama dan diawali tanda operasi biner (+, -, =, \times, \div, \pm)
+    if (blocks.length > 0 && blocks[blocks.length - 1].type !== 'op') {
+      const binOp = s.match(/^([+\-\u2212=]|\\times\b|×|\\div\b|÷|\\pm\b|±|\\le\b|≤|\\ge\b|≥|\\neq\b|≠|\\approx\b|≈|\\cdot\b|·)/)
+      if (binOp) {
+        const rawOp = binOp[1]
+        const opMap = {
+          '\\times': '×', '\\div': '÷', '\\pm': '±',
+          '\\le': '≤', '\\ge': '≥', '\\neq': '≠', '\\approx': '≈', '\\cdot': '·', '\u2212': '-'
+        }
+        blocks.push({ id: nextBlockId(), type: 'op', val: opMap[rawOp] || rawOp })
+        s = s.slice(binOp[0].length).trim()
+        continue
+      }
+    }
+
+    // 1. Blok Bentuk Akar: [koef]\sqrt[deg]{isi} (contoh: 9\sqrt{3}, -\sqrt{3}, \sqrt{12})
+    const radMatch = s.match(/^([+\-]?\d*)\s*\\sqrt(?:\[([^\]]+)\])?\{((?:[^{}]|\{[^{}]*\})*)\}/)
+    if (radMatch) {
+      blocks.push({
+        id: nextBlockId(),
+        type: 'akar',
+        koef: radMatch[1] || '',
+        deg: radMatch[2] || '',
+        isi: latexToFriendlyMath(radMatch[3] || '')
+      })
+      s = s.slice(radMatch[0].length)
+      continue
+    }
+
+    // 2. Blok Pecahan: \frac{pembilang}{penyebut}
+    const fracMatch = s.match(/^([+\-]?\d*)\s*\\frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}/)
+    if (fracMatch) {
+      if (fracMatch[1]) {
+        blocks.push({ id: nextBlockId(), type: 'teks', val: fracMatch[1] })
+      }
+      blocks.push({
+        id: nextBlockId(),
+        type: 'pecahan',
+        pembilang: latexToFriendlyMath(fracMatch[2] || ''),
+        penyebut: latexToFriendlyMath(fracMatch[3] || '')
+      })
+      s = s.slice(fracMatch[0].length)
+      continue
+    }
+
+    // 3. Blok Pangkat: basis^{pangkat} (contoh: {8}^{x+2}, (1/2)^{x}, x^{2})
+    const powMatch = s.match(/^(?:\{([^{}]+)\}|(\([^()]+\)|[a-zA-Z0-9\/\.]+))\s*\^\s*(?:\{((?:[^{}]|\{[^{}]*\})*)\}|\(([^()]+)\)|([+\-]?\d+|[a-zA-Z]))/)
+    if (powMatch) {
+      const basis = powMatch[1] || powMatch[2] || ''
+      const pangkat = powMatch[3] || powMatch[4] || powMatch[5] || ''
+      blocks.push({
+        id: nextBlockId(),
+        type: 'pangkat',
+        basis: latexToFriendlyMath(basis),
+        pangkat: latexToFriendlyMath(pangkat)
+      })
+      s = s.slice(powMatch[0].length)
+      continue
+    }
+
+    // 4. Blok Subskrip / Indeks: variabel_{indeks}
+    const subMatch = s.match(/^(?:\{([^{}]+)\}|([a-zA-Z0-9]+))\s*_\s*(?:\{([^{}]+)\}|\(([^()]+)\)|([0-9a-zA-Z]+))/)
+    if (subMatch) {
+      const variabel = subMatch[1] || subMatch[2] || ''
+      const indeks = subMatch[3] || subMatch[4] || subMatch[5] || ''
+      blocks.push({
+        id: nextBlockId(),
+        type: 'subskrip',
+        variabel: latexToFriendlyMath(variabel),
+        indeks: latexToFriendlyMath(indeks)
+      })
+      s = s.slice(subMatch[0].length)
+      continue
+    }
+
+    // 5. Operator Matematika
+    const opMatch = s.match(/^([+\-\u2212=]|\\times\b|×|\\div\b|÷|\\pm\b|±|\\le\b|≤|\\ge\b|≥|\\neq\b|≠|\\approx\b|≈|\\cdot\b|·)/)
+    if (opMatch) {
+      const rawOp = opMatch[1]
+      const opMap = {
+        '\\times': '×', '\\div': '÷', '\\pm': '±',
+        '\\le': '≤', '\\ge': '≥', '\\neq': '≠', '\\approx': '≈', '\\cdot': '·', '\u2212': '-'
+      }
+      blocks.push({ id: nextBlockId(), type: 'op', val: opMap[rawOp] || rawOp })
+      s = s.slice(opMatch[0].length)
+      continue
+    }
+
+    // 6. Angka / Variabel / Kurung Biasa
+    const txtMatch = s.match(/^([a-zA-Z0-9\.\,\(\)\/]+)/)
+    if (txtMatch) {
+      blocks.push({ id: nextBlockId(), type: 'teks', val: txtMatch[1] })
+      s = s.slice(txtMatch[0].length)
+      continue
+    }
+
+    // Fallback: ambil token LaTeX atau 1 karakter
+    const cmdMatch = s.match(/^(\\[a-zA-Z]+(?:\{[^{}]*\})?)/)
+    if (cmdMatch) {
+      blocks.push({ id: nextBlockId(), type: 'teks', val: latexToFriendlyMath(cmdMatch[1]) })
+      s = s.slice(cmdMatch[0].length)
+      continue
+    }
+
+    blocks.push({ id: nextBlockId(), type: 'teks', val: s[0] })
+    s = s.slice(1)
+  }
+
+  return blocks.length > 0 ? blocks : [{ id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '12' }]
+}
+
+/**
+ * Mengubah deretan Blok Visual Interaktif kembali menjadi kode LaTeX murni.
+ */
+function visualBlocksToLatex(blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return ''
+  return blocks
+    .map(b => {
+      if (b.type === 'akar') {
+        const koef = (b.koef || '').trim()
+        const deg = (b.deg || '').trim()
+        const isi = normalizeMathFormula((b.isi || '').trim() || 'x')
+        const radPart = deg && deg !== '2' ? `\\sqrt[${deg}]{${isi}}` : `\\sqrt{${isi}}`
+        return `${koef}${radPart}`
+      }
+      if (b.type === 'pecahan') {
+        const num = normalizeMathFormula((b.pembilang || '').trim() || 'a')
+        const den = normalizeMathFormula((b.penyebut || '').trim() || 'b')
+        return `\\frac{${num}}{${den}}`
+      }
+      if (b.type === 'pangkat') {
+        const rawBase = normalizeMathFormula((b.basis || '').trim() || 'x')
+        const exp = normalizeMathFormula((b.pangkat || '').trim() || '2')
+        return `${rawBase}^{${exp}}`
+      }
+      if (b.type === 'subskrip') {
+        const v = normalizeMathFormula((b.variabel || '').trim() || 'x')
+        const sub = normalizeMathFormula((b.indeks || '').trim() || '1')
+        return `${v}_{${sub}}`
+      }
+      if (b.type === 'op') {
+        const opMap = {
+          '×': '\\times', '÷': '\\div', '±': '\\pm',
+          '≤': '\\le', '≥': '\\ge', '≠': '\\neq', '≈': '\\approx', '·': '\\cdot'
+        }
+        const v = (b.val || '+').trim()
+        return opMap[v] || v
+      }
+      if (b.type === 'teks') {
+        return normalizeMathFormula((b.val || '').trim())
+      }
+      return ''
+    })
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+}
 
 export default function CbtEditorSoalSplitScreen({
   sesiInfo,
@@ -50,16 +274,22 @@ export default function CbtEditorSoalSplitScreen({
   // Mode tampilan: 'render' (pratinjau rapi langsung) atau 'edit' (mode ketik input)
   const [viewMode, setViewMode] = useState('render')
 
-  // State Modal Equation Builder (Pembuat Rumus Visual)
+  // State Modal Equation Builder (Pembuat & Pengedit Rumus Visual Gaya MS Word)
   const [equationModalOpen, setEquationModalOpen] = useState(false)
-  const [eqType, setEqType] = useState('pecahan') // 'pecahan' | 'pangkat' | 'akar' | 'subskrip' | 'simbol' | 'bebas'
-  const [eqTarget, setEqTarget] = useState('pertanyaan') // 'pertanyaan' | 'opsi_A' | 'opsi_B' | ...
+  const [eqType, setEqType] = useState('visual_word') // 'visual_word' | 'ketik_mudah' | 'akar' | 'pecahan' | 'pangkat' | 'subskrip' | 'simbol' | 'bebas'
+  const [eqTarget, setEqTarget] = useState('pertanyaan') // 'pertanyaan' | 'opsi_A' | 'opsi_B' | ... | 'pembahasan'
+  const [editingEqItem, setEditingEqItem] = useState(null) // Jika sedang mengedit rumus yang sudah ada di dalam soal/opsi
+  const [visualBlocks, setVisualBlocks] = useState([
+    { id: 'init_1', type: 'akar', koef: '', deg: '', isi: '12' }
+  ])
+  const [eqFriendlyText, setEqFriendlyText] = useState('√12')
   const [eqPembilang, setEqPembilang] = useState('')
   const [eqPenyebut, setEqPenyebut] = useState('')
   const [eqBasis, setEqBasis] = useState('')
   const [eqPangkat, setEqPangkat] = useState('')
   const [eqDalamAkar, setEqDalamAkar] = useState('')
   const [eqDerajatAkar, setEqDerajatAkar] = useState('')
+  const [eqKoefAkar, setEqKoefAkar] = useState('')
   const [eqSubskripVar, setEqSubskripVar] = useState('')
   const [eqSubskripVal, setEqSubskripVal] = useState('')
   const [eqBebas, setEqBebas] = useState('')
@@ -103,63 +333,217 @@ export default function CbtEditorSoalSplitScreen({
     }
   }, [currentIndex, questions?.length, questions?.[currentIndex]?.id])
 
-  // Helper generate LaTeX dari state modal equation builder
-  const getGeneratedLatex = () => {
-    if (eqType === 'pecahan') {
-      const p = eqPembilang.trim() || 'a'
-      const q = eqPenyebut.trim() || 'b'
-      return `\\frac{${p}}{${q}}`
-    }
-    if (eqType === 'pangkat') {
-      const b = eqBasis.trim() || 'x'
-      const p = eqPangkat.trim() || '2'
-      return `(${b})^{${p}}`
-    }
-    if (eqType === 'akar') {
-      const x = eqDalamAkar.trim() || 'x'
-      const n = eqDerajatAkar.trim()
-      return n ? `\\sqrt[${n}]{${x}}` : `\\sqrt{${x}}`
-    }
-    if (eqType === 'subskrip') {
-      const v = eqSubskripVar.trim() || 'x'
-      const s = eqSubskripVal.trim() || '1'
-      return `${v}_{${s}}`
-    }
-    if (eqType === 'simbol' || eqType === 'bebas') {
-      return eqBebas.trim() || 'x'
+  // Helper mengambil teks sumber dari target ('pertanyaan', 'opsi_A', 'pembahasan')
+  const getTargetFieldText = (target) => {
+    if (target === 'pertanyaan') return formSoal.pertanyaan || ''
+    if (target === 'pembahasan') return formSoal.pembahasan || ''
+    if (target.startsWith('opsi_')) {
+      const key = target.replace('opsi_', '')
+      const found = (formSoal.opsi || []).find(o => o.key === key)
+      return found?.text || ''
     }
     return ''
   }
 
-  // Sisipkan rumus dari modal ke target (pertanyaan atau opsi)
-  const handleInsertEquation = () => {
+  // Buka Studio Equation Visual (bisa mode Edit Rumus yang diklik atau Buat Rumus Baru)
+  const openEquationStudio = (target = 'pertanyaan', eqItemToEdit = null, defaultTab = 'visual_word') => {
+    setEqTarget(target)
+
+    // Jika membuka untuk opsi (misal Opsi A) dan belum menunjuk rumus spesifik,
+    // otomatis muat rumus yang ada di opsi tersebut jika opsi hanya berisi 1 rumus!
+    let item = eqItemToEdit
+    if (!item && target.startsWith('opsi_')) {
+      const fieldText = getTargetFieldText(target)
+      const list = extractEquationsFromField(fieldText)
+      if (list.length === 1) {
+        item = list[0]
+      }
+    }
+
+    if (item) {
+      setEditingEqItem(item)
+      const parsedBlocks = parseLatexToVisualBlocks(item.innerFormula)
+      setVisualBlocks(parsedBlocks)
+      setEqFriendlyText(latexToFriendlyMath(item.innerFormula))
+      setEqBebas(item.innerFormula)
+
+      // Isi juga field tunggal jika hanya 1 blok
+      if (parsedBlocks.length === 1) {
+        const b0 = parsedBlocks[0]
+        if (b0.type === 'akar') {
+          setEqKoefAkar(b0.koef || '')
+          setEqDerajatAkar(b0.deg || '')
+          setEqDalamAkar(b0.isi || '')
+        } else if (b0.type === 'pecahan') {
+          setEqPembilang(b0.pembilang || '')
+          setEqPenyebut(b0.penyebut || '')
+        } else if (b0.type === 'pangkat') {
+          setEqBasis(b0.basis || '')
+          setEqPangkat(b0.pangkat || '')
+        } else if (b0.type === 'subskrip') {
+          setEqSubskripVar(b0.variabel || '')
+          setEqSubskripVal(b0.indeks || '')
+        }
+      }
+      setEqType('visual_word')
+    } else {
+      setEditingEqItem(null)
+      setVisualBlocks([{ id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '12' }])
+      setEqFriendlyText('√12')
+      setEqKoefAkar('')
+      setEqDerajatAkar('')
+      setEqDalamAkar('12')
+      setEqPembilang('a')
+      setEqPenyebut('b')
+      setEqBasis('x')
+      setEqPangkat('2')
+      setEqSubskripVar('x')
+      setEqSubskripVal('1')
+      setEqBebas('')
+      setEqType(defaultTab)
+    }
+
+    setEquationModalOpen(true)
+  }
+
+  // Handler saat guru mengklik area pertanyaan/opsi di Tampilan Rapi:
+  // Jika yang diklik adalah elemen rumus (.katex), langsung buka Visual Equation Studio untuk rumus tersebut!
+  // Jika yang diklik adalah teks biasa, masuk ke Mode Edit teks.
+  const handleRenderedContainerClick = (e, targetField) => {
+    const katexEl = e.target.closest?.('.katex')
+    if (katexEl && e.currentTarget) {
+      e.stopPropagation()
+      const allKatex = Array.from(e.currentTarget.querySelectorAll('.katex'))
+      const clickedIdx = allKatex.indexOf(katexEl)
+      const fieldText = getTargetFieldText(targetField)
+      const eqList = extractEquationsFromField(fieldText)
+      if (eqList.length > 0) {
+        const matchedEq = eqList[clickedIdx] || eqList[0]
+        openEquationStudio(targetField, matchedEq)
+        return
+      }
+    }
+    setViewMode('edit')
+  }
+
+  // Ubah seluruh kode LaTeX di soal aktif menjadi simbol ramah guru (√12, 8^(x+2), ×, ÷)
+  const handleSimplifyQuestionMath = () => {
+    const simplifyStr = (str) => {
+      if (!str) return str
+      return str.replace(/\$\$([\s\S]+?)\$\$|\$([^\$\n]+?)\$/g, (_, b1, b2) => {
+        const inner = (b1 !== undefined ? b1 : b2).trim()
+        // Jika mengandung pecahan \frac, tetap bungkus $ namun sederhanakan isinya
+        if (inner.includes('\\frac')) {
+          return `$ ${inner.replace(/\{([a-zA-Z0-9]+)\}\s*\^/g, '$1^')} $`
+        }
+        return `$ ${latexToFriendlyMath(inner)} $`
+      })
+    }
+
+    const newPertanyaan = simplifyStr(formSoal.pertanyaan)
+    const newOpsi = (formSoal.opsi || []).map(opt => ({
+      ...opt,
+      text: simplifyStr(opt.text)
+    }))
+    const newPembahasan = simplifyStr(formSoal.pembahasan)
+
+    updateFormAndSync(prev => ({
+      ...prev,
+      pertanyaan: newPertanyaan,
+      opsi: newOpsi,
+      pembahasan: newPembahasan
+    }))
+    if (pertanyaanEditorRef.current) {
+      pertanyaanEditorRef.current.innerHTML = (newPertanyaan || '').replace(/\n/g, '<br />')
+    }
+    showToast('Kode rumus disederhanakan menjadi simbol matematika mudah (√, ^, ×).', 'success')
+  }
+
+  // Helper generate LaTeX dari state modal equation builder
+  const getGeneratedLatex = () => {
+    if (eqType === 'visual_word') {
+      return visualBlocksToLatex(visualBlocks) || '\\sqrt{12}'
+    }
+    if (eqType === 'ketik_mudah') {
+      return normalizeMathFormula(eqFriendlyText) || '\\sqrt{12}'
+    }
+    if (eqType === 'pecahan') {
+      const p = normalizeMathFormula(eqPembilang.trim() || 'a')
+      const q = normalizeMathFormula(eqPenyebut.trim() || 'b')
+      return `\\frac{${p}}{${q}}`
+    }
+    if (eqType === 'pangkat') {
+      const b = normalizeMathFormula(eqBasis.trim() || 'x')
+      const p = normalizeMathFormula(eqPangkat.trim() || '2')
+      const cleanB = /^[a-zA-Z0-9]+$/.test(b) ? b : `(${b})`
+      return `${cleanB}^{${p}}`
+    }
+    if (eqType === 'akar') {
+      const koef = eqKoefAkar.trim()
+      const x = normalizeMathFormula(eqDalamAkar.trim() || 'x')
+      const n = eqDerajatAkar.trim()
+      const rad = n && n !== '2' ? `\\sqrt[${n}]{${x}}` : `\\sqrt{${x}}`
+      return `${koef}${rad}`
+    }
+    if (eqType === 'subskrip') {
+      const v = normalizeMathFormula(eqSubskripVar.trim() || 'x')
+      const s = normalizeMathFormula(eqSubskripVal.trim() || '1')
+      return `${v}_{${s}}`
+    }
+    if (eqType === 'simbol' || eqType === 'bebas') {
+      return normalizeMathFormula(eqBebas.trim() || 'x')
+    }
+    return ''
+  }
+
+  // Simpan perubahan rumus (in-place) atau sisipkan rumus baru ke target (pertanyaan / opsi / pembahasan)
+  const handleInsertEquation = (forceAsNew = false) => {
     const latex = getGeneratedLatex()
     if (!latex) return
 
-    const formulaWithDollars = `$${latex}$`
+    const formulaWithDollars = `$ ${latex} $`
+    const isReplacing = Boolean(editingEqItem && !forceAsNew)
+
+    const applyToText = (oldText = '') => {
+      if (isReplacing && editingEqItem) {
+        const before = oldText.slice(0, editingEqItem.start)
+        const after = oldText.slice(editingEqItem.end)
+        // Pastikan jika start/end cocok dengan rawMatch, ganti langsung di posisinya
+        if (oldText.slice(editingEqItem.start, editingEqItem.end) === editingEqItem.rawMatch) {
+          return `${before}${formulaWithDollars}${after}`
+        }
+        // Fallback replace pertama
+        if (oldText.includes(editingEqItem.rawMatch)) {
+          return oldText.replace(editingEqItem.rawMatch, formulaWithDollars)
+        }
+      }
+      return oldText ? `${oldText} ${formulaWithDollars}` : formulaWithDollars
+    }
 
     if (eqTarget === 'pertanyaan') {
-      const newPertanyaan = formSoal.pertanyaan
-        ? `${formSoal.pertanyaan} ${formulaWithDollars}`
-        : formulaWithDollars
+      const newPertanyaan = applyToText(formSoal.pertanyaan)
       updateFormAndSync(prev => ({ ...prev, pertanyaan: newPertanyaan }))
       if (pertanyaanEditorRef.current) {
         pertanyaanEditorRef.current.innerHTML = newPertanyaan.replace(/\n/g, '<br />')
       }
-      showToast('Rumus berhasil disisipkan ke pertanyaan.', 'success')
+      showToast(isReplacing ? 'Rumus di pertanyaan berhasil diperbarui.' : 'Rumus berhasil disisipkan ke pertanyaan.', 'success')
+    } else if (eqTarget === 'pembahasan') {
+      const newPembahasan = applyToText(formSoal.pembahasan)
+      updateFormAndSync(prev => ({ ...prev, pembahasan: newPembahasan }))
+      showToast(isReplacing ? 'Rumus di pembahasan berhasil diperbarui.' : 'Rumus berhasil disisipkan ke pembahasan.', 'success')
     } else if (eqTarget.startsWith('opsi_')) {
       const targetKey = eqTarget.replace('opsi_', '')
       const newOpsi = (formSoal.opsi || []).map(opt => {
         if (opt.key === targetKey) {
-          const newText = opt.text ? `${opt.text} ${formulaWithDollars}` : formulaWithDollars
-          return { ...opt, text: newText }
+          return { ...opt, text: applyToText(opt.text) }
         }
         return opt
       })
       updateFormAndSync(prev => ({ ...prev, opsi: newOpsi }))
-      showToast(`Rumus berhasil disisipkan ke Opsi ${targetKey}.`, 'success')
+      showToast(isReplacing ? `Rumus di Opsi ${targetKey} berhasil diperbarui.` : `Rumus berhasil disisipkan ke Opsi ${targetKey}.`, 'success')
     }
 
+    setEditingEqItem(null)
     setEquationModalOpen(false)
   }
 
@@ -763,12 +1147,9 @@ export default function CbtEditorSoalSplitScreen({
               {/* Tombol Buat Equation / Rumus Visual */}
               <button
                 type="button"
-                onClick={() => {
-                  setEqTarget('pertanyaan')
-                  setEquationModalOpen(true)
-                }}
+                onClick={() => openEquationStudio('pertanyaan', null)}
                 className="px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
-                title="Buka pembuat rumus matematika & simbol visual"
+                title="Buka pembuat & pengedit rumus matematika visual seperti MS Word"
               >
                 <span className="text-sm font-black">∑</span>
                 <span>Buat Equation</span>
@@ -824,28 +1205,69 @@ export default function CbtEditorSoalSplitScreen({
                   <label className="block text-xs font-bold text-slate-700">
                     Isi Pertanyaan Soal:
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('edit')}
-                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                    <span>Edit Pertanyaan</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => openEquationStudio('pertanyaan', null)}
+                      className="text-xs font-bold text-violet-700 hover:text-violet-900 flex items-center gap-1 bg-violet-50 hover:bg-violet-100 px-2.5 py-1 rounded-lg border border-violet-200/70 transition-colors"
+                      title="Sisipkan rumus baru ke pertanyaan"
+                    >
+                      <span className="font-black">∑</span>
+                      <span>+ Rumus</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('edit')}
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                      <span>Edit Pertanyaan</span>
+                    </button>
+                  </div>
                 </div>
                 <div
-                  onClick={() => setViewMode('edit')}
+                  onClick={(e) => handleRenderedContainerClick(e, 'pertanyaan')}
                   className="w-full text-sm md:text-base p-5 bg-white border border-slate-200/90 rounded-2xl shadow-2xs leading-relaxed text-slate-800 cursor-pointer hover:border-indigo-300 hover:shadow-sm transition-all group relative"
-                  title="Klik untuk mengedit pertanyaan"
+                  title="Klik rumus untuk edit visual (seperti MS Word), atau klik teks untuk edit kalimat"
                 >
                   <div
                     className="cbt-rendered-content"
                     dangerouslySetInnerHTML={{ __html: renderMathContent(formSoal.pertanyaan || '<span class="text-slate-400 italic">Pertanyaan belum diisi. Klik untuk mulai menulis.</span>') }}
                   />
                   <div className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-opacity bg-indigo-50 text-indigo-600 text-[10px] font-bold px-2 py-0.5 rounded-md border border-indigo-200">
-                    Klik untuk edit
+                    Klik rumus / teks untuk edit
                   </div>
                 </div>
+
+                {/* Daftar Chip Rumus di Pertanyaan (Klik untuk Edit Visual seperti MS Word!) */}
+                {(() => {
+                  const eqList = extractEquationsFromField(formSoal.pertanyaan)
+                  if (eqList.length === 0) return null
+                  return (
+                    <div className="mt-2.5 p-2.5 bg-violet-50/70 border border-violet-200/80 rounded-xl flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-extrabold text-violet-800 flex items-center gap-1 shrink-0">
+                        <span>∑ Edit Rumus Visual (Klik):</span>
+                      </span>
+                      {eqList.map((eqItem) => (
+                        <button
+                          key={eqItem.index}
+                          type="button"
+                          onClick={() => openEquationStudio('pertanyaan', eqItem)}
+                          className="px-2.5 py-1 rounded-lg bg-white hover:bg-violet-100 text-slate-800 border border-violet-300 shadow-2xs text-xs font-medium flex items-center gap-1.5 transition-all hover:scale-[1.02] cursor-pointer"
+                          title="Klik untuk mengedit rumus ini secara visual tanpa kode LaTeX"
+                        >
+                          <span
+                            className="pointer-events-none"
+                            dangerouslySetInnerHTML={{ __html: renderMathContent(`$${eqItem.innerFormula}$`) }}
+                          />
+                          <span className="text-[10px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200">
+                            ✏️ Edit
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Pilihan Opsi Ter-render (PG & PG Kompleks) */}
@@ -856,7 +1278,7 @@ export default function CbtEditorSoalSplitScreen({
                       Pilihan Jawaban & Kunci Benar:
                     </label>
                     <span className="text-[11px] text-slate-400 font-medium">
-                      Klik tombol huruf untuk menentukan kunci jawaban
+                      Klik tombol huruf untuk kunci • Klik <strong className="text-violet-600">∑ Rumus</strong> untuk edit equation visual
                     </span>
                   </div>
                   <div className="space-y-2.5">
@@ -865,6 +1287,7 @@ export default function CbtEditorSoalSplitScreen({
                       const isPgChecked = formSoal.tipe_soal === 'pg' 
                         ? formSoal.kunci_jawaban === optKey 
                         : formSoal.kunci_jawaban?.includes(optKey)
+                      const optEquations = extractEquationsFromField(opt.text)
 
                       return (
                         <div
@@ -912,19 +1335,33 @@ export default function CbtEditorSoalSplitScreen({
                             {/* Teks Opsi Ter-render dengan Rumus KaTeX */}
                             <div
                               className="flex-1 min-w-0 text-sm md:text-base text-slate-800 leading-normal cursor-pointer font-medium cbt-rendered-content py-1"
-                              onClick={() => setViewMode('edit')}
-                              title="Klik untuk mengedit opsi"
+                              onClick={(e) => handleRenderedContainerClick(e, `opsi_${optKey}`)}
+                              title="Klik rumus untuk edit visual (seperti MS Word), atau klik area teks untuk edit opsi"
                               dangerouslySetInnerHTML={{ __html: renderMathContent(opt.text || '<span class="text-slate-400 italic">Opsi belum diisi</span>') }}
                             />
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {isPgChecked && (
                               <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-800 text-xs font-extrabold flex items-center gap-1.5 border border-emerald-200">
                                 <svg className="w-3.5 h-3.5 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/></svg>
                                 <span>Kunci Benar</span>
                               </span>
                             )}
+                            {/* Tombol Edit Rumus Visual langsung di Opsi */}
+                            <button
+                              type="button"
+                              onClick={() => openEquationStudio(`opsi_${optKey}`, optEquations[0] || null)}
+                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-colors flex items-center gap-1 border cursor-pointer ${
+                                optEquations.length > 0
+                                  ? 'bg-violet-50 hover:bg-violet-100 text-violet-700 border-violet-200'
+                                  : 'bg-slate-50 hover:bg-violet-50 text-slate-500 hover:text-violet-700 border-slate-200'
+                              }`}
+                              title={optEquations.length > 0 ? `Edit rumus visual di Opsi ${optKey} (seperti MS Word)` : `Sisipkan rumus ke Opsi ${optKey}`}
+                            >
+                              <span className="font-black">∑</span>
+                              <span>{optEquations.length > 0 ? 'Edit Rumus' : 'Rumus'}</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => setViewMode('edit')}
@@ -1000,14 +1437,19 @@ export default function CbtEditorSoalSplitScreen({
             <div className="space-y-5 animate-fadeIn">
               {/* Form Teks Pertanyaan (Rich Editor dengan Dukungan Gambar) */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
                   <label className="block text-xs font-bold text-slate-700">
                     Isi Pertanyaan Soal:
                   </label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-400">
-                      Rumus: Langsung ketik / Equation Word (tanpa wajib $) • Paste gambar: Ctrl+V
-                    </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleSimplifyQuestionMath}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold transition-colors"
+                      title="Ubah kode LaTeX seperti \sqrt{12} menjadi simbol ramah guru seperti √12, 8^(x+2), ×, ÷"
+                    >
+                      <span>🪄 Ubah Kode ke Simbol Mudah (√, ^, ×)</span>
+                    </button>
                     {/* Tombol Upload Gambar */}
                     <button
                       type="button"
@@ -1032,36 +1474,36 @@ export default function CbtEditorSoalSplitScreen({
 
                 {/* Bilah Rumus Cepat (Quick Math Toolbar) */}
                 <div className="flex items-center gap-1.5 flex-wrap p-2 bg-slate-50 rounded-xl border border-slate-200 mb-2">
-                  <span className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-wider">Sisip Rumus:</span>
+                  <span className="text-[10px] font-bold text-slate-500 px-1 uppercase tracking-wider">Sisip Cepat:</span>
                   <button
                     type="button"
-                    onClick={() => handleInsertQuickMath('\\frac{a}{b}')}
+                    onClick={() => openEquationStudio('pertanyaan', null, 'akar')}
                     className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
-                    title="Sisipkan pecahan aljabar"
-                  >
-                    \frac{'{a}'}{'{b}'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleInsertQuickMath('x^{2}')}
-                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
-                    title="Sisipkan pangkat kuadrat"
-                  >
-                    x²
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleInsertQuickMath('\\sqrt{x}')}
-                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
-                    title="Sisipkan akar kuadrat"
+                    title="Buat bentuk akar (√x, a√b, ∛x)"
                   >
                     √x
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleInsertQuickMath('x_{1}')}
+                    onClick={() => openEquationStudio('pertanyaan', null, 'pecahan')}
                     className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
-                    title="Sisipkan subskrip / indeks"
+                    title="Buat pecahan (a/b)"
+                  >
+                    a/b
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEquationStudio('pertanyaan', null, 'pangkat')}
+                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
+                    title="Buat bilangan berpangkat (xⁿ)"
+                  >
+                    xⁿ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEquationStudio('pertanyaan', null, 'subskrip')}
+                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-2xs"
+                    title="Buat indeks bawah (x₁)"
                   >
                     x₁
                   </button>
@@ -1107,15 +1549,39 @@ export default function CbtEditorSoalSplitScreen({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setEqTarget('pertanyaan')
-                      setEquationModalOpen(true)
-                    }}
+                    onClick={() => openEquationStudio('pertanyaan', null)}
                     className="ml-auto px-2.5 py-1 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 transition-colors flex items-center gap-1 shadow-2xs"
                   >
-                    <span>➕ Bantuan Visual</span>
+                    <span>∑ Studio Equation (Gaya Word)</span>
                   </button>
                 </div>
+
+                {/* Daftar Rumus Terdeteksi di Pertanyaan — Klik untuk Edit Visual! */}
+                {(() => {
+                  const eqList = extractEquationsFromField(formSoal.pertanyaan)
+                  if (eqList.length === 0) return null
+                  return (
+                    <div className="mb-2 p-2.5 bg-violet-50/80 border border-violet-200 rounded-xl flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-extrabold text-violet-800 shrink-0">
+                        ✏️ Klik Rumus untuk Edit Visual (Tanpa Kode LaTeX):
+                      </span>
+                      {eqList.map((eqItem) => (
+                        <button
+                          key={eqItem.index}
+                          type="button"
+                          onClick={() => openEquationStudio('pertanyaan', eqItem)}
+                          className="px-2.5 py-1 rounded-lg bg-white hover:bg-violet-100 text-slate-800 border border-violet-300 shadow-2xs text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <span
+                            className="pointer-events-none"
+                            dangerouslySetInnerHTML={{ __html: renderMathContent(`$${eqItem.innerFormula}$`) }}
+                          />
+                          <span className="text-[10px] font-bold text-violet-600">Edit</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
 
                 <div
                   ref={pertanyaanEditorRef}
@@ -1123,12 +1589,12 @@ export default function CbtEditorSoalSplitScreen({
                   suppressContentEditableWarning
                   onInput={syncEditorContent}
                   onPaste={handleEditorPaste}
-                  data-placeholder="Ketikkan teks pertanyaan soal di sini... (Ctrl+V untuk paste gambar)"
+                  data-placeholder="Ketikkan teks pertanyaan soal di sini... (Bisa langsung ketik √12, 9√3, x², atau klik Studio Equation)"
                   className="cbt-rich-editor w-full text-xs md:text-sm p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800 leading-relaxed font-sans"
                 />
 
                 {/* Live KaTeX / Math / Table Preview if equation / rich content exists */}
-                {Boolean(formSoal.pertanyaan && (formSoal.pertanyaan.includes('$') || formSoal.pertanyaan.includes('\\') || formSoal.pertanyaan.includes('<table') || formSoal.pertanyaan.includes('<img') || /[²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ]/.test(formSoal.pertanyaan))) && (
+                {Boolean(formSoal.pertanyaan && (formSoal.pertanyaan.includes('$') || formSoal.pertanyaan.includes('\\') || formSoal.pertanyaan.includes('<table') || formSoal.pertanyaan.includes('<img') || /[²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ√∛∜\^]/.test(formSoal.pertanyaan))) && (
                   <div className="mt-2.5 p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl">
                     <div className="flex items-center gap-1.5 text-[11px] font-extrabold text-indigo-700 mb-1.5">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
@@ -1155,6 +1621,7 @@ export default function CbtEditorSoalSplitScreen({
                       const isPgChecked = formSoal.tipe_soal === 'pg' 
                         ? formSoal.kunci_jawaban === optKey 
                         : formSoal.kunci_jawaban?.includes(optKey)
+                      const optEqList = extractEquationsFromField(opt.text)
 
                       return (
                         <div key={optKey} className="flex items-start gap-2.5">
@@ -1202,25 +1669,33 @@ export default function CbtEditorSoalSplitScreen({
                                   newOpsi[optIdx] = { ...newOpsi[optIdx], key: optKey, text: e.target.value }
                                   updateFormAndSync(prev => ({ ...prev, opsi: newOpsi }))
                                 }}
-                                placeholder={`Teks pilihan jawaban ${optKey}...`}
+                                placeholder={`Teks pilihan jawaban ${optKey}... (bisa ketik 9√3, x², atau klik ∑ Rumus)`}
                                 className="flex-1 text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800"
                               />
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setEqTarget(`opsi_${optKey}`)
-                                  setEquationModalOpen(true)
-                                }}
-                                className="px-2 py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 rounded-xl text-xs font-bold transition-colors"
-                                title={`Buat rumus untuk Opsi ${optKey}`}
+                                onClick={() => openEquationStudio(`opsi_${optKey}`, optEqList[0] || null)}
+                                className="px-2.5 py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 rounded-xl text-xs font-bold transition-colors shrink-0"
+                                title={optEqList.length > 0 ? `Edit rumus visual di Opsi ${optKey}` : `Buat rumus visual untuk Opsi ${optKey}`}
                               >
-                                ∑ Rumus
+                                ∑ {optEqList.length > 0 ? 'Edit Rumus' : 'Rumus'}
                               </button>
                             </div>
-                            {Boolean(opt.text && (opt.text.includes('$') || opt.text.includes('\\') || /[²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ]/.test(opt.text))) && (
-                              <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50/50 rounded-lg border border-indigo-100/70 text-xs text-slate-800">
-                                <span className="text-[10px] font-bold text-indigo-500 shrink-0">Pratinjau {optKey}:</span>
-                                <div dangerouslySetInnerHTML={{ __html: renderMathContent(opt.text) }} />
+                            {Boolean(opt.text && (opt.text.includes('$') || opt.text.includes('\\') || /[²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ√∛∜\^]/.test(opt.text))) && (
+                              <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-indigo-50/50 rounded-lg border border-indigo-100/70 text-xs text-slate-800">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-bold text-indigo-500 shrink-0">Pratinjau {optKey}:</span>
+                                  <div dangerouslySetInnerHTML={{ __html: renderMathContent(opt.text) }} />
+                                </div>
+                                {optEqList.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEquationStudio(`opsi_${optKey}`, optEqList[0])}
+                                    className="text-[10px] font-bold text-violet-700 hover:underline shrink-0"
+                                  >
+                                    ✏️ Edit Visual
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1655,29 +2130,39 @@ export default function CbtEditorSoalSplitScreen({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL PEMBUAT EQUATION / RUMUS MATEMATIKA VISUAL                          */}
+      {/* MODAL STUDIO EQUATION / RUMUS MATEMATIKA VISUAL (GAYA MICROSOFT WORD)     */}
       {/* ========================================================================= */}
       {equationModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
-          <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
             {/* Header Modal */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-violet-50 to-indigo-50">
               <div className="flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-xl bg-violet-600 text-white font-black text-sm flex items-center justify-center shadow-xs">
+                <span className="w-9 h-9 rounded-xl bg-violet-600 text-white font-black text-base flex items-center justify-center shadow-xs">
                   ∑
                 </span>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800">
-                    Pembuat Rumus Matematika & Sains (Equation)
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-800">
+                      {editingEqItem ? 'Edit Equation Visual (Gaya MS Word)' : 'Studio Equation Visual (Gaya MS Word)'}
+                    </h3>
+                    {editingEqItem && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
+                        Mode Edit Rumus
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[11px] text-slate-500">
-                    Susun rumus dengan mudah tanpa perlu mengetik kode manual
+                    Isi kotak-kotak rumus langsung seperti di Microsoft Word tanpa perlu kode LaTeX
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setEquationModalOpen(false)}
+                onClick={() => {
+                  setEditingEqItem(null)
+                  setEquationModalOpen(false)
+                }}
                 className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1685,282 +2170,738 @@ export default function CbtEditorSoalSplitScreen({
             </div>
 
             {/* Body Modal */}
-            <div className="p-6 overflow-y-auto space-y-5">
-              {/* Pilihan Target Penyisipan */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Sisipkan Rumus ke Mana?
-                </label>
-                <select
-                  value={eqTarget}
-                  onChange={(e) => setEqTarget(e.target.value)}
-                  className="w-full text-xs font-bold px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-800"
-                >
-                  <option value="pertanyaan">📝 Isi Pertanyaan Soal</option>
-                  {(formSoal.opsi || []).map((opt, idx) => {
-                    const key = opt.key || String.fromCharCode(65 + idx)
-                    return (
-                      <option key={key} value={`opsi_${key}`}>
-                        🔘 Pilihan Jawaban ({key})
-                      </option>
-                    )
-                  })}
-                </select>
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-4">
+              {/* Pilihan Target & Daftar Rumus yang Ada di Target Tersebut */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Lokasi Rumus:
+                  </label>
+                  <select
+                    value={eqTarget}
+                    onChange={(e) => {
+                      const newTarget = e.target.value
+                      const list = extractEquationsFromField(getTargetFieldText(newTarget))
+                      openEquationStudio(newTarget, list[0] || null, eqType)
+                    }}
+                    className="w-full text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-800"
+                  >
+                    <option value="pertanyaan">📝 Isi Pertanyaan Soal</option>
+                    {(formSoal.opsi || []).map((opt, idx) => {
+                      const key = opt.key || String.fromCharCode(65 + idx)
+                      return (
+                        <option key={key} value={`opsi_${key}`}>
+                          🔘 Pilihan Jawaban ({key})
+                        </option>
+                      )
+                    })}
+                    <option value="pembahasan">💡 Pembahasan / Solusi</option>
+                  </select>
+                </div>
+
+                {/* Pemilih Rumus jika di bagian tersebut sudah ada rumus */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Pilih Rumus yang Diedit / Buat Baru:
+                  </label>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {(() => {
+                      const existingList = extractEquationsFromField(getTargetFieldText(eqTarget))
+                      return (
+                        <>
+                          {existingList.map((item) => {
+                            const isSelected = editingEqItem && editingEqItem.start === item.start
+                            return (
+                              <button
+                                key={item.index}
+                                type="button"
+                                onClick={() => openEquationStudio(eqTarget, item, 'visual_word')}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-violet-600 text-white border-violet-600 shadow-xs'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300'
+                                }`}
+                                title="Klik untuk mengedit rumus ini"
+                              >
+                                <span>Rumus #{item.index + 1}:</span>
+                                <span className="font-mono">{item.friendlyLabel.slice(0, 14)}</span>
+                              </button>
+                            )
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEqItem(null)
+                              setVisualBlocks([{ id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '12' }])
+                              setEqFriendlyText('√12')
+                            }}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                              !editingEqItem
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                            }`}
+                          >
+                            + Rumus Baru
+                          </button>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </div>
               </div>
 
-              {/* Tabs Tipe Rumus */}
+              {/* Tabs Mode Editor Rumus */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Pilih Format Rumus:
-                </label>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                   {[
+                    { id: 'visual_word', label: 'Visual Word', icon: '⊞' },
+                    { id: 'ketik_mudah', label: 'Ketik Mudah', icon: '√12' },
+                    { id: 'akar', label: 'Akar', icon: '√x' },
                     { id: 'pecahan', label: 'Pecahan', icon: 'a/b' },
                     { id: 'pangkat', label: 'Pangkat', icon: 'xⁿ' },
-                    { id: 'akar', label: 'Akar', icon: '√x' },
                     { id: 'subskrip', label: 'Indeks', icon: 'x₁' },
                     { id: 'simbol', label: 'Simbol', icon: '± ×' },
-                    { id: 'bebas', label: 'Bebas', icon: 'LaTeX' },
+                    { id: 'bebas', label: 'LaTeX', icon: '{ }' },
                   ].map(tab => (
                     <button
                       key={tab.id}
                       type="button"
-                      onClick={() => setEqType(tab.id)}
-                      className={`px-2 py-2 rounded-lg text-xs font-bold flex flex-col items-center gap-0.5 transition-all ${
+                      onClick={() => {
+                        // Sinkronkan antar tab sebelum berpindah
+                        const currentLatex = getGeneratedLatex()
+                        if (tab.id === 'visual_word' && eqType !== 'visual_word') {
+                          setVisualBlocks(parseLatexToVisualBlocks(currentLatex))
+                        } else if (tab.id === 'ketik_mudah' && eqType !== 'ketik_mudah') {
+                          setEqFriendlyText(latexToFriendlyMath(currentLatex))
+                        } else if (tab.id === 'bebas' && eqType !== 'bebas') {
+                          setEqBebas(currentLatex)
+                        }
+                        setEqType(tab.id)
+                      }}
+                      className={`px-1.5 py-1.5 rounded-lg text-xs font-bold flex flex-col items-center gap-0.5 transition-all cursor-pointer ${
                         eqType === tab.id
-                          ? 'bg-white text-violet-700 shadow-xs ring-1 ring-slate-200/80'
+                          ? 'bg-white text-violet-700 shadow-xs ring-1 ring-violet-200'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                       }`}
                     >
-                      <span className="font-mono text-xs">{tab.icon}</span>
-                      <span className="text-[10px]">{tab.label}</span>
+                      <span className="font-mono text-xs font-extrabold">{tab.icon}</span>
+                      <span className="text-[10px] leading-tight text-center">{tab.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Form Input Sesuai Tipe Rumus */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                {/* 1. PECAHAN */}
-                {eqType === 'pecahan' && (
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Pembilang (Bagian Atas):
-                      </label>
-                      <input
-                        type="text"
-                        value={eqPembilang}
-                        onChange={(e) => setEqPembilang(e.target.value)}
-                        placeholder="Contoh: a^6 b^3 atau 2x + 1"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                    <div className="border-t border-slate-200 my-1" />
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Penyebut (Bagian Bawah):
-                      </label>
-                      <input
-                        type="text"
-                        value={eqPenyebut}
-                        onChange={(e) => setEqPenyebut(e.target.value)}
-                        placeholder="Contoh: a^2 b^5 atau 3"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* 2. PANGKAT */}
-                {eqType === 'pangkat' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Basis / Bilangan Pokok:
-                      </label>
-                      <input
-                        type="text"
-                        value={eqBasis}
-                        onChange={(e) => setEqBasis(e.target.value)}
-                        placeholder="Contoh: 2x^3 y^-2"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Pangkat / Eksponen:
-                      </label>
-                      <input
-                        type="text"
-                        value={eqPangkat}
-                        onChange={(e) => setEqPangkat(e.target.value)}
-                        placeholder="Contoh: 2 atau -3"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* 3. AKAR */}
-                {eqType === 'akar' && (
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Derajat Akar (Opsional):
-                      </label>
-                      <input
-                        type="text"
-                        value={eqDerajatAkar}
-                        onChange={(e) => setEqDerajatAkar(e.target.value)}
-                        placeholder="Kosongkan jika akar kuadrat"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Nilai di Dalam Akar:
-                      </label>
-                      <input
-                        type="text"
-                        value={eqDalamAkar}
-                        onChange={(e) => setEqDalamAkar(e.target.value)}
-                        placeholder="Contoh: b^2 - 4ac atau 16"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* 4. SUBSKRIP */}
-                {eqType === 'subskrip' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Variabel / Teks:
-                      </label>
-                      <input
-                        type="text"
-                        value={eqSubskripVar}
-                        onChange={(e) => setEqSubskripVar(e.target.value)}
-                        placeholder="Contoh: x atau H"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Indeks / Angka Bawah:
-                      </label>
-                      <input
-                        type="text"
-                        value={eqSubskripVal}
-                        onChange={(e) => setEqSubskripVal(e.target.value)}
-                        placeholder="Contoh: 1 atau 2"
-                        className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* 5. SIMBOL */}
-                {eqType === 'simbol' && (
-                  <div className="space-y-2">
-                    <span className="text-xs font-semibold text-slate-600 block">
-                      Klik salah satu simbol untuk menyalin ke rumus:
+              {/* ================================================================= */}
+              {/* MODE 1: VISUAL WORD (KOTAK INTERAKTIF SEPERTI MICROSOFT WORD)     */}
+              {/* ================================================================= */}
+              {eqType === 'visual_word' && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                      <span>⊞ Kanvas Kotak Rumus (Klik &amp; Ketik Langsung di Dalam Kotak):</span>
                     </span>
-                    <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setVisualBlocks([{ id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '' }])}
+                      className="text-[11px] font-bold text-rose-600 hover:underline"
+                    >
+                      Reset Kanvas
+                    </button>
+                  </div>
+
+                  {/* Area Kanvas Kotak-Kotak Rumus Visual */}
+                  <div className="p-4 bg-white border-2 border-violet-200 rounded-2xl min-h-[96px] flex items-center flex-wrap gap-3 shadow-inner">
+                    {visualBlocks.map((blk, bIdx) => (
+                      <div
+                        key={blk.id || bIdx}
+                        className="relative group bg-slate-50/80 hover:bg-violet-50/40 border border-slate-200 hover:border-violet-300 rounded-xl p-2.5 flex items-center transition-all"
+                      >
+                        {/* Tombol Hapus Blok (muncul jika lebih dari 1 blok) */}
+                        {visualBlocks.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setVisualBlocks(prev => prev.filter((_, i) => i !== bIdx))}
+                            className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-xs cursor-pointer"
+                            title="Hapus bagian ini"
+                          >
+                            ×
+                          </button>
+                        )}
+
+                        {/* 1. BLOK BENTUK AKAR VISUAL: [koef] ⁿ√[isi] */}
+                        {blk.type === 'akar' && (
+                          <div className="flex items-center gap-1">
+                            {/* Input Angka Depan / Koefisien (misal 9 pada 9√3) */}
+                            <input
+                              type="text"
+                              value={blk.koef || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, koef: val } : it))
+                              }}
+                              placeholder="koef"
+                              title="Angka di depan akar (opsional, misal 9 untuk 9√3, atau kosongkan)"
+                              className="w-11 text-center text-xs font-bold px-1 py-1.5 bg-white border border-dashed border-slate-300 rounded-lg focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-slate-800"
+                            />
+                            {/* Struktur Simbol Akar & Garis Atap Akar */}
+                            <div className="flex items-end">
+                              <div className="flex flex-col items-end mr-0.5">
+                                {/* Derajat Akar (pangkat akar kecil di kiri atas) */}
+                                <input
+                                  type="text"
+                                  value={blk.deg || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value
+                                    setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, deg: val } : it))
+                                  }}
+                                  placeholder="²"
+                                  title="Pangkat/derajat akar (kosongkan untuk akar kuadrat, isi 3 untuk ∛)"
+                                  className="w-6 h-5 text-center text-[10px] font-bold bg-white border border-dashed border-slate-300 rounded focus:outline-none focus:border-violet-500 text-slate-600 -mb-1"
+                                />
+                                <span className="text-2xl font-serif leading-none text-slate-800 select-none font-bold">
+                                  √
+                                </span>
+                              </div>
+                              {/* Kotak Isi di Bawah Garis Atap Akar */}
+                              <div className="border-t-2 border-slate-800 pt-1 pl-0.5">
+                                <input
+                                  type="text"
+                                  value={blk.isi || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value
+                                    setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, isi: val } : it))
+                                  }}
+                                  placeholder="isi akar"
+                                  title="Angka atau aljabar di dalam akar (misal 12, 3, atau x+1)"
+                                  className="w-16 sm:w-20 text-center text-xs font-bold px-2 py-1 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 2. BLOK PECAHAN VISUAL: [Atas] / [Bawah] */}
+                        {blk.type === 'pecahan' && (
+                          <div className="flex flex-col items-center min-w-[76px]">
+                            <input
+                              type="text"
+                              value={blk.pembilang || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, pembilang: val } : it))
+                              }}
+                              placeholder="atas"
+                              title="Pembilang (bagian atas pecahan)"
+                              className="w-20 text-center text-xs font-bold px-2 py-1 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                            />
+                            <div className="w-full h-0.5 bg-slate-800 my-1 rounded-full" />
+                            <input
+                              type="text"
+                              value={blk.penyebut || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, penyebut: val } : it))
+                              }}
+                              placeholder="bawah"
+                              title="Penyebut (bagian bawah pecahan)"
+                              className="w-20 text-center text-xs font-bold px-2 py-1 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                            />
+                          </div>
+                        )}
+
+                        {/* 3. BLOK PANGKAT VISUAL: [Basis] ^ [Pangkat] */}
+                        {blk.type === 'pangkat' && (
+                          <div className="flex items-start gap-0.5 pt-2">
+                            <input
+                              type="text"
+                              value={blk.basis || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, basis: val } : it))
+                              }}
+                              placeholder="basis"
+                              title="Bilangan pokok / basis (misal 8, 16, x, atau (1/2))"
+                              className="w-14 text-center text-xs font-bold px-1.5 py-1.5 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900 mt-1"
+                            />
+                            <input
+                              type="text"
+                              value={blk.pangkat || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, pangkat: val } : it))
+                              }}
+                              placeholder="pangkat"
+                              title="Pangkat / eksponen (misal x+2, 2x-1, atau 2)"
+                              className="w-14 text-center text-[11px] font-extrabold px-1.5 py-1 bg-violet-50 border border-violet-400 rounded-md focus:outline-none focus:ring-2 focus:ring-violet-500 text-violet-900 -mt-2 shadow-2xs"
+                            />
+                          </div>
+                        )}
+
+                        {/* 4. BLOK SUBSKRIP / INDEKS VISUAL: [Var] _ [Indeks] */}
+                        {blk.type === 'subskrip' && (
+                          <div className="flex items-end gap-0.5 pb-1">
+                            <input
+                              type="text"
+                              value={blk.variabel || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, variabel: val } : it))
+                              }}
+                              placeholder="var"
+                              className="w-12 text-center text-xs font-bold px-1.5 py-1.5 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                            />
+                            <input
+                              type="text"
+                              value={blk.indeks || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, indeks: val } : it))
+                              }}
+                              placeholder="idx"
+                              className="w-10 text-center text-[10px] font-extrabold px-1 py-0.5 bg-violet-50 border border-violet-400 rounded focus:outline-none focus:ring-2 focus:ring-violet-500 text-violet-900 -mb-1"
+                            />
+                          </div>
+                        )}
+
+                        {/* 5. BLOK TANDA OPERASI (+, -, =, ×, ÷, ±) */}
+                        {blk.type === 'op' && (
+                          <select
+                            value={blk.val || '+'}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, val } : it))
+                            }}
+                            title="Pilih tanda operasi matematika"
+                            className="text-sm font-black px-2 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                          >
+                            <option value="+">+</option>
+                            <option value="-">−</option>
+                            <option value="=">=</option>
+                            <option value="×">×</option>
+                            <option value="÷">÷</option>
+                            <option value="±">±</option>
+                            <option value="≤">≤</option>
+                            <option value="≥">≥</option>
+                            <option value="≠">≠</option>
+                            <option value="≈">≈</option>
+                            <option value="·">·</option>
+                          </select>
+                        )}
+
+                        {/* 6. BLOK ANGKA / TEKS / VARIABEL BIASA */}
+                        {blk.type === 'teks' && (
+                          <input
+                            type="text"
+                            value={blk.val || ''}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setVisualBlocks(prev => prev.map((it, i) => i === bIdx ? { ...it, val } : it))
+                            }}
+                            placeholder="angka/x"
+                            className="w-20 text-center text-xs font-bold px-2 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Ribbon Bar: Tambah Bagian Baru ke Kanvas Rumus (Persis Ribbon MS Word) */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold text-slate-600 block">
+                      ➕ Tambah Bagian ke Rumus Ini (Bisa Gabung Banyak Akar / Pangkat / Pecahan):
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          ...(prev.length > 0 && prev[prev.length - 1].type !== 'op' ? [{ id: nextBlockId(), type: 'op', val: '+' }] : []),
+                          { id: nextBlockId(), type: 'akar', koef: '', deg: '', isi: '3' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-violet-50 text-slate-800 border border-slate-200 hover:border-violet-300 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span className="font-serif text-sm font-black text-violet-700">√</span>
+                        <span>+ Bentuk Akar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          ...(prev.length > 0 && prev[prev.length - 1].type !== 'op' ? [{ id: nextBlockId(), type: 'op', val: '+' }] : []),
+                          { id: nextBlockId(), type: 'pecahan', pembilang: 'a', penyebut: 'b' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-violet-50 text-slate-800 border border-slate-200 hover:border-violet-300 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span className="font-mono text-xs font-black text-violet-700">a/b</span>
+                        <span>+ Pecahan</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          ...(prev.length > 0 && prev[prev.length - 1].type !== 'op' ? [{ id: nextBlockId(), type: 'op', val: '=' }] : []),
+                          { id: nextBlockId(), type: 'pangkat', basis: 'x', pangkat: '2' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-violet-50 text-slate-800 border border-slate-200 hover:border-violet-300 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span className="font-mono text-xs font-black text-violet-700">xⁿ</span>
+                        <span>+ Pangkat</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          { id: nextBlockId(), type: 'op', val: '+' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-slate-800 border border-slate-200 hover:border-indigo-300 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span className="font-black text-indigo-700">+ − =</span>
+                        <span>+ Tanda Operasi</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          { id: nextBlockId(), type: 'teks', val: '10' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span>+ Angka / Variabel</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVisualBlocks(prev => [
+                          ...prev,
+                          { id: nextBlockId(), type: 'subskrip', variabel: 'x', indeks: '1' }
+                        ])}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-violet-50 text-slate-800 border border-slate-200 hover:border-violet-300 text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <span className="font-mono text-xs font-black text-violet-700">x₁</span>
+                        <span>+ Indeks</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* MODE 2: KETIK MUDAH (GAYA KALKULATOR / TANPA KODE LATEX)          */}
+              {/* ================================================================= */}
+              {eqType === 'ketik_mudah' && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Ketik Rumus dengan Simbol Biasa (Tanpa Perlu Kode \sqrt atau \frac):
+                    </label>
+                    <input
+                      type="text"
+                      value={eqFriendlyText}
+                      onChange={(e) => setEqFriendlyText(e.target.value)}
+                      placeholder="Contoh: √12 + √27 - √48  atau  9√3  atau  8^(x+2) = 16^(x-1)"
+                      className="w-full text-sm font-bold px-3.5 py-2.5 bg-white border-2 border-violet-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-900"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Contoh ketikan: <strong className="text-slate-700">√12 + √27 - √48</strong>, <strong className="text-slate-700">9√3</strong>, <strong className="text-slate-700">∛27</strong>, <strong className="text-slate-700">8^(x+2) = 16^(x-1)</strong>, <strong className="text-slate-700">x² + 2x + 1 = 0</strong>
+                    </p>
+                  </div>
+
+                  {/* Papan Tombol Simbol Matematika Cepat */}
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-600 block mb-1.5">
+                      Klik Tombol untuk Menyisipkan Simbol:
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {[
-                        { sym: '\\times', label: '×' },
-                        { sym: '\\div', label: '÷' },
-                        { sym: '\\pm', label: '±' },
-                        { sym: '\\le', label: '≤' },
-                        { sym: '\\ge', label: '≥' },
-                        { sym: '\\neq', label: '≠' },
-                        { sym: '\\approx', label: '≈' },
-                        { sym: '\\pi', label: 'π' },
-                        { sym: '\\alpha', label: 'α' },
-                        { sym: '\\beta', label: 'β' },
-                        { sym: '\\theta', label: 'θ' },
-                        { sym: '\\Delta', label: 'Δ' },
-                        { sym: '\\infty', label: '∞' },
-                        { sym: '^{\\circ}', label: '°' },
-                        { sym: '\\cdot', label: '·' },
-                        { sym: '\\sum', label: '∑' },
-                      ].map(item => (
+                        { insert: '√', label: '√ (Akar)' },
+                        { insert: '√()', label: '√(x+1)' },
+                        { insert: '∛', label: '∛ (Akar 3)' },
+                        { insert: '∜', label: '∜ (Akar 4)' },
+                        { insert: '²', label: 'x²' },
+                        { insert: '³', label: 'x³' },
+                        { insert: '^()', label: 'x^(n)' },
+                        { insert: ' × ', label: '×' },
+                        { insert: ' ÷ ', label: '÷' },
+                        { insert: ' ± ', label: '±' },
+                        { insert: ' ≤ ', label: '≤' },
+                        { insert: ' ≥ ', label: '≥' },
+                        { insert: ' ≠ ', label: '≠' },
+                        { insert: '°', label: '° (Derajat)' },
+                        { insert: 'π', label: 'π' },
+                        { insert: '∠', label: '∠ (Sudut)' },
+                        { insert: '△', label: '△ (Segitiga)' },
+                      ].map((btn) => (
                         <button
-                          key={item.sym}
+                          key={btn.label}
                           type="button"
-                          onClick={() => setEqBebas(prev => (prev ? `${prev} ${item.sym}` : item.sym))}
-                          className="h-9 rounded-lg bg-white border border-slate-200 hover:bg-violet-50 hover:border-violet-300 text-slate-800 font-bold text-sm transition-all flex items-center justify-center shadow-2xs"
+                          onClick={() => setEqFriendlyText(prev => `${prev}${btn.insert}`)}
+                          className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-violet-50 hover:border-violet-300 text-xs font-bold text-slate-800 shadow-2xs transition-all cursor-pointer"
                         >
-                          {item.label}
+                          {btn.label}
                         </button>
                       ))}
                     </div>
-                    <div className="pt-2">
+                  </div>
+                </div>
+              )}
+
+              {/* Form Input Sesuai Tipe Rumus Tunggal (Akar, Pecahan, Pangkat, Subskrip, Simbol, LaTeX) */}
+              {!['visual_word', 'ketik_mudah'].includes(eqType) && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  {/* 1. PECAHAN */}
+                  {eqType === 'pecahan' && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Pembilang (Bagian Atas):
+                        </label>
+                        <input
+                          type="text"
+                          value={eqPembilang}
+                          onChange={(e) => setEqPembilang(e.target.value)}
+                          placeholder="Contoh: a^6 b^3 atau 2x + 1 atau √12"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                      <div className="border-t border-slate-200 my-1" />
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Penyebut (Bagian Bawah):
+                        </label>
+                        <input
+                          type="text"
+                          value={eqPenyebut}
+                          onChange={(e) => setEqPenyebut(e.target.value)}
+                          placeholder="Contoh: a^2 b^5 atau 3"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. PANGKAT */}
+                  {eqType === 'pangkat' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Basis / Bilangan Pokok:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqBasis}
+                          onChange={(e) => setEqBasis(e.target.value)}
+                          placeholder="Contoh: 8 atau (1/2) atau 2x"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Pangkat / Eksponen:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqPangkat}
+                          onChange={(e) => setEqPangkat(e.target.value)}
+                          placeholder="Contoh: x+2 atau -3"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. AKAR */}
+                  {eqType === 'akar' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Angka Depan / Koefisien:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqKoefAkar}
+                          onChange={(e) => setEqKoefAkar(e.target.value)}
+                          placeholder="Opsional (misal: 9 pada 9√3)"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Nilai di Dalam Akar:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqDalamAkar}
+                          onChange={(e) => setEqDalamAkar(e.target.value)}
+                          placeholder="Contoh: 12 atau 3 atau b^2 - 4ac"
+                          className="w-full text-xs px-3 py-2 bg-white border border-violet-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-900 font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Derajat Akar (Opsional):
+                        </label>
+                        <input
+                          type="text"
+                          value={eqDerajatAkar}
+                          onChange={(e) => setEqDerajatAkar(e.target.value)}
+                          placeholder="Kosong = √, isi 3 = ∛"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4. SUBSKRIP */}
+                  {eqType === 'subskrip' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Variabel / Teks:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqSubskripVar}
+                          onChange={(e) => setEqSubskripVar(e.target.value)}
+                          placeholder="Contoh: x atau U"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Indeks / Angka Bawah:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqSubskripVal}
+                          onChange={(e) => setEqSubskripVal(e.target.value)}
+                          placeholder="Contoh: 1 atau n"
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 5. SIMBOL */}
+                  {eqType === 'simbol' && (
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold text-slate-600 block">
+                        Klik salah satu simbol untuk menyalin ke rumus:
+                      </span>
+                      <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5">
+                        {[
+                          { sym: '\\times', label: '×' },
+                          { sym: '\\div', label: '÷' },
+                          { sym: '\\pm', label: '±' },
+                          { sym: '\\le', label: '≤' },
+                          { sym: '\\ge', label: '≥' },
+                          { sym: '\\neq', label: '≠' },
+                          { sym: '\\approx', label: '≈' },
+                          { sym: '\\pi', label: 'π' },
+                          { sym: '\\alpha', label: 'α' },
+                          { sym: '\\beta', label: 'β' },
+                          { sym: '\\theta', label: 'θ' },
+                          { sym: '\\Delta', label: 'Δ' },
+                          { sym: '\\infty', label: '∞' },
+                          { sym: '^{\\circ}', label: '°' },
+                          { sym: '\\cdot', label: '·' },
+                          { sym: '\\sum', label: '∑' },
+                        ].map(item => (
+                          <button
+                            key={item.sym}
+                            type="button"
+                            onClick={() => setEqBebas(prev => (prev ? `${prev} ${item.sym}` : item.sym))}
+                            className="h-9 rounded-lg bg-white border border-slate-200 hover:bg-violet-50 hover:border-violet-300 text-slate-800 font-bold text-sm transition-all flex items-center justify-center shadow-2xs"
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="pt-2">
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Rumus Gabungan:
+                        </label>
+                        <input
+                          type="text"
+                          value={eqBebas}
+                          onChange={(e) => setEqBebas(e.target.value)}
+                          placeholder="Rumus simbol akan tersusun di sini..."
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 6. BEBAS */}
+                  {eqType === 'bebas' && (
+                    <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Rumus Gabungan:
+                        Ketikkan Formula LaTeX / Matematika:
                       </label>
                       <input
                         type="text"
                         value={eqBebas}
                         onChange={(e) => setEqBebas(e.target.value)}
-                        placeholder="Rumus simbol akan tersusun di sini..."
+                        placeholder="Contoh: \sqrt{12} + \sqrt{27} - \sqrt{48} atau 9\sqrt{3}"
                         className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
                       />
                     </div>
-                  </div>
-                )}
-
-                {/* 6. BEBAS */}
-                {eqType === 'bebas' && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Ketikkan Formula LaTeX Bebas:
-                    </label>
-                    <input
-                      type="text"
-                      value={eqBebas}
-                      onChange={(e) => setEqBebas(e.target.value)}
-                      placeholder="Contoh: ax^2 + bx + c = 0 atau \frac{1}{2}mv^2"
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono text-slate-800"
-                    />
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {/* Live Preview Rumus */}
-              <div className="p-4 bg-violet-50/70 border border-violet-100 rounded-xl space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-bold text-violet-800">
-                  <span>Pratinjau Hasil Rumus:</span>
-                  <span className="font-mono text-[11px] text-violet-500 font-normal">
-                    ${getGeneratedLatex() || '...'}$
+              <div className="p-4 bg-violet-50/70 border border-violet-200 rounded-2xl space-y-1.5">
+                <div className="flex items-center justify-between text-xs font-bold text-violet-900">
+                  <span>👁️ Pratinjau Hasil Equation:</span>
+                  <span className="font-mono text-[11px] text-violet-600 bg-white px-2 py-0.5 rounded border border-violet-200 font-semibold">
+                    {latexToFriendlyMath(getGeneratedLatex()) || '...'}
                   </span>
                 </div>
                 <div
-                  className="p-3 bg-white rounded-lg border border-violet-200 shadow-2xs text-center min-h-[48px] flex items-center justify-center text-sm md:text-base text-slate-900"
+                  className="p-4 bg-white rounded-xl border border-violet-200 shadow-2xs text-center min-h-[56px] flex items-center justify-center text-base md:text-lg text-slate-900"
                   dangerouslySetInnerHTML={{ __html: renderMathContent(`$${getGeneratedLatex() || 'a'}$`) }}
                 />
               </div>
             </div>
 
             {/* Footer Modal */}
-            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2.5 flex-wrap">
               <button
                 type="button"
-                onClick={() => setEquationModalOpen(false)}
+                onClick={() => {
+                  setEditingEqItem(null)
+                  setEquationModalOpen(false)
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors"
               >
                 Batal
               </button>
-              <button
-                type="button"
-                onClick={handleInsertEquation}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 active:scale-[0.98] text-white transition-all shadow-sm flex items-center gap-1.5"
-              >
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-                <span>Sisipkan Rumus ke Soal</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {editingEqItem && (
+                  <button
+                    type="button"
+                    onClick={() => handleInsertEquation(true)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold border border-violet-300 bg-white hover:bg-violet-50 text-violet-700 transition-all"
+                    title="Jangan timpa rumus lama, tetapi tambahkan sebagai rumus baru di akhir"
+                  >
+                    + Sisipkan Sebagai Baru
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleInsertEquation(false)}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 active:scale-[0.98] text-white transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d={editingEqItem ? "M5 13l4 4L19 7" : "M12 4v16m8-8H4"} />
+                  </svg>
+                  <span>{editingEqItem ? 'Simpan Perubahan Rumus' : 'Sisipkan Rumus ke Soal'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -484,7 +484,20 @@ export const parseDocxFile = async (file) => {
  *   Pembahasan: Penjelasan opsional...
  */
 export const parseRawTextToQuestions = (rawText, extractionMessages = []) => {
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean)
+  // Pecah baris opsi horizontal (misal guru mengetik "A. 9√3   B. 3√3   C. √3   D. -√3" dalam 1 baris atau 2 kolom di Word)
+  const rawLines = rawText.split('\n').map(l => l.trim()).filter(Boolean)
+  const lines = []
+  rawLines.forEach((rawLine) => {
+    if (/^\*?[A-Ea-e]\*?[\.\)]\s+/.test(rawLine) && !rawLine.startsWith('<table') && !rawLine.startsWith('<img')) {
+      const splitOpts = rawLine.split(/(?:\t+|\s{2,})(?=\*?[B-Eb-e]\*?[\.\)]\s+)/g)
+      splitOpts.forEach(part => {
+        if (part.trim()) lines.push(part.trim())
+      })
+    } else {
+      lines.push(rawLine)
+    }
+  })
+
   const questions = []
 
   let currentSoal = null
@@ -499,9 +512,9 @@ export const parseRawTextToQuestions = (rawText, extractionMessages = []) => {
   }
 
   const isOptionLine = (line) => {
-    // Pola: "A. Opsi", "B) Opsi", "C . Opsi", "a. opsi"
+    // Pola: "A. Opsi", "B) Opsi", "*C. Opsi", "C*. Opsi", "a. opsi"
     if (line.startsWith('<table') || line.startsWith('<TABLE') || line.startsWith('<img')) return false
-    return /^[A-Ea-e][\.\)]\s*(.*)/i.test(line)
+    return /^\*?[A-Ea-e]\*?[\.\)]\s*(.*)/i.test(line)
   }
 
   lines.forEach((line) => {
@@ -573,12 +586,25 @@ export const parseRawTextToQuestions = (rawText, extractionMessages = []) => {
       return
     }
 
-    // ───────── Deteksi Opsi A, B, C, D, E ─────────
-    const optMatch = line.match(/^([A-Ea-e])[\.\)]\s*(.*)/i)
+    // ───────── Deteksi Opsi A, B, C, D, E (termasuk tanda bintang *A. untuk kunci otomatis) ─────────
+    const optMatch = line.match(/^(\*?)([A-Ea-e])(\*?)[\.\)]\s*(.*)/i)
     if (optMatch && isOptionLine(line)) {
+      const optLetter = optMatch[2].toUpperCase()
+      let optText = optMatch[4].trim()
+      const hasStarKey = optMatch[1] === '*' || optMatch[3] === '*'
+      const hasSuffixKey = /\((?:kunci|benar)\)\s*$/i.test(optText)
+
+      if (hasSuffixKey) {
+        optText = optText.replace(/\s*\((?:kunci|benar)\)\s*$/i, '').trim()
+      }
+
+      if ((hasStarKey || hasSuffixKey) && !currentSoal.kunci_jawaban) {
+        currentSoal.kunci_jawaban = optLetter
+      }
+
       currentSoal.opsi.push({
-        key: optMatch[1].toUpperCase(),
-        text: optMatch[2].trim()
+        key: optLetter,
+        text: optText
       })
       lastSection = 'opsi'
       return
@@ -619,9 +645,22 @@ export const parseRawTextToQuestions = (rawText, extractionMessages = []) => {
     questions.push(finalizeQuestion(currentSoal))
   }
 
+  // Hitung ringkasan tipe soal & jumlah equation matematika
+  const summary = {}
+  let equationsCount = 0
+  questions.forEach(q => {
+    const t = q.tipe_soal || 'pg'
+    summary[t] = (summary[t] || 0) + 1
+    const allTexts = [q.pertanyaan, ...(q.opsi || []).map(o => o.text), q.pembahasan].filter(Boolean).join(' ')
+    const eqMatches = allTexts.match(/\$[^\$]+\$|\\(?:frac|sqrt|times|div|pm)\b|[√∛∜]/g)
+    if (eqMatches) equationsCount += eqMatches.length
+  })
+
   return {
     questions,
     totalSoal: questions.length,
+    summary,
+    equationsCount,
     validation: validateQuestionsList(questions),
     messages: extractionMessages
   }
@@ -641,9 +680,23 @@ const finalizeQuestion = (q) => {
     }
   }
 
+  // Bersihkan kunci jawaban PG jika guru menuliskan teks opsi di belakang huruf (misal: "Kunci: C. √3" atau "C) 3√3")
+  if (q.tipe_soal === 'pg' && q.kunci_jawaban) {
+    const cleanLetterMatch = q.kunci_jawaban.trim().match(/^(?:pilihan\s+|opsi\s+)?([A-Ea-e])(?:[\.\)\s\-].*)?$/i)
+    if (cleanLetterMatch) {
+      q.kunci_jawaban = cleanLetterMatch[1].toUpperCase()
+    }
+  }
+
   // Format kunci jawaban PG Kompleks: "A, C" → JSON string '["A","C"]'
   if (q.tipe_soal === 'pg_kompleks' && q.kunci_jawaban && q.kunci_jawaban.includes(',')) {
-    const arr = q.kunci_jawaban.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+    const arr = q.kunci_jawaban
+      .split(',')
+      .map(s => {
+        const m = s.trim().match(/^([A-Ea-e])/i)
+        return m ? m[1].toUpperCase() : s.trim().toUpperCase()
+      })
+      .filter(Boolean)
     q.kunci_jawaban = JSON.stringify(arr)
   }
 

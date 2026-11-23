@@ -18,12 +18,16 @@ export function ommlToLatex(node) {
   switch (tag) {
     case 'omathpara': {
       // Math paragraph (block equation)
-      const inner = Array.from(node.childNodes).map(ommlToLatex).join('').replace(/\$/g, '').trim()
+      const inner = postProcessOmmlLatex(
+        Array.from(node.childNodes).map(ommlToLatex).join('').replace(/\$/g, '').trim()
+      )
       return inner ? `$$ ${inner} $$` : ''
     }
     case 'omath': {
       // Inline math
-      const inner = Array.from(node.childNodes).map(ommlToLatex).join('').replace(/\$/g, '').trim()
+      const inner = postProcessOmmlLatex(
+        Array.from(node.childNodes).map(ommlToLatex).join('').replace(/\$/g, '').trim()
+      )
       const parentTag = (node.parentNode?.localName || node.parentNode?.tagName || '').toLowerCase().replace(/^m:/, '')
       if (parentTag === 'omathpara') {
         return inner
@@ -58,7 +62,8 @@ export function ommlToLatex(node) {
       const supNode = findChildByTag(node, 'sup')
       const base = baseNode ? ommlToLatex(baseNode).trim() : ''
       const sup = supNode ? ommlToLatex(supNode).trim() : ''
-      return `{${base}}^{${sup}}`
+      const cleanBase = /^[a-zA-Z0-9]+$/.test(base) ? base : `{${base}}`
+      return `${cleanBase}^{${sup}}`
     }
     case 'ssub': {
       // Subscript: base (e) and sub
@@ -66,7 +71,8 @@ export function ommlToLatex(node) {
       const subNode = findChildByTag(node, 'sub')
       const base = baseNode ? ommlToLatex(baseNode).trim() : ''
       const sub = subNode ? ommlToLatex(subNode).trim() : ''
-      return `{${base}}_{${sub}}`
+      const cleanBase = /^[a-zA-Z0-9]+$/.test(base) ? base : `{${base}}`
+      return `${cleanBase}_{${sub}}`
     }
     case 'ssubsup': {
       // Sub-superscript
@@ -76,18 +82,73 @@ export function ommlToLatex(node) {
       const base = baseNode ? ommlToLatex(baseNode).trim() : ''
       const sub = subNode ? ommlToLatex(subNode).trim() : ''
       const sup = supNode ? ommlToLatex(supNode).trim() : ''
-      return `{${base}}_{${sub}}^{${sup}}`
+      const cleanBase = /^[a-zA-Z0-9]+$/.test(base) ? base : `{${base}}`
+      return `${cleanBase}_{${sub}}^{${sup}}`
+    }
+    case 'spre': {
+      // Pre-sub-superscript (sering dipakai di Word untuk akar pangkat n seperti ³√8)
+      const subNode = findChildByTag(node, 'sub')
+      const supNode = findChildByTag(node, 'sup')
+      const eNode = findChildByTag(node, 'e')
+      const sub = subNode ? ommlToLatex(subNode).trim() : ''
+      const sup = supNode ? ommlToLatex(supNode).trim() : ''
+      const e = eNode ? ommlToLatex(eNode).trim() : ''
+      if (sup && !sub && e.startsWith('\\sqrt{')) {
+        return e.replace(/^\\sqrt\{/, `\\sqrt[${sup}]{`)
+      }
+      return `{}_{${sub}}^{${sup}}${e}`
     }
     case 'rad': {
       // Radical (Square root or nth root)
+      const radPr = findChildByTag(node, 'radpr')
+      const degHideNode = radPr ? findChildByTag(radPr, 'deghide') : null
+      const degHideVal = degHideNode?.getAttribute
+        ? (degHideNode.getAttribute('m:val') || degHideNode.getAttribute('val') || '1')
+        : null
+      const isDegHidden = degHideVal === '1' || degHideVal === 'true' || degHideVal === 'on'
+
       const degNode = findChildByTag(node, 'deg')
       const baseNode = findChildByTag(node, 'e')
-      const deg = degNode ? ommlToLatex(degNode).trim() : ''
+      const deg = (!isDegHidden && degNode) ? ommlToLatex(degNode).trim() : ''
       const base = baseNode ? ommlToLatex(baseNode).trim() : ''
       if (deg && deg !== '2') {
         return `\\sqrt[${deg}]{${base}}`
       }
       return `\\sqrt{${base}}`
+    }
+    case 'func': {
+      // Math Function (sin, cos, tan, log, ln, lim)
+      const fNameNode = findChildByTag(node, 'fname')
+      const eNode = findChildByTag(node, 'e')
+      let fName = fNameNode ? ommlToLatex(fNameNode).trim() : ''
+      const e = eNode ? ommlToLatex(eNode).trim() : ''
+      if (/^(sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|log|ln|lim|max|min|gcd)$/i.test(fName)) {
+        fName = `\\${fName.toLowerCase()}`
+      }
+      return `${fName} ${e}`.trim()
+    }
+    case 'eqarr': {
+      // Equation Array (Sistem Persamaan Linear / Baris Multi-Persamaan)
+      const rows = Array.from(node.childNodes)
+        .filter(c => (c.localName || c.tagName || '').toLowerCase().replace(/^m:/, '') === 'e')
+        .map(c => ommlToLatex(c).trim())
+        .filter(Boolean)
+      if (rows.length <= 1) return rows[0] || ''
+      return `\\begin{aligned} ${rows.join(' \\\\ ')} \\end{aligned}`
+    }
+    case 'groupchr': {
+      // Overbrace / Underbrace
+      const pr = findChildByTag(node, 'groupchrpr')
+      const posNode = pr ? findChildByTag(pr, 'pos') : null
+      const pos = posNode?.getAttribute ? (posNode.getAttribute('m:val') || posNode.getAttribute('val')) : 'bot'
+      const eNode = findChildByTag(node, 'e')
+      const e = eNode ? ommlToLatex(eNode).trim() : ''
+      return pos === 'top' ? `\\overbrace{${e}}` : `\\underbrace{${e}}`
+    }
+    case 'box':
+    case 'borderbox': {
+      const eNode = findChildByTag(node, 'e')
+      return eNode ? ommlToLatex(eNode).trim() : ''
     }
     case 'd': {
       // Delimiters (parentheses, brackets, absolute value)
@@ -196,9 +257,48 @@ function findChildByTag(parent, tagName) {
   return null
 }
 
+/**
+ * Normalisasi karakter Unicode Mathematical Alphanumeric (misal 𝑥, 𝑦, 𝑎, 𝑏 dari Cambria Math Word)
+ * kembali ke huruf/angka ASCII standar agar KaTeX dapat merendernya dengan sempurna.
+ */
+function normalizeUnicodeMathAlphanumeric(str) {
+  if (!str) return ''
+  let out = ''
+  for (const ch of str) {
+    const cp = ch.codePointAt(0)
+    // Mathematical Bold, Italic, Bold Italic, Sans-Serif, Monospace (U+1D400 - U+1D7FF)
+    if (cp >= 0x1D400 && cp <= 0x1D6A3) {
+      // Rentang alfabet A-Z (26) dan a-z (26) = 52 per blok
+      const offset = cp - 0x1D400
+      const mod = offset % 52
+      if (mod < 26) {
+        out += String.fromCharCode(65 + mod)
+        continue
+      } else {
+        out += String.fromCharCode(97 + (mod - 26))
+        continue
+      }
+    }
+    // Mathematical Digits (U+1D7CE - U+1D7FF)
+    if (cp >= 0x1D7CE && cp <= 0x1D7FF) {
+      const digit = (cp - 0x1D7CE) % 10
+      out += String.fromCharCode(48 + digit)
+      continue
+    }
+    // Exception U+210E (Planck constant / italic h)
+    if (cp === 0x210E) {
+      out += 'h'
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
 function cleanMathText(txt) {
   if (!txt) return ''
-  return txt
+  return normalizeUnicodeMathAlphanumeric(txt)
+    .replace(/[\u2212\u2013]/g, '-')
     .replace(/±/g, ' \\pm ')
     .replace(/×/g, ' \\times ')
     .replace(/÷/g, ' \\div ')
@@ -216,8 +316,34 @@ function cleanMathText(txt) {
     .replace(/μ/g, ' \\mu ')
     .replace(/σ/g, ' \\sigma ')
     .replace(/ω/g, ' \\omega ')
-    .replace(/Δ/g, ' \\Delta ')
+    .replace(/[Δ∆]/g, ' \\Delta ')
+    .replace(/△/g, ' \\triangle ')
+    .replace(/∠/g, ' \\angle ')
+    .replace(/⊥/g, ' \\perp ')
+    .replace(/∥/g, ' \\parallel ')
+    .replace(/[·⋅∙]/g, ' \\cdot ')
+    .replace(/°/g, '^{\\circ}')
     .replace(/∑/g, ' \\sum ')
     .replace(/∫/g, ' \\int ')
+    .replace(/∛\s*\(([^()]+)\)/g, '\\sqrt[3]{$1}')
+    .replace(/∛\s*([0-9a-zA-Z]+)/g, '\\sqrt[3]{$1}')
+    .replace(/∜\s*\(([^()]+)\)/g, '\\sqrt[4]{$1}')
+    .replace(/∜\s*([0-9a-zA-Z]+)/g, '\\sqrt[4]{$1}')
+    .replace(/√\s*\(([^()]+)\)/g, '\\sqrt{$1}')
+    .replace(/√\s*([0-9a-zA-Z]+)/g, '\\sqrt{$1}')
     .replace(/√/g, ' \\sqrt ')
+}
+
+/**
+ * Post-processing hasil LaTeX dari satu blok m:oMath / m:oMathPara:
+ * Memastikan jika ada simbol √ dan angka di node <m:t> terpisah (misal "\sqrt 12" atau "\sqrt (x+1)"),
+ * otomatis dibungkus kurung kurawal menjadi "\sqrt{12}" atau "\sqrt{x+1}".
+ */
+function postProcessOmmlLatex(latex) {
+  if (!latex) return ''
+  return latex
+    .replace(/\\sqrt\s*\(([^()]+)\)/g, '\\sqrt{$1}')
+    .replace(/\\sqrt\s+([0-9]+(?:\.[0-9]+)?|[a-zA-Z]+)(?!\s*\{)/g, '\\sqrt{$1}')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

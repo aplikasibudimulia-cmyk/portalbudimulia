@@ -46,6 +46,24 @@ div.fixed.inset-0[class*="bg-slate-9"] {
   *, *::before, *::after {
     font-family: var(--font-primary);
   }
+  .katex, .katex * {
+    font-family: KaTeX_Main, "Times New Roman", serif;
+  }
+}
+
+/* Pastikan SVG bentuk akar (\sqrt) dan garis pecahan KaTeX tidak pernah tertutup atau terpotong oleh preflight CSS */
+.katex svg {
+  display: block !important;
+  position: absolute !important;
+  width: 100% !important;
+  height: inherit !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
+.katex .hide-tail {
+  width: 100% !important;
+  position: relative !important;
+  overflow: hidden !important;
 }
 
 /* Kartu Pelajar selalu menggunakan Plus Jakarta Sans */

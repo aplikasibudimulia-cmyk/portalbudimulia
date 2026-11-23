@@ -6,50 +6,202 @@ import katex from 'katex'
  * Mendukung KaTeX equations ($..$ dan $$..$$), gambar soal, dan 5 varian tipe soal.
  */
 
+// Peta konversi pangkat Unicode ke digit standar
+const SUP_MAP = { '²':'2', '³':'3', '⁴':'4', '⁵':'5', '⁶':'6', '⁷':'7', '⁸':'8', '⁹':'9', '⁰':'0', '⁺':'+', '⁻':'-', 'ⁿ':'n', 'ⁱ':'i' }
+const SUB_MAP = { '₀':'0', '₁':'1', '₂':'2', '₃':'3', '₄':'4', '₅':'5', '₆':'6', '₇':'7', '₈':'8', '₉':'9', '₊':'+', '₋':'-' }
+
+/**
+ * Normalisasi rumus matematika (baik sintaks LaTeX maupun ketikan alami guru seperti √12, 9√3, 8^(x+2), x²)
+ * agar selalu menjadi sintaks LaTeX yang valid untuk KaTeX.
+ */
+export function normalizeMathFormula(rawFormula) {
+  if (!rawFormula) return ''
+  let f = String(rawFormula).trim()
+
+  // 1. Ganti simbol minus Unicode (− / –) dengan minus standar (-)
+  f = f.replace(/[\u2212\u2013]/g, '-')
+
+  // 2. Konversi simbol akar Unicode: √(x+1), √12, ∛(27), ∛8, ∜(16), ∜16
+  f = f
+    .replace(/∛\s*\(([^()]+)\)/g, '\\sqrt[3]{$1}')
+    .replace(/∛\s*\{([^{}]+)\}/g, '\\sqrt[3]{$1}')
+    .replace(/∛\s*([0-9]+(?:\.[0-9]+)?|[a-zA-Z]+)/g, '\\sqrt[3]{$1}')
+    .replace(/∜\s*\(([^()]+)\)/g, '\\sqrt[4]{$1}')
+    .replace(/∜\s*\{([^{}]+)\}/g, '\\sqrt[4]{$1}')
+    .replace(/∜\s*([0-9]+(?:\.[0-9]+)?|[a-zA-Z]+)/g, '\\sqrt[4]{$1}')
+    .replace(/√\s*\(([^()]+)\)/g, '\\sqrt{$1}')
+    .replace(/√\s*\{([^{}]+)\}/g, '\\sqrt{$1}')
+    .replace(/√\s*([0-9]+(?:\.[0-9]+)?|[a-zA-Z]+)/g, '\\sqrt{$1}')
+    // Bahasa alami: akar(12) atau akar3(27)
+    .replace(/\bakar3\s*\(([^()]+)\)/gi, '\\sqrt[3]{$1}')
+    .replace(/\bakar4\s*\(([^()]+)\)/gi, '\\sqrt[4]{$1}')
+    .replace(/\bakar\s*\(([^()]+)\)/gi, '\\sqrt{$1}')
+
+  // 3. Perbaiki \sqrt yang tidak memakai kurung kurawal: "\sqrt 12" -> "\sqrt{12}" atau "\sqrt(12)" -> "\sqrt{12}"
+  f = f
+    .replace(/\\sqrt\s*\(([^()]+)\)/g, '\\sqrt{$1}')
+    .replace(/\\sqrt\s+([0-9]+(?:\.[0-9]+)?|[a-zA-Z]+)(?!\s*\{)/g, '\\sqrt{$1}')
+    .replace(/\\sqrt\s*$/g, '\\sqrt{\\phantom{x}}')
+
+  // 4. Konversi pangkat dengan tanda kurung bulat: x^(2a+1) -> x^{2a+1}
+  f = f.replace(/\^\s*\(([^()]+)\)/g, '^{$1}')
+  f = f.replace(/_\s*\(([^()]+)\)/g, '_{$1}')
+
+  // 5. Konversi pangkat & subskrip Unicode di dalam rumus (misal m²n⁻¹ -> m^{2}n^{-1})
+  f = f.replace(/([²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ]+)/g, (sup) => {
+    const mapped = sup.split('').map(c => SUP_MAP[c] || c).join('')
+    return `^{${mapped}}`
+  })
+  f = f.replace(/([₀₁₂₃₄₅₆₇₈₉₊₋]+)/g, (sub) => {
+    const mapped = sub.split('').map(c => SUB_MAP[c] || c).join('')
+    return `_{${mapped}}`
+  })
+
+  // 6. Konversi simbol operator matematika Unicode di dalam rumus
+  f = f
+    .replace(/×/g, ' \\times ')
+    .replace(/÷/g, ' \\div ')
+    .replace(/±/g, ' \\pm ')
+    .replace(/≤/g, ' \\le ')
+    .replace(/≥/g, ' \\ge ')
+    .replace(/≠/g, ' \\neq ')
+    .replace(/≈/g, ' \\approx ')
+    .replace(/[·⋅∙]/g, ' \\cdot ')
+    .replace(/°/g, '^{\\circ}')
+    .replace(/∠/g, ' \\angle ')
+    .replace(/[△∆]/g, ' \\triangle ')
+    .replace(/π/g, ' \\pi ')
+    .replace(/∞/g, ' \\infty ')
+
+  return f.trim()
+}
+
+/**
+ * Mengubah kode LaTeX mentah menjadi format ketikan ramah guru (seperti di MS Word / Kalkulator)
+ * Contoh: "\sqrt{12} + \sqrt{27} - \sqrt{48}" -> "√(12) + √(27) - √(48)"
+ *         "{8}^{x+2} = {16}^{x-1}" -> "8^(x+2) = 16^(x-1)"
+ */
+export function latexToFriendlyMath(latex) {
+  if (!latex) return ''
+  let s = String(latex).replace(/^\$\$?|\$\$?$/g, '').trim()
+
+  // Hapus kurung kurawal tunggal yang membungkus basis tunggal: {8}^{x+2} -> 8^{x+2}
+  s = s.replace(/\{([a-zA-Z0-9]+)\}\s*(\^|_)/g, '$1$2')
+
+  // Bentuk akar: \sqrt[n]{x} -> ∛(x) / ∜(x) / akar[n](x), \sqrt{x} -> √(x) atau √x
+  s = s.replace(/\\sqrt\[3\]\{([^{}]+)\}/g, (_, inner) => /^[0-9a-zA-Z]+$/.test(inner.trim()) ? `∛${inner.trim()}` : `∛(${inner.trim()})`)
+  s = s.replace(/\\sqrt\[4\]\{([^{}]+)\}/g, (_, inner) => /^[0-9a-zA-Z]+$/.test(inner.trim()) ? `∜${inner.trim()}` : `∜(${inner.trim()})`)
+  s = s.replace(/\\sqrt\{([^{}]+)\}/g, (_, inner) => /^[0-9a-zA-Z]+$/.test(inner.trim()) ? `√${inner.trim()}` : `√(${inner.trim()})`)
+
+  // Pangkat & subskrip sederhana: ^{x+2} -> ^(x+2), ^{2} -> ²
+  s = s.replace(/\^\{([^{}]+)\}/g, (_, exp) => {
+    const t = exp.trim()
+    if (t === '\\circ' || t === 'circ') return '°'
+    if (t === '2') return '²'
+    if (t === '3') return '³'
+    if (/^[0-9a-zA-Z]$/.test(t)) return `^${t}`
+    return `^(${t})`
+  })
+  s = s.replace(/_\{([^{}]+)\}/g, (_, sub) => {
+    const t = sub.trim()
+    if (/^[0-9a-zA-Z]$/.test(t)) return `_${t}`
+    return `_(${t})`
+  })
+
+  // Operator & simbol umum
+  s = s
+    .replace(/\\times\b/g, '×')
+    .replace(/\\div\b/g, '÷')
+    .replace(/\\pm\b/g, '±')
+    .replace(/\\le\b/g, '≤')
+    .replace(/\\ge\b/g, '≥')
+    .replace(/\\neq\b/g, '≠')
+    .replace(/\\approx\b/g, '≈')
+    .replace(/\\cdot\b/g, '·')
+    .replace(/\\pi\b/g, 'π')
+    .replace(/\\infty\b/g, '∞')
+    .replace(/\\angle\b/g, '∠')
+    .replace(/\\triangle\b/g, '△')
+    .replace(/\^\\circ\b/g, '°')
+    .replace(/\\left\(/g, '(')
+    .replace(/\\right\)/g, ')')
+    .replace(/\\left\[/g, '[')
+    .replace(/\\right\]/g, ']')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return s
+}
+
 // Helper untuk parse teks campuran dengan KaTeX Math Equations dan gambar inline
 export function renderFormattedMath(text) {
   if (!text) return ''
 
-  // 1. Replace $$block math$$
-  let processed = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
+  // Gunakan sistem placeholder agar HTML hasil render KaTeX (termasuk <svg><path d="...\n..."/> pada \sqrt)
+  // TIDAK PERNAH terpotong atau rusak oleh regex berikutnya maupun konversi \n -> <br />!
+  const katexBlocks = []
+  const storeKatexHtml = (formula, displayMode = false) => {
     try {
-      return katex.renderToString(formula, { displayMode: true, throwOnError: false })
+      const normalized = normalizeMathFormula(formula)
+      if (!normalized) return ''
+      // PENTING: Hapus newline (\n) di dalam output KaTeX karena SVG <path d="M95,702\nc-2.7...">
+      // pada \sqrt{...} memiliki newline bawaan yang akan rusak jika terkena .replace(/\n/g, '<br />')
+      const rendered = katex
+        .renderToString(normalized, { displayMode, throwOnError: false })
+        .replace(/\r?\n/g, ' ')
+      const token = `@@EBM_KATEX_BLOCK_${katexBlocks.length}@@`
+      katexBlocks.push(rendered)
+      return token
     } catch {
-      return match
+      return formula
     }
+  }
+
+  let processed = String(text)
+
+  // 1. Replace $$block math$$
+  processed = processed.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
+    return storeKatexHtml(formula, true)
   })
 
   // 2. Replace $inline math$
   processed = processed.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
-    try {
-      return katex.renderToString(formula, { displayMode: false, throwOnError: false })
-    } catch {
-      return match
-    }
+    return storeKatexHtml(formula, false)
   })
 
-  // 3. Auto-detect LaTeX commands yang tidak terbungkus $ (misal: \frac{a}{b}, \sqrt{16}, \times, \pm, dll)
-  // Ini membuat guru tidak wajib mengetik simbol '$' jika menyalin rumus matematika
-  processed = processed.replace(/(\\(?:frac\{[^{}]+\}\{[^{}]+\}|sqrt(?:\[[^\]]+\])?\{[^{}]+\}|(?:times|div|pm|le|ge|neq|approx|alpha|beta|gamma|delta|pi|theta|sigma|omega|infty|sum|int|cdot)\b[^{}\$]*))/g, (match) => {
-    try {
-      return katex.renderToString(match.trim(), { displayMode: false, throwOnError: false })
-    } catch {
-      return match
-    }
+  // 3. Auto-detect LaTeX commands yang tidak terbungkus $ (mendukung nested braces hingga 2 level, misal \frac{{m}^{5}}{{n}^{5}} atau \sqrt{a^{2}+b^{2}})
+  const nestedBracePattern = '(?:[^{}]|\\{(?:[^{}]|\\{[^{}]*\\})*\\})+'
+  const bareLatexRegex = new RegExp(
+    `(\\\\(?:frac\\{${nestedBracePattern}\\}\\{${nestedBracePattern}\\}|sqrt(?:\\[[^\\]]+\\])?\\{${nestedBracePattern}\\}|sqrt\\s+[0-9a-zA-Z]+|(?:times|div|pm|le|ge|neq|approx|alpha|beta|gamma|delta|pi|theta|sigma|omega|infty|sum|int|cdot)\\b))`,
+    'g'
+  )
+  processed = processed.replace(bareLatexRegex, (match) => {
+    return storeKatexHtml(match.trim(), false)
   })
 
-  // 4. Auto-convert Unicode superscripts & common exponents (x², x³, dll)
+  // 4. Auto-detect penulisan bentuk akar alami tanpa $ (misal: 9√3, -√3, √12, √(2x+1), ∛27, ∜16)
+  processed = processed.replace(
+    /([+\-]?\d*\s*[√∛∜]\s*(?:\([^()]+\)|\{[^{}]+\}|[0-9]+(?:\.[0-9]+)?|[a-zA-Z]+))/g,
+    (match) => {
+      return storeKatexHtml(match.trim(), false)
+    }
+  )
+
+  // 5. Auto-detect penulisan pangkat alami dengan kurung (misal: 8^(x+2), (1/2)^(x-1))
+  processed = processed.replace(
+    /((?:\([a-zA-Z0-9\/+\-]+\)|[a-zA-Z0-9]+)\s*\^\s*(?:\([^()]+\)|\{[^{}]+\}|[+\-]?\d+))/g,
+    (match) => {
+      return storeKatexHtml(match.trim(), false)
+    }
+  )
+
+  // 6. Auto-convert Unicode superscripts & common exponents di luar $ (x², x³, m²n⁻¹, dll)
   processed = processed.replace(/([a-zA-Z0-9\)])([²³⁴⁵⁶⁷⁸⁹⁰⁺⁻ⁿⁱ]+)/g, (match, base, sup) => {
-    const supMap = { '²':'2', '³':'3', '⁴':'4', '⁵':'5', '⁶':'6', '⁷':'7', '⁸':'8', '⁹':'9', '⁰':'0', '⁺':'+', '⁻':'-', 'ⁿ':'n', 'ⁱ':'i' }
-    const mapped = sup.split('').map(c => supMap[c] || c).join('')
-    try {
-      return katex.renderToString(`${base}^{${mapped}}`, { displayMode: false, throwOnError: false })
-    } catch {
-      return `${base}<sup>${mapped}</sup>`
-    }
+    const mapped = sup.split('').map(c => SUP_MAP[c] || c).join('')
+    return storeKatexHtml(`${base}^{${mapped}}`, false)
   })
 
-  // Pastikan semua <img> tag memiliki styling responsif yang konsisten dan interaktif untuk di-zoom
+  // 7. Pastikan semua <img> tag memiliki styling responsif yang konsisten dan interaktif untuk di-zoom
   processed = processed.replace(/<img\s+([^>]*?)>/gi, (match, attrs) => {
     if (!attrs.includes('class=')) {
       return `<img class="cbt-soal-image cursor-pointer hover:opacity-95 active:scale-[0.99] transition-transform rounded-xl border border-slate-200/90 shadow-2xs max-w-full my-2 inline-block" title="Tahan atau ketuk untuk memperbesar gambar" ${attrs} />`
@@ -57,8 +209,13 @@ export function renderFormattedMath(text) {
     return match
   })
 
-  // Convert newlines ke <br> untuk tampilan multi-baris
+  // 8. Convert newlines ke <br> untuk tampilan multi-baris (AMAN karena blok KaTeX sudah di dalam placeholder)
   processed = processed.replace(/\n/g, '<br />')
+
+  // 9. Kembalikan seluruh placeholder KaTeX HTML yang utuh
+  processed = processed.replace(/@@EBM_KATEX_BLOCK_(\d+)@@/g, (match, idx) => {
+    return katexBlocks[Number(idx)] ?? match
+  })
 
   return processed
 }

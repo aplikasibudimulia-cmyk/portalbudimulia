@@ -214,11 +214,10 @@ export default function CbtBankSoalGuruSection({ session }) {
   }
 
   // Handle Drag & Drop / File Input Word
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0]
+  const processDocxFileObj = async (file) => {
     if (!file) return
 
-    if (!file.name.endsWith('.docx')) {
+    if (!file.name.toLowerCase().endsWith('.docx')) {
       showToast('Hanya berkas Word berformat .docx yang didukung.', 'error')
       return
     }
@@ -229,12 +228,12 @@ export default function CbtBankSoalGuruSection({ session }) {
     try {
       const parsed = await parseDocxFile(file)
       setImportResult(parsed)
-      
+
       // Auto-populate nama bank soal jika kosong
       if (!metaForm.judul) {
         setMetaForm(prev => ({
           ...prev,
-          judul: file.name.replace('.docx', '').replace(/[-_]/g, ' ')
+          judul: file.name.replace(/\.docx$/i, '').replace(/[-_]/g, ' ')
         }))
       }
     } catch (err) {
@@ -242,6 +241,18 @@ export default function CbtBankSoalGuruSection({ session }) {
     } finally {
       setImportLoading(false)
     }
+  }
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    await processDocxFileObj(file)
+  }
+
+  const handleFileDrop = async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const file = e.dataTransfer?.files?.[0]
+    await processDocxFileObj(file)
   }
 
   // Simpan Bank Soal & Butir Soal ke Supabase
@@ -1015,8 +1026,12 @@ export default function CbtBankSoalGuruSection({ session }) {
                 </div>
               </div>
 
-              {/* Upload Dropzone */}
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:border-indigo-400 bg-slate-50/50 transition-colors">
+              {/* Upload Dropzone (Mendukung Klik & Drag-and-Drop) */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+                onDrop={handleFileDrop}
+                className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:border-indigo-400 bg-slate-50/50 transition-colors"
+              >
                 <input
                   type="file"
                   id="docx-file-input"
@@ -1037,7 +1052,7 @@ export default function CbtBankSoalGuruSection({ session }) {
                     <span className="text-xs text-slate-500"> atau seret ke sini</span>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    Mendukung rumus matematika, equation, tabel Benar/Salah, dan opsi pilihan ganda
+                    Mendukung bentuk akar (√), pangkat, pecahan Equation Word, gambar, tabel, dan opsi pilihan ganda
                   </p>
                 </label>
               </div>
@@ -1045,12 +1060,12 @@ export default function CbtBankSoalGuruSection({ session }) {
               {/* Hasil Parsing */}
               {importLoading && (
                 <div className="p-4 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-medium text-center animate-pulse">
-                  Menganalisis format naskah soal dan kunci jawaban...
+                  Menganalisis format naskah soal, rumus equation, dan kunci jawaban...
                 </div>
               )}
 
               {importResult && (
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-2">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-3">
                   <div className="font-bold text-emerald-900 flex items-center justify-between">
                     <span>Hasil Ekstraksi Dokumen:</span>
                     <span className="px-2 py-0.5 bg-emerald-200 text-emerald-800 rounded-md text-[11px]">
@@ -1058,9 +1073,51 @@ export default function CbtBankSoalGuruSection({ session }) {
                     </span>
                   </div>
                   <div className="text-[11px] text-emerald-800 space-y-1">
-                    <p>• Tipe Soal: {Object.entries(importResult.summary || {}).map(([k, v]) => `${k.toUpperCase()}: ${v}`).join(', ')}</p>
-                    <p>• Rumus matematika &amp; equation berhasil dikonversi ke format KaTeX.</p>
+                    <p>• Tipe Soal: {Object.entries(importResult.summary || {}).map(([k, v]) => `${k.toUpperCase()}: ${v} soal`).join(', ') || `PG: ${importResult.questions.length} soal`}</p>
+                    <p>• Equation &amp; Simbol Matematika: <strong>{importResult.equationsCount || 0} rumus</strong> berhasil dikonversi ke KaTeX (termasuk bentuk akar √, pecahan, &amp; eksponen).</p>
                   </div>
+
+                  {/* Pratinjau Cepat Soal & Equation Hasil Upload */}
+                  {importResult.questions.length > 0 && (
+                    <div className="pt-2 border-t border-emerald-200/70 space-y-1.5">
+                      <span className="text-[11px] font-extrabold text-emerald-900 block">
+                        👁️ Pratinjau Cepat Hasil Konversi Rumus &amp; Soal:
+                      </span>
+                      <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                        {importResult.questions.map((q, qIdx) => (
+                          <div key={qIdx} className="p-2.5 bg-white rounded-xl border border-emerald-200/80 text-slate-800 space-y-1.5 shadow-2xs">
+                            <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
+                              <span className="text-indigo-700">Soal #{q.nomor_urut || qIdx + 1}</span>
+                              <span className={q.kunci_jawaban ? 'text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200' : 'text-rose-600'}>
+                                {q.kunci_jawaban ? `✓ Kunci: ${q.kunci_jawaban}` : '⚠️ Kunci Kosong'}
+                              </span>
+                            </div>
+                            <div
+                              className="text-xs leading-relaxed cbt-rendered-content"
+                              dangerouslySetInnerHTML={{ __html: renderFormattedMath(q.pertanyaan) }}
+                            />
+                            {Array.isArray(q.opsi) && q.opsi.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {q.opsi.map((op) => (
+                                  <span
+                                    key={op.key}
+                                    className={`px-2 py-0.5 rounded text-[11px] border inline-flex items-center gap-1 ${
+                                      op.is_kunci
+                                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-bold'
+                                        : 'bg-slate-50 border-slate-200 text-slate-700'
+                                    }`}
+                                  >
+                                    <strong>{op.key}.</strong>
+                                    <span dangerouslySetInnerHTML={{ __html: renderFormattedMath(op.text) }} />
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {importResult.validation?.hasDuplicates && (
                     <div className="mt-2 pt-2 border-t border-emerald-200/60 flex items-center justify-between gap-2 text-amber-800 bg-amber-50/80 p-2.5 rounded-lg border border-amber-200">
