@@ -56,7 +56,22 @@ export default function RedesignDashboardPreview() {
     return null
   })
 
-  // 2. DATA REALTIME DARI DATABASE SUPABASE
+  const [showConfirmLogout, setShowConfirmLogout] = useState(false)
+
+  // Fungsi Logout Resmi eBudimulia
+  const handleLogout = () => {
+    window.__ebudimuliaExplicitLogout = true
+    try {
+      ['siswa_session', 'guru_session', 'orangtua_session', 'ebm_session_token'].forEach(k => localStorage.removeItem(k))
+      sessionStorage.clear()
+    } catch {}
+
+    try {
+      supabase.auth.signOut().catch(() => {})
+    } catch {}
+
+    window.location.replace('/login?logout=1')
+  }
   const [realPoin, setRealPoin] = useState({ positif: 0, pelanggaran: 0 })
   const [realPresensi, setRealPresensi] = useState({ 
     status: "Belum Presensi", 
@@ -318,7 +333,11 @@ export default function RedesignDashboardPreview() {
                     <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
                     <span>{realPoin.positif} Poin</span>
                   </button>
-                  <button className="w-8 h-8 rounded-full border border-slate-200 bg-white shadow-2xs flex items-center justify-center text-slate-600 hover:bg-slate-50">
+                  <button 
+                    onClick={() => setShowConfirmLogout(true)}
+                    title="Keluar dari Akun Siswa"
+                    className="w-8 h-8 rounded-full border border-slate-200 bg-white shadow-2xs flex items-center justify-center text-slate-600 hover:text-[#D31725] hover:bg-red-50 transition-colors"
+                  >
                     <LogOut className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -604,6 +623,36 @@ export default function RedesignDashboardPreview() {
               )}
 
             </div>
+
+            {/* FLOATING BOTTOM NAV BAR */}
+            {/* Modal Konfirmasi Logout Asli */}
+            {showConfirmLogout && (
+              <div className="absolute inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl p-5 w-full max-w-xs shadow-2xl border border-slate-100 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-red-50 text-[#D31725] flex items-center justify-center mx-auto border border-red-100">
+                    <LogOut className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">Keluar dari Portal?</h3>
+                    <p className="text-xs text-slate-500 mt-1">Sesi akun siswa akan ditutup dan Anda akan diarahkan ke halaman login.</p>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button 
+                      onClick={() => setShowConfirmLogout(false)}
+                      className="flex-1 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                    >
+                      Batal
+                    </button>
+                    <button 
+                      onClick={handleLogout}
+                      className="flex-1 py-2 rounded-xl bg-[#D31725] text-white text-xs font-bold shadow-xs hover:bg-red-700 transition-colors"
+                    >
+                      Ya, Keluar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* FLOATING BOTTOM NAV BAR */}
             <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-6 py-2.5 flex items-center justify-between z-40">
