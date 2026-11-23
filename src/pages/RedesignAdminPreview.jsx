@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   Users, 
   GraduationCap, 
@@ -58,8 +58,29 @@ import AdminBKKonsultasiSection from '../components/AdminBKKonsultasiSection'
 
 export default function RedesignAdminPreview() {
   const [activeMenu, setActiveMenu] = useState('dashboard')
+  const [activeDropdown, setActiveDropdown] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
+
+  const navRef = useRef(null)
+
+  // Close dropdown on click outside or escape key
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (navRef.current && !navRef.current.contains(e.target)) {
+        setActiveDropdown(null)
+      }
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setActiveDropdown(null)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
 
   // Data State Lengkap yang Diperlukan oleh Modul Admin
   const [students, setStudents] = useState([])
@@ -124,48 +145,63 @@ export default function RedesignAdminPreview() {
     loadFullAdminData()
   }, [])
 
-  // SELURUH DAFTAR MENU LENGKAP ADMIN EBUDIMULIA
+  // 5 KELOMPOK MENU UTAMA LENGKAP ADMIN EBUDIMULIA
   const allAdminMenuGroups = [
     {
+      id: "utama",
       group: "Utama & Analitik",
+      desc: "Ringkasan performa dan jejak audit sistem",
+      icon: Activity,
       items: [
-        { id: "dashboard", label: "Dashboard Utama", icon: Activity },
-        { id: "log_aktivitas", label: "Audit & Log Sistem", icon: Clock },
+        { id: "dashboard", label: "Dashboard Utama", desc: "Ringkasan metrik, grafik & transaksi", icon: Activity },
+        { id: "log_aktivitas", label: "Audit & Log Sistem", desc: "Riwayat aksi pengguna & keamanan", icon: Clock },
       ]
     },
     {
+      id: "kesiswaan",
       group: "Kesiswaan & SDM",
+      desc: "Manajemen murid, kartu siswa & kedisiplinan poin",
+      icon: Users,
       items: [
-        { id: "manajemen_akun", label: "Manajemen Akun Siswa & Guru", icon: Users },
-        { id: "kartu_pelajar", label: "Cetak Kartu Pelajar", icon: CreditCard },
-        { id: "kartu_ujian", label: "Cetak Kartu Ujian", icon: FileText },
-        { id: "rekap_poin", label: "Rekap & Statistik Poin Siswa", icon: Shield },
-        { id: "catat_poin", label: "Catat Poin & Rekalkulasi", icon: Sparkles },
-        { id: "pengajuan_poin", label: "Verifikasi Pengajuan Poin", icon: CheckCircle2 },
-        { id: "konsultasi_bk", label: "Layanan Konseling BK", icon: Layers },
+        { id: "manajemen_akun", label: "Manajemen Akun Siswa & Guru", desc: "Data induk siswa, wali kelas & login", icon: Users },
+        { id: "kartu_pelajar", label: "Cetak Kartu Pelajar", desc: "Desain kartu barcode & QR foto siswa", icon: CreditCard },
+        { id: "kartu_ujian", label: "Cetak Kartu Ujian", desc: "Generate kartu peserta ujian & nomor", icon: FileText },
+        { id: "rekap_poin", label: "Rekap & Statistik Poin Siswa", desc: "Leaderboard apresiasi & sanksi", icon: Shield },
+        { id: "catat_poin", label: "Catat Poin & Rekalkulasi", desc: "Input poin pelanggaran & penghargaan", icon: Sparkles },
+        { id: "pengajuan_poin", label: "Verifikasi Pengajuan Poin", desc: "Validasi piagam lomba & prestasi", icon: CheckCircle2 },
+        { id: "konsultasi_bk", label: "Layanan Konseling BK", desc: "Jadwal temu & pendampingan murid", icon: Layers },
       ]
     },
     {
+      id: "kurikulum",
       group: "Kurikulum & Akademik",
+      desc: "Jadwal pelajaran, lembar nilai dan cetak rapor",
+      icon: FileSpreadsheet,
       items: [
-        { id: "jadwal_pelajaran", label: "Jadwal Pelajaran Kelas", icon: CalendarDays },
-        { id: "leger_nilai", label: "Leger Nilai Kurikulum", icon: FileSpreadsheet },
-        { id: "rapor_siswa", label: "Rapor & Capaian TP", icon: GraduationCap },
-        { id: "ekskul_nilai", label: "Penilaian Ekstrakurikuler", icon: Award },
-        { id: "presensi_qr", label: "Konfigurasi Presensi & QR", icon: QrCode },
+        { id: "jadwal_pelajaran", label: "Jadwal Pelajaran Kelas", desc: "Matriks jam KBM mingguan guru", icon: CalendarDays },
+        { id: "leger_nilai", label: "Leger Nilai Kurikulum", desc: "Inspeksi nilai TP, KKM & rapor kelas", icon: FileSpreadsheet },
+        { id: "rapor_siswa", label: "Rapor & Capaian TP", desc: "Cetak format rapor resmi Kurikulum Merdeka", icon: GraduationCap },
+        { id: "ekskul_nilai", label: "Penilaian Ekstrakurikuler", desc: "Input nilai kegiatan pengembangan diri", icon: Award },
+        { id: "presensi_qr", label: "Konfigurasi Presensi & QR", desc: "Aturan scan barcode & presensi kelas", icon: QrCode },
       ]
     },
     {
+      id: "keuangan",
       group: "Keuangan & Tata Usaha",
+      desc: "Administrasi tabungan siswa dan pembayaran SPP",
+      icon: DollarSign,
       items: [
-        { id: "tabungan_siswa", label: "Buku Tabungan Siswa", icon: DollarSign },
-        { id: "tagihan_spp", label: "Tagihan SPP & Pembayaran", icon: FileText },
+        { id: "tabungan_siswa", label: "Buku Tabungan Siswa", desc: "Mutasi setor, tarik tunai & saldo", icon: DollarSign },
+        { id: "tagihan_spp", label: "Tagihan SPP & Pembayaran", desc: "Rekapitulasi iuran bulanan siswa", icon: FileText },
       ]
     },
     {
+      id: "pengaturan",
       group: "Pengaturan Sistem",
+      desc: "Konfigurasi hak akses dan keamanan role portal",
+      icon: UserCog,
       items: [
-        { id: "manajemen_role", label: "Hak Akses & Role Pengguna", icon: UserCog },
+        { id: "manajemen_role", label: "Hak Akses & Role Pengguna", desc: "Penetapan wewenang guru & administrator", icon: UserCog },
       ]
     }
   ]
@@ -179,138 +215,227 @@ export default function RedesignAdminPreview() {
   })).filter(grp => grp.items.length > 0)
 
   return (
-    <div className="min-h-screen bg-[#F3F5F9] font-sans antialiased text-slate-800 flex selection:bg-[#009688]/20">
+    <div className="min-h-screen bg-[#F3F5F9] font-sans antialiased text-slate-800 flex flex-col selection:bg-[#009688]/20">
       
       {/* ============================================================== */}
-      {/* 1. SIDEBAR INVOZA STYLE DENGAN SELURUH MENU LENGKAP            */}
+      {/* 1. TOP NAVBAR DENGAN 5 MENU UTAMA & MEGA-MENU POPUP LUXURY     */}
       {/* ============================================================== */}
-      <aside className="w-68 bg-white border-r border-slate-200/80 flex flex-col justify-between shrink-0 sticky top-0 h-screen shadow-2xs z-40 select-none">
+      <header ref={navRef} className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-2xs select-none">
         
-        <div className="flex flex-col h-full overflow-hidden">
+        {/* ROW 1: BRAND + 5 MENU UTAMA + ACTIONS */}
+        <div className="px-4 lg:px-8 h-16 flex items-center justify-between gap-4">
           
-          {/* Logo Brand Invoza Style: eBudiMulia */}
-          <div className="p-5 pb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#009688] to-[#26A69A] flex items-center justify-center text-white shadow-sm shadow-[#009688]/20">
-                <Flame className="w-5 h-5 text-white fill-white" />
-              </div>
-              <div>
-                <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-none">
-                  eBudi<span className="text-[#009688]">Mulia</span>
-                </h1>
-                <span className="text-[9px] text-slate-400 font-bold tracking-widest uppercase block mt-1">
-                  School Admin
-                </span>
-              </div>
+          {/* Brand Logo eBudiMulia */}
+          <div 
+            onClick={() => { setActiveMenu('dashboard'); setActiveDropdown(null) }}
+            className="flex items-center gap-2.5 cursor-pointer shrink-0 group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#009688] to-[#26A69A] flex items-center justify-center text-white shadow-sm shadow-[#009688]/20 group-hover:scale-105 transition-transform">
+              <Flame className="w-5 h-5 text-white fill-white" />
+            </div>
+            <div>
+              <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-none">
+                eBudi<span className="text-[#009688]">Mulia</span>
+              </h1>
+              <span className="text-[9px] text-slate-400 font-bold tracking-widest uppercase block mt-1">
+                School Admin
+              </span>
             </div>
           </div>
 
-          {/* Search Menu Box (Bisa Cari Seluruh Menu Seketika) */}
-          <div className="px-4 mb-2">
-            <div className="flex items-center bg-[#F8FAFC] border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-500">
-              <Search className="w-3.5 h-3.5 text-slate-400 mr-2 shrink-0" />
-              <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cari menu admin..." 
-                className="bg-transparent outline-none w-full text-xs text-slate-700 placeholder-slate-400"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 text-xs">
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
+          {/* 5 MENU UTAMA DI ATAS DENGAN ANIMASI POPUP MEWAH */}
+          <nav className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+            {allAdminMenuGroups.map((grp) => {
+              const IconComp = grp.icon
+              const isParentActive = grp.items.some(it => it.id === activeMenu)
+              const isOpen = activeDropdown === grp.id
 
-          {/* Navigation Menu Categories (SELURUH MENU LENGKAP) */}
-          <div className="flex-1 overflow-y-auto px-3.5 py-2 space-y-4">
-            {filteredMenuGroups.map((grp, gIdx) => (
-              <div key={gIdx}>
-                <p className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                  {grp.group}
-                </p>
-                <div className="space-y-0.5">
-                  {grp.items.map((item) => {
-                    const IconC = item.icon
-                    const isActive = activeMenu === item.id
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setActiveMenu(item.id)}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all text-left ${
-                          isActive
-                            ? 'bg-slate-900 text-white shadow-xs font-bold'
-                            : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                        }`}
-                      >
-                        <IconC className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    )
-                  })}
+              return (
+                <div key={grp.id} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setActiveDropdown(isOpen ? null : grp.id)}
+                    className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      isOpen
+                        ? 'bg-[#009688] text-white border-[#009688] shadow-sm shadow-[#009688]/25 scale-[1.02]'
+                        : isParentActive
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                        : 'bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/90'
+                    }`}
+                  >
+                    <IconComp className={`w-4 h-4 shrink-0 ${isOpen || isParentActive ? 'text-white' : 'text-slate-500'}`} />
+                    <span className="hidden md:inline">{grp.group}</span>
+                    <span className="md:hidden">{grp.group.split(' ')[0]}</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-250 ${
+                      isOpen ? 'rotate-180 text-white' : isParentActive ? 'text-white/80' : 'text-slate-400'
+                    }`} />
+                  </button>
+
+                  {/* POPUP SUB-MENU MEWAH (ANIMATED FLOATING CARD) */}
+                  {isOpen && (
+                    <div 
+                      className={`absolute top-full mt-3 z-50 bg-white/98 backdrop-blur-2xl border border-slate-200/90 rounded-2xl shadow-[0_22px_60px_rgba(15,23,42,0.16),0_4px_16px_rgba(15,23,42,0.06)] p-3.5 transition-all animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200 ease-out ring-1 ring-black/5 ${
+                        grp.id === 'utama' 
+                          ? 'left-0 w-80 sm:w-84' 
+                          : grp.id === 'pengaturan' 
+                          ? 'right-0 w-80 sm:w-84' 
+                          : grp.items.length > 4 
+                          ? 'left-1/2 -translate-x-1/2 w-[92vw] sm:w-[540px]' 
+                          : 'left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 w-[92vw] sm:w-84'
+                      }`}
+                    >
+                      {/* Notch / Caret Panah Menyambung ke Menu Utama */}
+                      <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-l border-t border-slate-200/90 rotate-45 rounded-tl-sm shadow-2xs" />
+
+                      {/* Header Popup */}
+                      <div className="px-2.5 pt-1 pb-2.5 mb-2 border-b border-slate-100 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <IconComp className="w-3.5 h-3.5 text-[#009688]" />
+                            <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                              {grp.group}
+                            </h4>
+                          </div>
+                          <p className="text-[10.5px] text-slate-400 mt-0.5 font-medium">
+                            {grp.desc}
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold text-[#009688] bg-teal-50 px-2 py-0.5 rounded-full border border-teal-100 shrink-0">
+                          {grp.items.length} Modul
+                        </span>
+                      </div>
+
+                      {/* Grid Kartu Sub-Menu */}
+                      <div className={`grid gap-1.5 ${grp.items.length > 4 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+                        {grp.items.map((item) => {
+                          const SubIcon = item.icon
+                          const isItemActive = activeMenu === item.id
+
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveMenu(item.id)
+                                setActiveDropdown(null)
+                              }}
+                              className={`w-full flex items-start gap-3 p-2.5 rounded-xl text-left transition-all group cursor-pointer border ${
+                                isItemActive
+                                  ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                                  : 'bg-white border-transparent hover:border-slate-200 hover:bg-slate-50 text-slate-700'
+                              }`}
+                            >
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+                                isItemActive
+                                  ? 'bg-white/10 text-white'
+                                  : 'bg-slate-100 text-slate-600 group-hover:bg-[#009688] group-hover:text-white group-hover:scale-105'
+                              }`}>
+                                <SubIcon className="w-4 h-4" />
+                              </div>
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className={`text-xs font-bold truncate ${
+                                    isItemActive ? 'text-white' : 'text-slate-900 group-hover:text-[#009688]'
+                                  }`}>
+                                    {item.label}
+                                  </span>
+                                  <ChevronRight className={`w-3.5 h-3.5 transition-transform shrink-0 ${
+                                    isItemActive ? 'text-white' : 'text-slate-300 group-hover:translate-x-0.5 group-hover:text-[#009688]'
+                                  }`} />
+                                </div>
+                                <p className={`text-[10.5px] truncate mt-0.5 ${
+                                  isItemActive ? 'text-slate-300' : 'text-slate-400 group-hover:text-slate-500'
+                                }`}>
+                                  {item.desc}
+                                </p>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
-          </div>
+              )
+            })}
+          </nav>
 
-          {/* User Profile Sesi Admin di Bawah */}
-          <div className="p-3.5 border-t border-slate-100 flex items-center justify-between bg-[#FAFAFA]">
-            <div className="flex items-center gap-2.5 overflow-hidden">
+          {/* RIGHT SIDE: TAHUN AJARAN & PROFILE */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="hidden xl:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">
+              <span className="w-2 h-2 rounded-full bg-[#009688] animate-pulse"></span>
+              {activeTa?.nama || 'TA 2026/2027 Ganjil'}
+            </span>
+
+            <button className="w-8 h-8 rounded-full bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:bg-slate-50 shadow-2xs cursor-pointer">
+              <Bell className="w-4 h-4" />
+            </button>
+
+            {/* Profile Avatar Pill */}
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
               <div className="w-8 h-8 rounded-full bg-[#009688] text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
                 AM
               </div>
-              <div className="overflow-hidden">
-                <p className="text-xs font-bold text-slate-900 truncate">Pak Anselmus</p>
-                <p className="text-[10px] text-slate-400 truncate">Administrator</p>
+              <div className="hidden lg:block text-left">
+                <p className="text-xs font-bold text-slate-900 leading-tight">Pak Anselmus</p>
+                <p className="text-[10px] text-slate-400 font-medium">Administrator</p>
               </div>
+              <button 
+                onClick={() => window.location.replace('/login-admin?logout=1')}
+                title="Logout" 
+                className="text-slate-400 hover:text-rose-600 p-1 ml-1 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <button 
-              onClick={() => window.location.replace('/login-admin?logout=1')}
-              title="Logout" 
-              className="text-slate-400 hover:text-rose-600 p-1"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
           </div>
 
         </div>
 
-      </aside>
-
-      {/* ============================================================== */}
-      {/* 2. MAIN WORKSPACE CONTENT                                      */}
-      {/* ============================================================== */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        
-        {/* Top Header Toolbar */}
-        <header className="px-6 lg:px-8 pt-4 pb-3 flex items-center justify-between border-b border-slate-200/60 bg-white/70 backdrop-blur-md sticky top-0 z-30">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-            <button onClick={() => setActiveMenu('dashboard')} className="hover:text-slate-900 transition-colors font-semibold">Dashboard</button>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-900 font-extrabold uppercase tracking-wide">
-              {activeMenu.replace(/_/g, ' ')}
+        {/* ROW 2: SUB-BAR BREADCRUMB & CONTEXT */}
+        <div className="px-4 lg:px-8 py-2.5 bg-[#F8FAFC] border-t border-slate-200/60 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2 font-medium text-slate-500 overflow-x-auto custom-scrollbar">
+            <button 
+              onClick={() => { setActiveMenu('dashboard'); setActiveDropdown(null) }} 
+              className="hover:text-slate-900 font-semibold cursor-pointer shrink-0"
+            >
+              Dashboard
+            </button>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-500 font-medium shrink-0">
+              {allAdminMenuGroups.find(g => g.items.some(i => i.id === activeMenu))?.group || 'Portal'}
+            </span>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-900 font-extrabold uppercase tracking-wide shrink-0">
+              {allAdminMenuGroups.flatMap(g => g.items).find(i => i.id === activeMenu)?.label || activeMenu.replace(/_/g, ' ')}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              {activeTa?.nama || 'TA 2026/2027 Ganjil'} Aktif
-            </span>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+              <span>24 Nov, 2026</span>
+            </div>
 
-            <button className="w-8 h-8 rounded-full bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:bg-slate-50 shadow-2xs">
-              <Bell className="w-4 h-4" />
-            </button>
-            <button className="w-8 h-8 rounded-full bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:bg-slate-50 shadow-2xs">
-              <Settings className="w-4 h-4" />
-            </button>
+            {activeMenu === 'dashboard' && (
+              <button 
+                onClick={() => setActiveMenu('rekap_poin')}
+                className="bg-[#009688] hover:bg-[#00897B] text-white px-3 py-1 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Rekap Poin</span>
+              </button>
+            )}
           </div>
-        </header>
+        </div>
 
-        {/* WORKSPACE CONTENT BODY (100% FULL WIDTH TANPA TERCEKIK DI TENGAH) */}
-        <main className="px-6 lg:px-8 py-5 w-full min-w-0 space-y-6">
+      </header>
+
+      {/* ============================================================== */}
+      {/* 2. MAIN WORKSPACE CONTENT (FULL WIDTH 100%)                    */}
+      {/* ============================================================== */}
+      <main className="flex-1 w-full px-6 lg:px-8 py-6 space-y-6">
           
           {/* ============================================================== */}
           {/* SELURUH SUB-MENU ADMIN FULL-WIDTH LEBAR DAN BERSIH             */}
@@ -667,8 +792,6 @@ export default function RedesignAdminPreview() {
           )}
 
         </main>
-
-      </div>
 
     </div>
   )
