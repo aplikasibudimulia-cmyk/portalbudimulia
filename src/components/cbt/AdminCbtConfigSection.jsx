@@ -25,6 +25,7 @@ export default function AdminCbtConfigSection() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [addType, setAddType] = useState('siswa') // 'siswa', 'guru', 'kelas'
   const [selectedKelas, setSelectedKelas] = useState('7A')
+  const [selectedKelasList, setSelectedKelasList] = useState(['8A'])
   const [searchUserQuery, setSearchUserQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [isSearchingUser, setIsSearchingUser] = useState(false)
@@ -286,15 +287,16 @@ export default function AdminCbtConfigSection() {
 
     try {
       if (addType === 'kelas') {
+        const targetClasses = selectedKelasList.length > 0 ? selectedKelasList : [selectedKelas]
         const { data: siswaList, error: errSiswa } = await supabase
           .from('siswa_lengkap')
-          .select('nisn, nama_lengkap')
-          .eq('kelas', selectedKelas)
+          .select('nisn, nama_lengkap, kelas')
+          .in('kelas', targetClasses)
           .eq('is_aktif', true)
 
         if (errSiswa) throw errSiswa
         if (!siswaList || siswaList.length === 0) {
-          throw new Error(`Tidak ditemukan siswa aktif di kelas ${selectedKelas}`)
+          throw new Error(`Tidak ditemukan siswa aktif di kelas ${targetClasses.join(', ')}`)
         }
 
         // Ambil daftar NISN yang sudah ada di whitelist agar tidak terjadi duplikasi
@@ -310,7 +312,7 @@ export default function AdminCbtConfigSection() {
         const newSiswa = siswaList.filter(s => s.nisn && !existingNisns.has(String(s.nisn).trim()))
 
         if (newSiswa.length === 0) {
-          showToast(`Seluruh siswa kelas ${selectedKelas} (${siswaList.length} siswa) sudah terdaftar di whitelist penguji.`, 'info')
+          showToast(`Seluruh siswa di kelas terpilih (${siswaList.length} siswa) sudah terdaftar di whitelist penguji.`, 'info')
           setShowAddModal(false)
           return
         }
@@ -318,7 +320,7 @@ export default function AdminCbtConfigSection() {
         const rows = newSiswa.map(s => ({
           nisn: s.nisn,
           role: 'siswa',
-          keterangan: `Simulasi Kelas ${selectedKelas} (${s.nama_lengkap})`
+          keterangan: `Simulasi Kelas ${s.kelas || targetClasses.join(', ')} (${s.nama_lengkap})`
         }))
 
         const { error: errBatch } = await supabase
@@ -326,9 +328,7 @@ export default function AdminCbtConfigSection() {
           .insert(rows)
 
         if (errBatch) throw errBatch
-        const msgText = newSiswa.length === siswaList.length
-          ? `Berhasil mendaftarkan seluruh siswa (${rows.length} siswa) kelas ${selectedKelas}.`
-          : `Berhasil menambahkan ${rows.length} siswa baru kelas ${selectedKelas} (${siswaList.length - rows.length} siswa sudah ada sebelumnya).`
+        const msgText = `Berhasil mendaftarkan ${rows.length} siswa penguji dari kelas ${targetClasses.join(', ')}.`
 
         setMessage({ type: 'success', text: msgText })
         showToast(msgText, 'success')
@@ -722,23 +722,71 @@ export default function AdminCbtConfigSection() {
                 </div>
               </div>
 
-              {/* Mode: 1 Kelas Penuh */}
+              {/* Mode: Kelas Penuh (Dapat memilih beberapa kelas sekaligus, misal 8A, 8B, 8C, 8D) */}
               {addType === 'kelas' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Pilih Kelas Simulasi:
-                  </label>
-                  <select
-                    value={selectedKelas}
-                    onChange={(e) => setSelectedKelas(e.target.value)}
-                    className="w-full text-xs px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700"
-                  >
-                    {availableKelas.map(k => (
-                      <option key={k} value={k}>Kelas {k}</option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-slate-400 mt-1.5">
-                    Semua siswa aktif di kelas ini akan otomatis didaftarkan sebagai penguji ujian CBT.
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Pilih Kelas Simulasi:
+                    </label>
+                    <div className="flex items-center gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKelasList(['8A', '8B', '8C', '8D'])}
+                        className="text-indigo-600 hover:underline font-bold"
+                      >
+                        Pilih 8ABCD
+                      </button>
+                      <span className="text-slate-300">•</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKelasList(['7A', '7B', '7C', '7D'])}
+                        className="text-indigo-600 hover:underline font-bold"
+                      >
+                        Pilih 7ABCD
+                      </button>
+                      <span className="text-slate-300">•</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKelasList(['9A', '9B', '9C', '9D'])}
+                        className="text-indigo-600 hover:underline font-bold"
+                      >
+                        Pilih 9ABCD
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Multi-select class pills */}
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl max-h-36 overflow-y-auto">
+                    {availableKelas.map(k => {
+                      const isSelected = selectedKelasList.includes(k)
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              if (selectedKelasList.length > 1) {
+                                setSelectedKelasList(prev => prev.filter(c => c !== k))
+                              }
+                            } else {
+                              setSelectedKelasList(prev => [...prev, k])
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-white text-slate-600 border border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                          }`}
+                        >
+                          Kelas {k}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <p className="text-[11px] text-slate-400">
+                    Terpilih {selectedKelasList.length} kelas ({selectedKelasList.join(', ')}). Seluruh siswa aktif di kelas ini akan otomatis didaftarkan sebagai penguji ujian CBT.
                   </p>
                 </div>
               )}

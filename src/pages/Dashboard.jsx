@@ -353,6 +353,7 @@ function Dashboard() {
     if (!studentData?.nisn) return
     const checkCbtAccess = async () => {
       try {
+        // 1. Cek Mode Rilis Publik di cbt_pengaturan
         const { data: config } = await supabase
           .from('cbt_pengaturan')
           .select('is_cbt_active')
@@ -364,6 +365,7 @@ function Dashboard() {
           return
         }
 
+        // 2. Cek Whitelist Siswa Penguji
         const { data: whitelist } = await supabase
           .from('cbt_whitelist_user')
           .select('id')
@@ -373,13 +375,34 @@ function Dashboard() {
 
         if (whitelist) {
           setCanAccessCbt(true)
+          return
+        }
+
+        // 3. Cek apakah ada Sesi Ujian aktif / mendatang untuk kelas siswa ini
+        if (studentData.kelas) {
+          const rawK = String(studentData.kelas).trim()
+          const cleanK = rawK.replace(/^kelas\s*/i, '').trim()
+          const checkClasses = Array.from(new Set([rawK, cleanK, `Kelas ${cleanK}`]))
+          const orFilter = checkClasses.map(c => `kelas_ids.cs.{${c}}`).join(',')
+
+          const { data: sesiKelas } = await supabase
+            .from('cbt_sesi_ujian')
+            .select('id')
+            .or(orFilter)
+            .neq('status', 'draft')
+            .limit(1)
+
+          if (sesiKelas && sesiKelas.length > 0) {
+            setCanAccessCbt(true)
+            return
+          }
         }
       } catch (err) {
         console.error('[CBT Access Check] Error:', err)
       }
     }
     checkCbtAccess()
-  }, [studentData?.nisn])
+  }, [studentData?.nisn, studentData?.kelas])
 
   useEffect(() => {
     const checkMenuParam = () => {
