@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { 
   Bell, 
   Calendar, 
@@ -27,7 +27,8 @@ import {
   TrendingUp,
   Flame,
   BadgeCheck,
-  BookMarked
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 
@@ -44,54 +45,157 @@ export default function RedesignDashboardPreview() {
   const [viewMode, setViewMode] = useState('mobile_mockup')
   const [activeMenu, setActiveMenu] = useState(null)
   const [activeTab, setActiveTab] = useState('hari_ini') // 'hari_ini', 'akademik', 'kesiswaan'
+  const [loading, setLoading] = useState(true)
 
-  // Ambil Data Sesi Siswa Riil
+  // 1. DATA SESI SISWA AKTIF RIIL DARI LOCALSTORAGE
   const [student, setStudent] = useState(() => {
     try {
       const raw = localStorage.getItem('siswa_session')
       if (raw) return JSON.parse(raw)
     } catch (e) {}
-    return {
-      nama: "Axel Jonathan",
-      nisn: "0089218291",
-      kelas: "8-A",
-      waliKelas: "Anselmus M. Gestawan, S.Pd.",
-      tahun_ajaran: "2026/2027 Ganjil",
-      foto: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"
-    }
+    return null
   })
 
-  // Data Poin & Presensi Riil
-  const [stats, setStats] = useState({
-    kehadiranPersen: 98.6,
-    presensiHariIni: "Hadir (06.42 WIB)",
-    poinPositif: 85,
-    poinPelanggaran: 0
+  // 2. DATA REALTIME DARI DATABASE SUPABASE
+  const [realPoin, setRealPoin] = useState({ positif: 0, pelanggaran: 0 })
+  const [realPresensi, setRealPresensi] = useState({ 
+    status: "Belum Presensi", 
+    jam: "-", 
+    hadirPersen: 100, 
+    totalHadir: 0,
+    isHadir: false 
   })
+  const [realJadwalHariIni, setRealJadwalHariIni] = useState([])
+  const [realFoto, setRealFoto] = useState(null)
+  const [allStudents, setAllStudents] = useState([])
 
+  // Fungsi Menarik 100% Data Riil Siswa dari Database
   useEffect(() => {
-    async function loadStats() {
-      if (!student?.nisn) return
+    async function fetchFullRealtimeData() {
+      setLoading(true)
       try {
-        const { data: pData } = await supabase
-          .from('student_points')
-          .select('*')
-          .eq('nisn', student.nisn)
-          .maybeSingle()
+        // Jika belum login sebagai siswa, tarik daftar siswa asli dari DB untuk simulasi pemilih siswa
+        let currentNisn = student?.nisn
+        let currentStudent = student
 
-        if (pData) {
-          setStats(prev => ({
+        if (!currentNisn) {
+          const { data: siswaList } = await supabase
+            .from('siswa_permanent')
+            .select('nisn, nama_lengkap, kelas')
+            .order('nama_lengkap', { ascending: true })
+            .limit(10)
+
+          if (siswaList && siswaList.length > 0) {
+            setAllStudents(siswaList)
+            currentStudent = {
+              nisn: siswaList[0].nisn,
+              nama: siswaList[0].nama_lengkap,
+              kelas: siswaList[0].kelas || "8-A",
+              tahun_ajaran: "2026/2027 Ganjil"
+            }
+            setStudent(currentStudent)
+            currentNisn = currentStudent.nisn
+          }
+        }
+
+        if (!currentNisn) {
+          setLoading(false)
+          return
+        }
+
+        // Tentukan Hari Ini (Senin, Selasa, dll)
+        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
+        const todayName = days[new Date().getDay()] || 'Senin'
+        const todayDateStr = new Date().toISOString().split('T')[0]
+
+        // Jalankan Query Paralel ke Database Supabase Riil
+        const [resPoin, resPresensiToday, resPresensiAll, resFoto, resJadwal] = await Promise.all([
+          // A. Poin Siswa Riil
+          supabase.from('student_points').select('*').eq('nisn', currentNisn).maybeSingle(),
+          // B. Presensi Hari Ini Riil
+          supabase.from('presensi_siswa').select('*').eq('nisn', currentNisn).eq('tanggal', todayDateStr).maybeSingle(),
+          // C. Akumulasi Seluruh Presensi Riil Semester Ini
+          supabase.from('presensi_siswa').select('status').eq('nisn', currentNisn),
+          // D. Foto Profil Asli di Cloudinary/Supabase
+          supabase.from('foto').select('cloudinary_url').eq('nisn', currentNisn).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          // E. Jadwal Pelajaran Kelas Siswa Riil
+          supabase.from('jadwal_pelajaran')
+            .select(`
+              id, hari, jam_mulai, jam_selesai, ruang,
+              mapel:mapel_id(nama_mapel),
+              guru:guru_id(nama_guru)
+            `)
+            .eq('kelas', currentStudent?.kelas || '8-A')
+            .eq('hari', todayName === 'Minggu' || todayName === 'Sabtu' ? 'Senin' : todayName)
+            .order('jam_mulai', { ascending: true })
+        ])
+
+        // Parse Poin Riil
+        if (resPoin?.data) {
+          setRealPoin({
+            positif: resPoin.data.total_positif || 0,
+            pelanggaran: resPoin.data.total_pelanggaran || 0
+          })
+        }
+
+        // Parse Presensi Hari Ini Riil
+        if (resPresensiToday?.data) {
+          setRealPresensi(prev => ({
             ...prev,
-            poinPositif: pData.total_positif || 0,
-            poinPelanggaran: pData.total_pelanggaran || 0
+            status: resPresensiToday.data.status || 'Hadir',
+            jam: resPresensiToday.data.jam_masuk || resPresensiToday.data.created_at ? new Date(resPresensiToday.data.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '06.45 WIB',
+            isHadir: true
+          }))
+        } else {
+          setRealPresensi(prev => ({
+            ...prev,
+            status: "Belum Presensi Hari Ini",
+            jam: "-",
+            isHadir: false
           }))
         }
+
+        // Parse Persentase Kehadiran Kumulatif
+        if (resPresensiAll?.data && resPresensiAll.data.length > 0) {
+          const total = resPresensiAll.data.length
+          const hadir = resPresensiAll.data.filter(p => p.status === 'Hadir' || p.status === 'hadir').length
+          const persen = Math.round((hadir / total) * 100)
+          setRealPresensi(prev => ({ ...prev, hadirPersen: persen, totalHadir: hadir }))
+        }
+
+        // Parse Foto Profil Riil
+        if (resFoto?.data?.cloudinary_url) {
+          setRealFoto(resFoto.data.cloudinary_url)
+        }
+
+        // Parse Jadwal Riil
+        if (resJadwal?.data && resJadwal.data.length > 0) {
+          const parsed = resJadwal.data.map(item => ({
+            jam: `${item.jam_mulai?.substring(0, 5) || '07.00'} - ${item.jam_selesai?.substring(0, 5) || '08.20'}`,
+            mapel: item.mapel?.nama_mapel || "Pelajaran",
+            guru: item.guru?.nama_guru || "Guru Pengampu",
+            ruang: item.ruang || `R. ${currentStudent?.kelas || '8-A'}`
+          }))
+          setRealJadwalHariIni(parsed)
+        }
+
       } catch (err) {
-        console.error("Gagal muat poin:", err)
+        console.error("Error loading real dashboard data:", err)
+      } finally {
+        setLoading(false)
       }
     }
-    loadStats()
+
+    fetchFullRealtimeData()
   }, [student?.nisn])
+
+  // Mapel Aktif Saat Ini dari Jadwal Riil (atau item pertama jadwal riil)
+  const mapelAktif = realJadwalHariIni[0] || {
+    mapel: "Belum Ada Jadwal Aktif",
+    jam: "-",
+    guru: student?.waliKelas || "Wali Kelas",
+    ruang: `R. ${student?.kelas || "8-A"}`
+  }
 
   // 8 Fitur Pilihan Grid Gaya Wondr dengan Palet Budi Mulia
   const fiturBudiMulia = [
@@ -105,24 +209,48 @@ export default function RedesignDashboardPreview() {
     { id: "MENU_LAIN", label: "Lihat Semua", icon: Grid, bg: "bg-white text-slate-700 border border-slate-200" },
   ]
 
-  const jadwalHariIni = [
-    { jam: "07.00 - 08.20", mapel: "Matematika", guru: "Anselmus M. Gestawan, S.Pd.", ruang: "R. " + (student?.kelas || "8-A"), status: "Selesai" },
-    { jam: "08.20 - 09.40", mapel: "Bahasa Indonesia", guru: "Maria Fransiska, M.Pd.", ruang: "R. " + (student?.kelas || "8-A"), status: "Sedang Berlangsung" },
-    { jam: "10.00 - 11.20", mapel: "IPA Terpadu", guru: "Budi Santoso, M.Si.", ruang: "Lab IPA", status: "Akan Datang" },
-  ]
-
-  const panggilanNama = student?.nama?.split(' ')[0] || "Axel"
+  const panggilanNama = student?.nama?.split(' ')[0] || "Siswa"
 
   return (
     <div className="min-h-screen bg-[#F0F3F8] font-sans antialiased text-slate-800 flex flex-col">
       
       {/* Top Controller Bar */}
-      <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between text-xs sticky top-0 z-50">
+      <div className="bg-white border-b border-slate-200 px-4 py-2 flex flex-wrap items-center justify-between text-xs sticky top-0 z-50 gap-2">
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#0B2B7A] border border-amber-400"></div>
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
           <span className="font-extrabold text-[#0B2B7A] tracking-wider text-sm">eBudiMulia</span>
-          <span className="text-[10px] text-slate-400 font-bold">Portal Siswa</span>
+          <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded border border-emerald-200">
+            ● 100% LIVE REALTIME DATABASE
+          </span>
         </div>
+
+        {/* Switcher Akun Siswa Riil jika sedang mengetes akun lain */}
+        {allStudents.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 text-[11px]">Akun Riil:</span>
+            <select 
+              value={student?.nisn} 
+              onChange={(e) => {
+                const found = allStudents.find(s => s.nisn === e.target.value)
+                if (found) {
+                  setStudent({
+                    nisn: found.nisn,
+                    nama: found.nama_lengkap,
+                    kelas: found.kelas || "8-A",
+                    tahun_ajaran: "2026/2027 Ganjil"
+                  })
+                }
+              }}
+              className="text-xs bg-slate-100 border border-slate-300 rounded px-2 py-1 font-bold text-[#0B2B7A]"
+            >
+              {allStudents.map(s => (
+                <option key={s.nisn} value={s.nisn}>
+                  {s.nama_lengkap} ({s.kelas})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
           <button 
@@ -134,7 +262,7 @@ export default function RedesignDashboardPreview() {
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" /> 
-            <span>Tampilan HP</span>
+            <span>HP</span>
           </button>
           <button 
             onClick={() => setViewMode('responsive')}
@@ -145,7 +273,7 @@ export default function RedesignDashboardPreview() {
             }`}
           >
             <Laptop className="w-3.5 h-3.5" /> 
-            <span>Web Desktop</span>
+            <span>PC</span>
           </button>
         </div>
       </div>
@@ -166,7 +294,7 @@ export default function RedesignDashboardPreview() {
             
             <div className="pb-24">
               
-              {/* TOP HEADER: Logo Asli eBudiMulia (Bukan Wondr Lagi!) */}
+              {/* TOP HEADER: Logo Asli eBudiMulia & Poin Riil dari Supabase */}
               <div className="px-5 pt-5 pb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-xl bg-[#0B2B7A] flex items-center justify-center text-white shadow-xs border border-amber-400">
@@ -188,7 +316,7 @@ export default function RedesignDashboardPreview() {
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-[#FFFDF0] shadow-2xs text-xs font-black text-amber-900 hover:bg-amber-100/60 transition-colors"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-                    <span>{stats.poinPositif} Poin</span>
+                    <span>{realPoin.positif} Poin</span>
                   </button>
                   <button className="w-8 h-8 rounded-full border border-slate-200 bg-white shadow-2xs flex items-center justify-center text-slate-600 hover:bg-slate-50">
                     <LogOut className="w-3.5 h-3.5" />
@@ -196,7 +324,7 @@ export default function RedesignDashboardPreview() {
                 </div>
               </div>
 
-              {/* JIKA MEMILIH SUB-MENU: TAMPILKAN KOMPONEN ASLI PRODUKSI */}
+              {/* JIKA MEMILIH SUB-MENU: TAMPILKAN KOMPONEN ASLI PRODUKSI DENGAN DATA RIIL */}
               {activeMenu ? (
                 <div className="p-4">
                   <button 
@@ -218,7 +346,7 @@ export default function RedesignDashboardPreview() {
                   </div>
                 </div>
               ) : (
-                /* HALAMAN UTAMA BERANDA SISWA */
+                /* HALAMAN UTAMA BERANDA SISWA (100% REALTIME DARI SUPABASE) */
                 <div className="px-5 space-y-4">
                   
                   {/* Greeting & Action Icons Row */}
@@ -279,7 +407,7 @@ export default function RedesignDashboardPreview() {
                     </button>
                   </div>
 
-                  {/* KARTU IDENTITAS SISWA (Bukan Kartu ATM/Rekening Lagi!) */}
+                  {/* KARTU IDENTITAS SISWA DENGAN FOTO ASLI CLOUDINARY & NISN ASLI */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Kartu Pelajar Digital</h4>
@@ -291,10 +419,9 @@ export default function RedesignDashboardPreview() {
                       </button>
                     </div>
 
-                    {/* Card Pelajar Budi Mulia dengan Foto, NISN, dan Kelas */}
                     <div className="relative rounded-3xl p-4 sm:p-5 text-white shadow-xl overflow-hidden bg-gradient-to-br from-[#0B2B7A] via-[#103896] to-[#071E54] border border-blue-900">
                       
-                      {/* Pola Strip Merah Obor & Lingkaran Emas di Latar */}
+                      {/* Pola Latar */}
                       <div className="absolute top-0 right-0 w-28 h-28 bg-[#D31725]/30 rounded-bl-full pointer-events-none"></div>
                       <div className="absolute -left-10 -bottom-10 w-36 h-36 bg-[#F6C800]/15 rounded-full pointer-events-none"></div>
 
@@ -311,25 +438,29 @@ export default function RedesignDashboardPreview() {
                         </span>
                       </div>
 
-                      {/* Body Kartu: FOTO SISWA + NAMA + KELAS + NISN */}
+                      {/* Body Kartu: FOTO ASLI DATABASE + DATA RIIL */}
                       <div className="pt-3.5 flex items-center gap-3.5 relative z-10">
-                        {/* Foto Siswa Asli */}
                         <div className="relative shrink-0">
-                          <img 
-                            src={student?.foto || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"}
-                            alt={student?.nama}
-                            className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-400 shadow-md"
-                          />
+                          {realFoto ? (
+                            <img 
+                              src={realFoto}
+                              alt={student?.nama}
+                              className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-400 shadow-md"
+                            />
+                          ) : (
+                            <div className="w-14 h-14 rounded-2xl bg-amber-400/20 border-2 border-amber-400 flex items-center justify-center font-black text-amber-300 text-lg shadow-md">
+                              {panggilanNama.substring(0, 2).toUpperCase()}
+                            </div>
+                          )}
                           <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-[#0B2B7A] rounded-full"></div>
                         </div>
 
-                        {/* Detail Info Siswa */}
                         <div className="overflow-hidden flex-1">
                           <h3 className="text-base font-black text-white truncate leading-tight">
                             {student?.nama}
                           </h3>
                           <p className="text-xs font-semibold text-amber-300 mt-0.5">
-                            Kelas {student?.kelas} • Ruang Belajar
+                            Kelas {student?.kelas || "8-A"} • Ruang Belajar
                           </p>
                           <p className="text-[11px] text-blue-200 font-mono mt-0.5">
                             NISN: <span className="text-white font-bold tracking-wide">{student?.nisn}</span>
@@ -337,27 +468,27 @@ export default function RedesignDashboardPreview() {
                         </div>
                       </div>
 
-                      {/* Footer Kartu: Poin & Status Disiplin */}
+                      {/* Footer Kartu: DATA POIN & KEHADIRAN 100% RIIL SUPABASE */}
                       <div className="mt-3.5 pt-3 border-t border-white/15 flex items-center justify-between relative z-10 text-xs">
                         <div className="flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                          <span className="text-blue-100 text-[11px]">Kredit Poin:</span>
-                          <span className="font-black font-mono text-amber-400">+{stats.poinPositif}</span>
+                          <span className="text-blue-100 text-[11px]">Kredit Poin Riil:</span>
+                          <span className="font-black font-mono text-amber-400">+{realPoin.positif}</span>
                         </div>
 
                         <div className="flex items-center gap-1.5">
                           <span className="text-blue-100 text-[11px]">Kehadiran:</span>
-                          <span className="font-black text-emerald-400 font-mono">{stats.kehadiranPersen}%</span>
+                          <span className="font-black text-emerald-400 font-mono">{realPresensi.hadirPersen}%</span>
                         </div>
                       </div>
 
                     </div>
                   </div>
 
-                  {/* KONTEN BERDASARKAN TAB YANG DIPILIH */}
+                  {/* KONTEN REALTIME BERDASARKAN TAB */}
                   {activeTab === 'hari_ini' && (
                     <div className="space-y-4">
-                      {/* FITUR PILIHAN GRID (8 SQUIRCLE ICONS DENGAN WARNA LOGO RESMI) */}
+                      {/* FITUR PILIHAN GRID */}
                       <div>
                         <div className="flex items-center justify-between mb-2.5">
                           <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Layanan Utama Siswa</h4>
@@ -385,27 +516,31 @@ export default function RedesignDashboardPreview() {
                         </div>
                       </div>
 
-                      {/* BANNER MAPEL AKTIF HARI INI */}
+                      {/* BANNER STATUS PRESENSI HARI INI RIIL DARI SUPABASE */}
                       <div className="bg-[#FFFDF0] rounded-3xl p-4 shadow-xs border border-amber-200">
                         <div className="flex items-center justify-between mb-1.5">
-                          <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#D31725] text-white text-[10px] font-extrabold uppercase">
-                            Sedang Berlangsung
+                          <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                            realPresensi.isHadir ? 'bg-emerald-600 text-white' : 'bg-[#D31725] text-white'
+                          }`}>
+                            {realPresensi.status}
                           </span>
-                          <span className="text-xs text-slate-500 font-mono font-bold">08.20 - 09.40 WIB</span>
+                          <span className="text-xs text-slate-500 font-mono font-bold">
+                            {realPresensi.jam !== '-' ? `Pukul ${realPresensi.jam}` : 'Hari Ini'}
+                          </span>
                         </div>
                         <h3 className="text-sm font-black text-slate-900">
-                          Bahasa Indonesia — Kelas {student?.kelas}
+                          {mapelAktif.mapel}
                         </h3>
                         <p className="text-xs text-slate-600 mt-0.5">
-                          Guru: Maria Fransiska, M.Pd. • R. 8-A
+                          Guru: {mapelAktif.guru} • {mapelAktif.ruang}
                         </p>
                         <div className="mt-3 flex items-center justify-between pt-2 border-t border-amber-200/60">
-                          <span className="text-[11px] text-slate-500">Materi: Teks Eksplanasi</span>
+                          <span className="text-[11px] text-slate-500">Jam: {mapelAktif.jam}</span>
                           <button 
                             onClick={() => setActiveMenu('JADWAL')}
                             className="text-xs font-bold text-[#0B2B7A] hover:underline"
                           >
-                            Jadwal Hari Ini →
+                            Jadwal Lengkap →
                           </button>
                         </div>
                       </div>
@@ -414,50 +549,53 @@ export default function RedesignDashboardPreview() {
 
                   {activeTab === 'akademik' && (
                     <div className="space-y-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-2xs">
-                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Jadwal Kelas Hari Ini</h4>
-                      <div className="divide-y divide-slate-100">
-                        {jadwalHariIni.map((j, idx) => (
-                          <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
-                            <div>
-                              <p className="font-bold text-slate-900">{j.mapel}</p>
-                              <p className="text-[11px] text-slate-500">{j.guru} • {j.ruang}</p>
+                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                        Jadwal Kelas {student?.kelas || "8-A"} Hari Ini
+                      </h4>
+                      {realJadwalHariIni.length > 0 ? (
+                        <div className="divide-y divide-slate-100">
+                          {realJadwalHariIni.map((j, idx) => (
+                            <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
+                              <div>
+                                <p className="font-bold text-slate-900">{j.mapel}</p>
+                                <p className="text-[11px] text-slate-500">{j.guru} • {j.ruang}</p>
+                              </div>
+                              <span className="font-mono text-slate-500 font-bold block">{j.jam}</span>
                             </div>
-                            <div className="text-right">
-                              <span className="font-mono text-slate-400 block">{j.jam}</span>
-                              <span className={`text-[10px] font-bold ${j.status === 'Sedang Berlangsung' ? 'text-[#D31725]' : 'text-slate-500'}`}>
-                                {j.status}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 py-4 text-center">Tidak ada jadwal pelajaran hari ini.</p>
+                      )}
                       <button 
                         onClick={() => setActiveMenu('NILAI')}
                         className="w-full py-2 bg-[#0B2B7A] text-white font-bold text-xs rounded-xl hover:bg-[#08205C] transition-colors mt-2"
                       >
-                        Lihat Transkrip Rapor TP Siswa
+                        Buka Transkrip Nilai Rapor TP Asli
                       </button>
                     </div>
                   )}
 
                   {activeTab === 'kesiswaan' && (
                     <div className="space-y-3 bg-white p-4 rounded-3xl border border-slate-200 shadow-2xs">
-                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">Buku Saku & Kedisiplinan</h4>
+                      <h4 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                        Buku Saku Poin Siswa (Realtime)
+                      </h4>
                       <div className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl border border-blue-100 text-xs">
                         <div>
                           <p className="text-[10px] text-blue-600 font-bold uppercase">Poin Prestasi</p>
-                          <p className="text-lg font-black text-[#0B2B7A]">+{stats.poinPositif} Poin</p>
+                          <p className="text-lg font-black text-[#0B2B7A]">+{realPoin.positif} Poin</p>
                         </div>
                         <div className="text-right">
                           <p className="text-[10px] text-emerald-700 font-bold uppercase">Pelanggaran</p>
-                          <p className="text-lg font-black text-emerald-700">{stats.poinPelanggaran} Poin</p>
+                          <p className="text-lg font-black text-emerald-700">{realPoin.pelanggaran} Poin</p>
                         </div>
                       </div>
                       <button 
                         onClick={() => setActiveMenu('POIN')}
                         className="w-full py-2 bg-[#F6C800] text-slate-950 font-black text-xs rounded-xl hover:bg-amber-400 transition-colors mt-2"
                       >
-                        Buka Buku Saku Lengkap
+                        Buka Buku Saku Lengkap & Ajukan Poin
                       </button>
                     </div>
                   )}
@@ -467,7 +605,7 @@ export default function RedesignDashboardPreview() {
 
             </div>
 
-            {/* FLOATING BOTTOM NAV BAR DENGAN TOMBOL SCAN QR PRESENSI DI TENGAH */}
+            {/* FLOATING BOTTOM NAV BAR */}
             <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-6 py-2.5 flex items-center justify-between z-40">
               
               <button 
