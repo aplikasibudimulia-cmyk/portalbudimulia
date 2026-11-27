@@ -9,8 +9,12 @@ export default function AdminSpotlightSearch({ isOpen, onClose, onSelectMenu, me
   // Kumpulkan seluruh item menu menjadi 1 list flat
   const allItems = useMemo(() => {
     const list = []
-    ADMIN_CATEGORIES.forEach(cat => {
-      cat.items.forEach(item => {
+    const categories = Array.isArray(ADMIN_CATEGORIES)
+      ? ADMIN_CATEGORIES
+      : (ADMIN_CATEGORIES?.ADMIN_CATEGORIES || ADMIN_CATEGORIES?.default || [])
+
+    categories.forEach(cat => {
+      (cat?.items || []).forEach(item => {
         list.push({
           ...item,
           categoryName: cat.label,

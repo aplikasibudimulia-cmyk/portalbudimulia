@@ -29,8 +29,12 @@ export default function AdminV55Navbar({
     setOpenAccordion(cat)
   }, [activeMenu])
 
+  const categories = Array.isArray(ADMIN_CATEGORIES)
+    ? ADMIN_CATEGORIES
+    : (ADMIN_CATEGORIES?.ADMIN_CATEGORIES || ADMIN_CATEGORIES?.default || [])
+
   // Cari objek kategori aktif
-  const activeCategoryObj = ADMIN_CATEGORIES.find(c => c.id === selectedCatId) || ADMIN_CATEGORIES[0]
+  const activeCategoryObj = categories.find(c => c.id === selectedCatId) || categories[0] || { items: [] }
 
   // Gabungkan sub-items kategori dokumen jika ada custom document types
   const subItems = React.useMemo(() => {
@@ -105,7 +109,7 @@ export default function AdminV55Navbar({
 
             {/* Center: Horizontal Sliding Pill Tabs (Desktop XL+) */}
             <nav className="hidden xl:flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/60 shadow-inner max-w-fit">
-              {ADMIN_CATEGORIES.map(cat => {
+              {categories.map(cat => {
                 const isActive = selectedCatId === cat.id
                 return (
                   <button
@@ -318,7 +322,7 @@ export default function AdminV55Navbar({
 
               {/* Accordion Categories */}
               <div className="flex-1 overflow-y-auto p-3 space-y-1">
-                {ADMIN_CATEGORIES.map(cat => {
+                {categories.map(cat => {
                   const isOpen = openAccordion === cat.id
                   const hasActiveMenu = cat.items.some(i => i.id === activeMenu)
                   return (

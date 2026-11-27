@@ -110,10 +110,14 @@ export const ADMIN_CATEGORIES = [
 // Cari kategori ID dari menu ID
 export function getCategoryByMenuId(menuId) {
   if (!menuId || menuId === 'dashboard') return 'overview'
-  for (const cat of ADMIN_CATEGORIES) {
-    if (cat.items.some(item => item.id === menuId)) {
+  const cats = Array.isArray(ADMIN_CATEGORIES) ? ADMIN_CATEGORIES : []
+  for (const cat of cats) {
+    if ((cat?.items || []).some(item => item.id === menuId)) {
       return cat.id
     }
   }
   return 'dokumen' // fallback untuk dynamic menuTypes
 }
+
+export default ADMIN_CATEGORIES
+
