@@ -187,15 +187,25 @@ body {
   box-sizing: border-box;
 }
 
-/* Dukungan Safe Area (Notch iPhone & Home Indicator) */
-header,
-.app-header-safe,
-.ios-safe-top {
-  padding-top: calc(env(safe-area-inset-top, 0px) + 0.875rem) !important;
+/* Dukungan Safe Area & Pembatas Status Bar HP (Android, iPhone Notch & Dynamic Island) */
+@media screen and (max-width: 767px) {
+  header,
+  .app-header-safe,
+  .ios-safe-top {
+    padding-top: max(calc(env(safe-area-inset-top, 0px) + 0.75rem), 2.25rem) !important;
+  }
+
+  .ios-fullscreen-header {
+    padding-top: max(calc(env(safe-area-inset-top, 0px) + 0.625rem), 2rem) !important;
+  }
 }
 
-.ios-fullscreen-header {
-  padding-top: calc(env(safe-area-inset-top, 0px) + 0.625rem) !important;
+@media screen and (min-width: 768px) {
+  header,
+  .app-header-safe,
+  .ios-safe-top {
+    padding-top: 0.875rem !important;
+  }
 }
 
 /* Mencegah iOS WebKit/Safari auto-zoom saat klik form input di ponsel */

@@ -138,6 +138,29 @@ public class MainActivity extends BridgeActivity {
 
         // Normalisasi WebView TextZoom & Viewport agar tampilan tidak terpotong di HP dengan Ukuran Font/Layar Besar
         normalizeWebViewDisplay();
+
+        // Pastikan ikon status bar (jam, baterai, wifi) terlihat jelas dengan warna gelap di atas background terang
+        setupLightStatusBar();
+    }
+
+    private void setupLightStatusBar() {
+        try {
+            getWindow().setStatusBarColor(android.graphics.Color.WHITE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsController controller = getWindow().getInsetsController();
+                if (controller != null) {
+                    controller.setSystemBarsAppearance(
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    );
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                View decor = getWindow().getDecorView();
+                decor.setSystemUiVisibility(decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "setupLightStatusBar error: " + e.getMessage());
+        }
     }
 
     private void normalizeWebViewDisplay() {
@@ -446,6 +469,7 @@ public class MainActivity extends BridgeActivity {
             }
             decorView.setOnSystemUiVisibilityChangeListener(null);
             decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+            setupLightStatusBar();
         } catch (Exception e) {
             Log.w(TAG, "exitImmersiveSticky error: " + e.getMessage());
         }
