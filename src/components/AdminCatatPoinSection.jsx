@@ -66,7 +66,8 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
   const [jam, setJam] = useState(getInitialTime())
   const [guruList, setGuruList] = useState(() => {
     try {
-      const cached = localStorage.getItem('ebudimulia_guru_list')
+      localStorage.removeItem('ebudimulia_guru_list')
+      const cached = sessionStorage.getItem('ebudimulia_guru_list')
       return cached ? JSON.parse(cached) : []
     } catch (_) {
       return []
@@ -169,7 +170,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
         const { data: rpcData, error: rpcErr } = await supabase.rpc('fn_get_guru_list')
         if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
           setGuruList(rpcData)
-          localStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
+          sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
           return
         }
       } catch (_) {}
@@ -182,7 +183,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
 
       if (!error && Array.isArray(data) && data.length > 0) {
         setGuruList(data)
-        localStorage.setItem('ebudimulia_guru_list', JSON.stringify(data))
+        sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(data))
         return
       }
 
@@ -207,7 +208,7 @@ export default function AdminCatatPoinSection({ session, activeTa, readOnly = fa
           kode: ''
         }))
         setGuruList(fallbackList)
-        localStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
+        sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
       }
     } catch (err) {
       console.error('Exception fetching guru list:', err)

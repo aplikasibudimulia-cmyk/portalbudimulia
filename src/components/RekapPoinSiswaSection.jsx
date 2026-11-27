@@ -69,7 +69,8 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
   const [semesters, setSemesters] = useState([])
   const [guruList, setGuruList] = useState(() => {
     try {
-      const cached = localStorage.getItem('ebudimulia_guru_list')
+      localStorage.removeItem('ebudimulia_guru_list')
+      const cached = sessionStorage.getItem('ebudimulia_guru_list')
       return cached ? JSON.parse(cached) : []
     } catch (_) {
       return []
@@ -312,12 +313,12 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
         const { data: rpcData, error: rpcErr } = await supabase.rpc('fn_get_guru_list')
         if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
           setGuruList(rpcData)
-          localStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
+          sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(rpcData))
         } else {
           const { data: gData, error: gErr } = await supabase.from('guru').select('id, nama_guru, kode').order('nama_guru', { ascending: true })
           if (!gErr && Array.isArray(gData) && gData.length > 0) {
             setGuruList(gData)
-            localStorage.setItem('ebudimulia_guru_list', JSON.stringify(gData))
+            sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(gData))
           } else {
             const { data: recData } = await supabase
               .from('point_records')
@@ -333,7 +334,7 @@ export default function RekapPoinSiswaSection({ session, activeTa }) {
             if (names.length > 0) {
               const fallbackList = names.map((name, idx) => ({ id: `guru-rec-${idx}`, nama_guru: name, kode: '' }))
               setGuruList(fallbackList)
-              localStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
+              sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(fallbackList))
             }
           }
         }

@@ -95,7 +95,8 @@ export default function AdminEkskulSection({ session, activeTa }) {
   const [masterEkskul, setMasterEkskul] = useState(DEFAULT_MASTER_EKSKUL)
   const [guruList, setGuruList] = useState(() => {
     try {
-      const raw = localStorage.getItem('ebudimulia_guru_list')
+      localStorage.removeItem('ebudimulia_guru_list')
+      const raw = sessionStorage.getItem('ebudimulia_guru_list')
       return raw ? JSON.parse(raw) : []
     } catch (e) {
       return []
@@ -228,7 +229,7 @@ export default function AdminEkskulSection({ session, activeTa }) {
           if (gData && gData.length > 0) {
             setGuruList(gData)
             try {
-              localStorage.setItem('ebudimulia_guru_list', JSON.stringify(gData))
+              sessionStorage.setItem('ebudimulia_guru_list', JSON.stringify(gData))
             } catch (e) {}
           }
         } catch (e) {
