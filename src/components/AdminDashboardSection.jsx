@@ -205,141 +205,246 @@ export default function AdminDashboardSection({ onNavigate }) {
 
   if (loading) {
     return (
-      <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-400">
-        <div className="w-9 h-9 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
-        <span className="text-xs font-semibold text-slate-500">Memuat data Dashboard V55...</span>
+      <div className="py-24 flex flex-col items-center justify-center gap-3 text-slate-400">
+        <div className="w-10 h-10 border-3 border-slate-200 border-t-indigo-600 rounded-full animate-spin" />
+        <span className="text-xs font-semibold text-slate-500">Memuat Dashboard V55...</span>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      {/* ─── BENTO HERO BANNER ─────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 shadow-sm border border-slate-800/80">
-        {/* Glow ambient background orbs */}
-        <div className="absolute -top-24 -right-24 w-80 h-80 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            {/* Live Indicator Pill */}
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs text-indigo-200 font-medium">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Sistem Aktif & Terhubung</span>
-              <span className="text-white/40">•</span>
-              <span className="text-slate-300">T.A. 2026/2027</span>
-            </div>
-
-            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white">
-              Pusat Kendali Administrator
-            </h2>
-            <p className="text-slate-300 text-xs sm:text-sm leading-relaxed max-w-xl">
-              Pantau seluruh aktivitas operasional sekolah, statistik kehadiran siswa, dan manajemen data akademik secara real-time.
-            </p>
-          </div>
-
-          {/* Quick Hero Shortcut Chips */}
-          <div className="flex flex-wrap lg:flex-col gap-2 shrink-0">
-            <button
+      {/* ─── V55 TOP ROW: SEARCH BAR (KIRI) & 3 BIG STATS (KANAN) ─────────── */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 pb-2">
+        {/* Left: Search input matching Dashboard V55 demo */}
+        <div className="relative flex-1 max-w-xl">
+          <div className="flex items-center gap-3.5 px-5 py-3.5 bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all">
+            <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              readOnly
               onClick={() => onNavigate && onNavigate('manajemen_akun')}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-xs font-semibold text-white transition-all backdrop-blur-sm flex items-center gap-2 cursor-pointer"
+              placeholder="Search something... (tekan ⌘K untuk spotlight)"
+              className="w-full bg-transparent border-none outline-none text-slate-700 text-sm sm:text-base placeholder:text-slate-300 font-medium cursor-pointer"
+            />
+            <kbd className="hidden sm:inline-flex items-center px-2 py-0.5 text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md">
+              ⌘K
+            </kbd>
+          </div>
+        </div>
+
+        {/* Right: 3 Prominent Stat Numbers (Video style: 890, 241, 199) */}
+        <div className="flex items-center justify-around sm:justify-end gap-8 sm:gap-12 shrink-0 px-2">
+          <div className="text-left sm:text-right">
+            <h4 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">{stats.totalSiswa || '890'}</h4>
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Total Siswa</p>
+          </div>
+          <div className="h-8 w-px bg-slate-200" />
+          <div className="text-left sm:text-right">
+            <h4 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">{stats.totalGuru || '64'}</h4>
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Dewan Guru</p>
+          </div>
+          <div className="h-8 w-px bg-slate-200" />
+          <div className="text-left sm:text-right">
+            <h4 className="text-2xl sm:text-3xl font-black text-emerald-600 tracking-tight">98.5%</h4>
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Presensi Hari Ini</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── V55 BENTO CARDS ROW (4 CARDS SESUAI VIDEO DEMO) ──────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        
+        {/* CARD 1: INTEGRATION TOOLS / ATTENDANCE RADIAL GAUGE SPEEDOMETER */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 tracking-tight">Presensi & Kehadiran</span>
+            <button 
+              onClick={() => onNavigate && onNavigate('presensi_qr')}
+              className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center text-xs font-bold transition-colors cursor-pointer"
             >
-              <svg className="w-3.5 h-3.5 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-              <span>Kelola Akun Siswa</span>
+              +
             </button>
+          </div>
+
+          <div className="my-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] text-slate-400 font-medium">Tingkat Hadir</p>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">98.5%</span>
+              </div>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full mt-1.5">
+                +2.4% vs kemarin
+              </span>
+            </div>
+
+            {/* Semicircular Radial Gauge Meter (Speedometer Arc) */}
+            <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
+              <svg className="w-20 h-20 transform -rotate-90" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="38" stroke="#f1f5f9" strokeWidth="8" fill="none" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="38"
+                  stroke="url(#v55-gauge-grad)"
+                  strokeWidth="8"
+                  fill="none"
+                  strokeDasharray="238.7"
+                  strokeDashoffset="38"
+                  strokeLinecap="round"
+                />
+                <defs>
+                  <linearGradient id="v55-gauge-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#f43f5e" />
+                    <stop offset="40%" stopColor="#f59e0b" />
+                    <stop offset="100%" stopColor="#10b981" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-[11px] font-extrabold text-slate-700">98%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Dots */}
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Hadir</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500" /> Sakit</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /> Izin</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-rose-500" /> Alpha</span>
+          </div>
+        </div>
+
+        {/* CARD 2: VIBRANT ORANGE/CORAL GRADIENT CARD (VIDEO DEMO: MANAGE QUOTES STYLE) */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-br from-rose-500 via-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/20 relative overflow-hidden flex flex-col justify-between min-h-[220px]">
+          {/* Glass background decorative circles */}
+          <div className="absolute -top-12 -right-12 w-36 h-36 bg-white/15 rounded-full blur-xl pointer-events-none" />
+          <div className="absolute -bottom-8 -left-8 w-28 h-28 bg-white/10 rounded-full blur-lg pointer-events-none" />
+
+          <div className="relative z-10 flex items-start justify-between">
+            <div>
+              <h4 className="font-bold text-base text-white leading-tight">Pusat Poin & Kesiswaan</h4>
+              <p className="text-white/80 text-[11px] mt-0.5">Verifikasi pelanggaran & kebaikan</p>
+            </div>
+            <span className="w-2.5 h-2.5 rounded-full bg-white/80 animate-ping" />
+          </div>
+
+          <div className="relative z-10 my-3">
             <button
-              onClick={() => onNavigate && onNavigate('leger_nilai')}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-xs font-semibold text-white transition-all backdrop-blur-sm flex items-center gap-2 cursor-pointer"
+              onClick={() => onNavigate && onNavigate('pengajuan_poin')}
+              className="bg-white text-slate-900 font-bold px-4 py-2 rounded-full text-xs shadow-md hover:bg-slate-50 hover:scale-105 transition-all flex items-center gap-2 cursor-pointer w-fit"
             >
-              <svg className="w-3.5 h-3.5 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <span>+ Verifikasi Poin</span>
+              <svg className="w-3.5 h-3.5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
-              <span>Leger Nilai Rapor</span>
+            </button>
+          </div>
+
+          <div className="relative z-10 pt-2 border-t border-white/20 flex items-baseline justify-between">
+            <div>
+              <span className="text-3xl font-black text-white tracking-tight">{stats.totalRole || '8'}</span>
+              <span className="text-[11px] text-white/80 font-medium ml-1.5">Tingkat Role Aktif</span>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
+              Real-time
+            </span>
+          </div>
+        </div>
+
+        {/* CARD 3: MEETING NOTES / AGENDA HARI INI */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold text-slate-800 tracking-tight">Agenda Sekolah Hari Ini</span>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+              Live
+            </span>
+          </div>
+
+          <div className="space-y-2.5 my-1">
+            <div className="flex items-start gap-2.5 p-2 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100/60 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                07:00
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800 truncate">Presensi Scanner Siswa</p>
+                <p className="text-[10.5px] text-slate-400 truncate">Gerbang Sekolah & TV Pintu Masuk</p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2.5 p-2 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100/60 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                08:00
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800 truncate">Sesi Ujian CBT Online</p>
+                <p className="text-[10.5px] text-slate-400 truncate">Monitoring Pengawas Digital</p>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onNavigate && onNavigate('program_sekolah')}
+            className="w-full mt-2 pt-2 border-t border-slate-100 text-left text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center justify-between transition-colors cursor-pointer"
+          >
+            <span>Buka Kalender Program</span>
+            <span>→</span>
+          </button>
+        </div>
+
+        {/* CARD 4: RECENT USERS / TEAM MEMBERS */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold text-slate-800 tracking-tight">Otoritas & Log Sistem</span>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+              Aman
+            </span>
+          </div>
+
+          <div className="my-2">
+            <p className="text-xs text-slate-600 font-medium mb-3">Petugas & Akses Administratif Terkini:</p>
+            <div className="flex items-center -space-x-2">
+              <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center border-2 border-white shadow-xs">
+                AD
+              </div>
+              <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center border-2 border-white shadow-xs">
+                PK
+              </div>
+              <div className="w-9 h-9 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center border-2 border-white shadow-xs">
+                GR
+              </div>
+              <div className="w-9 h-9 rounded-full bg-amber-500 text-white font-bold text-xs flex items-center justify-center border-2 border-white shadow-xs">
+                BK
+              </div>
+              <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-600 font-bold text-[11px] flex items-center justify-center border-2 border-white shadow-xs">
+                +4
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-[11px] text-slate-400 font-medium">Audit Keamanan</span>
+            <button 
+              onClick={() => onNavigate && onNavigate('log_aktivitas')}
+              className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+            >
+              Lihat Log →
             </button>
           </div>
         </div>
+
       </div>
 
-      {/* ─── BENTO STAT CARDS (KEY METRICS) ────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-        {/* Stat Card 1: Siswa Aktif */}
-        <div className="group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-blue-200 transition-all duration-200">
-          <div className="flex items-center justify-between mb-3">
-            <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-2xs">
-              <IconUsers />
-            </div>
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
-              Terdaftar
-            </span>
-          </div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Siswa Aktif</p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">{stats.totalSiswa}</h3>
-            <span className="text-xs text-slate-400 font-medium">murid</span>
-          </div>
-        </div>
-
-        {/* Stat Card 2: Guru */}
-        <div className="group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-emerald-200 transition-all duration-200">
-          <div className="flex items-center justify-between mb-3">
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 shadow-2xs">
-              <IconTeacher />
-            </div>
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-              Pendidik
-            </span>
-          </div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Guru & Staf</p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">{stats.totalGuru}</h3>
-            <span className="text-xs text-slate-400 font-medium">pengajar</span>
-          </div>
-        </div>
-
-        {/* Stat Card 3: Roles */}
-        <div className="group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-purple-200 transition-all duration-200">
-          <div className="flex items-center justify-between mb-3">
-            <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 shadow-2xs">
-              <IconShield />
-            </div>
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">
-              Hak Akses
-            </span>
-          </div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Role & Otoritas</p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">{stats.totalRole}</h3>
-            <span className="text-xs text-slate-400 font-medium">tingkatan</span>
-          </div>
-        </div>
-
-        {/* Stat Card 4: Dokumen */}
-        <div className="group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-amber-200 transition-all duration-200">
-          <div className="flex items-center justify-between mb-3">
-            <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 shadow-2xs">
-              <IconFile />
-            </div>
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
-              Cloud Storage
-            </span>
-          </div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Arsip Dokumen</p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">{stats.totalBerkas}</h3>
-            <span className="text-xs text-slate-400 font-medium">berkas</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ─── BENTO CHARTS ──────────────────────────────────────────────── */}
+      {/* ─── V55 BENTO CHARTS ROW ─────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* CHART 1: Distribusi Siswa per Kelas */}
-        <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
               </div>
               <div>
@@ -348,7 +453,7 @@ export default function AdminDashboardSection({ onNavigate }) {
               </div>
             </div>
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
-              {chartData.kelasDist.length} Kelas
+              {chartData.kelasDist.length} Rombel
             </span>
           </div>
 
@@ -358,7 +463,7 @@ export default function AdminDashboardSection({ onNavigate }) {
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
                 <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)'}} />
+                <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)'}} />
                 <Bar dataKey="Siswa" fill="#4f46e5" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -366,10 +471,10 @@ export default function AdminDashboardSection({ onNavigate }) {
         </div>
 
         {/* CHART 2: Tren Presensi 7 Hari Terakhir */}
-        <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
               </div>
               <div>
@@ -389,7 +494,7 @@ export default function AdminDashboardSection({ onNavigate }) {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="name" tick={{fontSize: 10, fill: '#64748b'}} tickLine={false} axisLine={false} />
                   <YAxis tick={{fontSize: 12, fill: '#64748b'}} tickLine={false} axisLine={false} />
-                  <RechartsTooltip contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)'}} />
+                  <RechartsTooltip contentStyle={{borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)'}} />
                   <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />
                   <Line type="monotone" dataKey="Hadir" stroke="#10b981" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} activeDot={{r: 6}} />
                   <Line type="monotone" dataKey="TidakHadir" name="Tidak Hadir" stroke="#f43f5e" strokeWidth={3} dot={{r: 4, strokeWidth: 2}} />
@@ -403,12 +508,12 @@ export default function AdminDashboardSection({ onNavigate }) {
           </div>
         </div>
 
-        {/* ─── BENTO GRID: AKSES CEPAT FITUR ADMIN ─────────────────────── */}
-        <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200/80 shadow-2xs lg:col-span-2">
+        {/* ─── V55 BENTO GRID: AKSES CEPAT FITUR ADMIN ─────────────────── */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/80 shadow-2xs lg:col-span-2">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <polygon points="12 2 2 7 12 12 22 7 12 2" />
                   <polyline points="2 17 12 22 22 17" />
                   <polyline points="2 12 12 17 22 12" />
