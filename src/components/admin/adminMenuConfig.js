@@ -108,9 +108,13 @@ export const ADMIN_CATEGORIES = [
 ]
 
 // Cari kategori ID dari menu ID
+export function getAdminCategories() {
+  return Array.isArray(ADMIN_CATEGORIES) ? ADMIN_CATEGORIES : []
+}
+
 export function getCategoryByMenuId(menuId) {
   if (!menuId || menuId === 'dashboard') return 'overview'
-  const cats = Array.isArray(ADMIN_CATEGORIES) ? ADMIN_CATEGORIES : []
+  const cats = getAdminCategories()
   for (const cat of cats) {
     if ((cat?.items || []).some(item => item.id === menuId)) {
       return cat.id

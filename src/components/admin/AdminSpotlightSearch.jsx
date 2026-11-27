@@ -1,5 +1,20 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { ADMIN_CATEGORIES } from './adminMenuConfig'
+import { ADMIN_CATEGORIES, getAdminCategories } from './adminMenuConfig'
+
+function resolveCategories(input) {
+  if (Array.isArray(input)) return input
+  if (typeof getAdminCategories === 'function') {
+    const fromFn = getAdminCategories()
+    if (Array.isArray(fromFn)) return fromFn
+  }
+  if (input && typeof input === 'object') {
+    if (Array.isArray(input.ADMIN_CATEGORIES)) return input.ADMIN_CATEGORIES
+    if (Array.isArray(input.default)) return input.default
+    const arr = Object.values(input).find(v => Array.isArray(v))
+    if (arr) return arr
+  }
+  return []
+}
 
 export default function AdminSpotlightSearch({ isOpen, onClose, onSelectMenu, menuTypes = [] }) {
   const [query, setQuery] = useState('')
@@ -9,30 +24,30 @@ export default function AdminSpotlightSearch({ isOpen, onClose, onSelectMenu, me
   // Kumpulkan seluruh item menu menjadi 1 list flat
   const allItems = useMemo(() => {
     const list = []
-    const categories = Array.isArray(ADMIN_CATEGORIES)
-      ? ADMIN_CATEGORIES
-      : (ADMIN_CATEGORIES?.ADMIN_CATEGORIES || ADMIN_CATEGORIES?.default || [])
+    const categories = resolveCategories(ADMIN_CATEGORIES)
 
-    categories.forEach(cat => {
-      (cat?.items || []).forEach(item => {
+    for (const cat of categories) {
+      const items = Array.isArray(cat?.items) ? cat.items : []
+      for (const item of items) {
         list.push({
           ...item,
-          categoryName: cat.label,
-          categoryId: cat.id
+          categoryName: cat?.label || '',
+          categoryId: cat?.id || ''
         })
-      })
-    })
+      }
+    }
 
     // Tambahkan custom document types dinamis jika ada
-    (menuTypes || []).forEach(t => {
+    const safeTypes = Array.isArray(menuTypes) ? menuTypes : []
+    for (const t of safeTypes) {
       list.push({
         id: t.id,
-        label: t.nama,
+        label: t.nama || t.label || '',
         desc: 'Dokumen Kategori Khusus',
         categoryName: 'Informasi & Surat',
         categoryId: 'dokumen'
       })
-    })
+    }
 
     return list
   }, [menuTypes])

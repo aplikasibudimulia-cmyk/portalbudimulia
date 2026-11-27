@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ADMIN_CATEGORIES, getCategoryByMenuId } from './adminMenuConfig'
+import { ADMIN_CATEGORIES, getCategoryByMenuId, getAdminCategories } from './adminMenuConfig'
+
+function resolveCategories(input) {
+  if (Array.isArray(input)) return input
+  if (typeof getAdminCategories === 'function') {
+    const fromFn = getAdminCategories()
+    if (Array.isArray(fromFn)) return fromFn
+  }
+  if (input && typeof input === 'object') {
+    if (Array.isArray(input.ADMIN_CATEGORIES)) return input.ADMIN_CATEGORIES
+    if (Array.isArray(input.default)) return input.default
+    const arr = Object.values(input).find(v => Array.isArray(v))
+    if (arr) return arr
+  }
+  return []
+}
 
 export default function AdminV55Navbar({
   activeMenu,
@@ -29,12 +44,10 @@ export default function AdminV55Navbar({
     setOpenAccordion(cat)
   }, [activeMenu])
 
-  const categories = Array.isArray(ADMIN_CATEGORIES)
-    ? ADMIN_CATEGORIES
-    : (ADMIN_CATEGORIES?.ADMIN_CATEGORIES || ADMIN_CATEGORIES?.default || [])
+  const categories = resolveCategories(ADMIN_CATEGORIES)
 
   // Cari objek kategori aktif
-  const activeCategoryObj = categories.find(c => c.id === selectedCatId) || categories[0] || { items: [] }
+  const activeCategoryObj = categories.find(c => c?.id === selectedCatId) || categories[0] || { items: [] }
 
   // Gabungkan sub-items kategori dokumen jika ada custom document types
   const subItems = React.useMemo(() => {
@@ -54,9 +67,10 @@ export default function AdminV55Navbar({
   const handleCategoryClick = (cat) => {
     setSelectedCatId(cat.id)
     // Jika menu saat ini belum ada di kategori ini, otomatis arahkan ke default item kategori tsb
-    const isAlreadyInCat = cat.items.some(item => item.id === activeMenu)
-    if (!isAlreadyInCat && cat.items.length > 0) {
-      onNavigate(cat.items[0].id)
+    const items = Array.isArray(cat?.items) ? cat.items : []
+    const isAlreadyInCat = items.some(item => item.id === activeMenu)
+    if (!isAlreadyInCat && items.length > 0) {
+      onNavigate(items[0].id)
     }
   }
 
@@ -324,7 +338,8 @@ export default function AdminV55Navbar({
               <div className="flex-1 overflow-y-auto p-3 space-y-1">
                 {categories.map(cat => {
                   const isOpen = openAccordion === cat.id
-                  const hasActiveMenu = cat.items.some(i => i.id === activeMenu)
+                  const catItems = Array.isArray(cat?.items) ? cat.items : []
+                  const hasActiveMenu = catItems.some(i => i.id === activeMenu)
                   return (
                     <div key={cat.id} className="rounded-xl border border-slate-100 overflow-hidden">
                       <button
@@ -352,7 +367,7 @@ export default function AdminV55Navbar({
 
                       {isOpen && (
                         <div className="p-1 space-y-0.5 bg-white">
-                          {cat.items.map(item => {
+                          {catItems.map(item => {
                             const isCurrent = activeMenu === item.id
                             return (
                               <button
