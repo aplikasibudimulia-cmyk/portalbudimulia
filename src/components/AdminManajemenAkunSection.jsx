@@ -32,7 +32,14 @@ const FallbackAvatar = ({ name, className = '' }) => (
   </div>
 )
 
-export default function AdminManajemenAkunSection({ students = [], allFotos = [], activeTa = null, tahunAjarans = [], initialSearchQuery = '', onRefresh }) {
+export default function AdminManajemenAkunSection({ 
+  students = [], 
+  allFotos = [], 
+  activeTa = null, 
+  tahunAjarans = [], 
+  initialSearchQuery = '', 
+  onRefresh 
+}) {
   const [activeTab, setActiveTab] = useState('murid')
   const [akunList, setAkunList] = useState([])
   const [guruList, setGuruList] = useState([])
@@ -434,9 +441,10 @@ export default function AdminManajemenAkunSection({ students = [], allFotos = []
     const studentsByClass = {}
     
     const targetTa = selectedTaFilter === 'all' ? activeTa?.nama : selectedTaFilter
+    const studentList = Array.isArray(students) ? students : []
 
     // Group only students enrolled in the target academic year
-    (students || []).forEach(std => {
+    studentList.forEach(std => {
       if (targetTa && std.tahun_ajaran && std.tahun_ajaran.trim() !== targetTa.trim()) return
       const k = (std.kelas || '-').trim()
       if (k === '-' || !k) return
@@ -581,13 +589,11 @@ export default function AdminManajemenAkunSection({ students = [], allFotos = []
   // Penggabungan Data: Master data is Siswa/Guru, joined with Akun
   const getMergedData = () => {
     if (activeTab === 'murid' || activeTab === 'orang_tua') {
-      console.log('Students raw data:', students?.length, students?.[0])
-      console.log('activeTa:', activeTa, 'selectedTaFilter:', selectedTaFilter)
-      
+      const studentList = Array.isArray(students) ? students : []
 
       // Create a unique list of students (sometimes enrollment causes duplicates if not grouped)
       const uniqueStudentsMap = new Map()
-      students.forEach(s => {
+      studentList.forEach(s => {
         const key = String(s.nisn || s.id || s.nama_lengkap).trim()
         if (!uniqueStudentsMap.has(key)) {
           uniqueStudentsMap.set(key, { ...s, nisn: String(s.nisn || key).trim(), enrollments: [] })
@@ -1705,7 +1711,8 @@ export default function AdminManajemenAkunSection({ students = [], allFotos = []
     
     setIsProcessing(true)
     try {
-      const activeStudents = students.filter(s => s.tahun_ajaran_id === activeTa.id)
+      const studentList = Array.isArray(students) ? students : []
+      const activeStudents = studentList.filter(s => s.tahun_ajaran_id === activeTa.id)
       const sorted = [...activeStudents].sort((a, b) => {
         const classA = a.kelas || ''
         const classB = b.kelas || ''
@@ -3181,7 +3188,7 @@ export default function AdminManajemenAkunSection({ students = [], allFotos = []
               <button onClick={() => bulkUpdateNisnInputRef.current?.click()} className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold flex items-center gap-1 shadow-sm transition-colors" title="Update NISN Siswa secara Massal dari Excel">
                 <span>⚡</span> Update NISN Massal
               </button>
-              <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || students.filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
+              <button onClick={handleRapihkanKode} disabled={isProcessing || !activeTa || (students || []).filter(s => s.tahun_ajaran_id === activeTa?.id).length === 0} 
                 className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50" title="Urutkan absen dan perbarui kode PDF otomatis">
                 <span>A-Z</span> Rapihkan Kode
               </button>
