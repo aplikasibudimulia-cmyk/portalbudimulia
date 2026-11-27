@@ -28,6 +28,7 @@
     "docx-preview": "^0.4.1",
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
+    "framer-motion": "^11.18.2",
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "idb-keyval": "^6.3.0",

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
@@ -11,6 +12,8 @@ import { globalUploadManager, useUploadManager } from '../utils/uploadManager'
 import { useConfirm } from '../utils/useConfirm'
 import SmartPhotoUploadModal from '../components/SmartPhotoUploadModal'
 import { downloadWorkbook } from '../utils/fileDownloader'
+import AdminV55Navbar from '../components/admin/AdminV55Navbar'
+import AdminSpotlightSearch from '../components/admin/AdminSpotlightSearch'
 
 const lazySection = (loader) => {
   const Comp = lazyRetry(loader)
@@ -1960,6 +1963,19 @@ function Admin() {
   }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [showSpotlight, setShowSpotlight] = useState(false)
+
+  // Shortcut Spotlight Search (⌘K / Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setShowSpotlight(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // Sidebar helpers — sederhana & terbukti di semua platform
   const openSidebar = () => { setSidebarCollapsed(false); setSidebarOpen(true) }
@@ -2772,414 +2788,39 @@ function Admin() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 animate-fade-in print:h-auto print:overflow-visible print:bg-white print:block">
+    <div className="flex flex-col min-h-screen bg-slate-50/60 font-sans print:h-auto print:overflow-visible print:bg-white print:block">
       {ConfirmModalComponent}
 
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 md:hidden animate-fade-in print:hidden" 
-          onClick={closeSidebar} 
-        />
-      )}
+      {/* Modern V55 Top Navigation with Sliding Pills & Contextual Sub-Bar */}
+      <AdminV55Navbar
+        activeMenu={activeMenu}
+        onNavigate={handleMenuNavigation}
+        activeTa={activeTa}
+        session={session}
+        onLogout={handleLogout}
+        onToggleFullscreen={toggleAppFullScreen}
+        isNativeFullScreen={isNativeFullScreen}
+        currentFont={currentFont}
+        onCycleFont={cycleFont}
+        pendingPengajuanCount={pendingPengajuanCount}
+        menuTypes={menuTypes}
+        onOpenSearch={() => setShowSpotlight(true)}
+      />
 
-      <aside className={`fixed inset-y-0 left-0 z-40 h-full bg-white flex flex-col transition-all duration-300 ease-in-out md:static md:translate-x-0 md:z-auto md:h-auto md:m-4 md:rounded-xl border-none print:hidden ${
-        sidebarCollapsed ? 'w-72 md:w-24' : 'w-72 md:w-64'
-      } ${
-        sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[150%] md:translate-x-0'
-      }`}>
-        <div className={`p-4 sm:p-5 pt-[calc(env(safe-area-inset-top,0px)+1rem)] border-b border-slate-200 flex items-center shrink-0 bg-white transition-all justify-between md:${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className={`flex items-center cursor-pointer hover:opacity-80 transition-opacity gap-3 md:${sidebarCollapsed ? 'justify-center w-full' : 'gap-3'}`} title="Tampilkan/Sembunyikan Sidebar">
-            <img src="/logo.png?v=1784818000" alt="Logo" className={`${sidebarCollapsed ? 'md:w-14 md:h-14' : 'md:w-20 md:h-20'} w-12 h-12 object-contain shrink-0 drop-shadow-sm transition-all duration-300`} />
-            <div className={`animate-fade-in truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>
-              <h2 className="font-bold text-base text-slate-800 leading-tight truncate">eBudiMulia</h2>
-              <p className="text-[10px] font-medium text-slate-500 truncate">SMP Budi Mulia Jakarta</p>
-            </div>
-          </div>
-          <button 
-            type="button"
-            onClick={closeSidebar} 
-            className="md:hidden w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 active:scale-95 rounded-xl transition-all touch-manipulation cursor-pointer"
-            aria-label="Tutup Menu"
-          >
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {/* Beranda Utama */}
-          <button title="Beranda Utama" onClick={() => handleMenuNavigation('dashboard')}
-            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dashboard' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-            <IconDashboard /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Beranda Utama</span>}
-          </button>
-
-          {/* Group: MANAJEMEN PENGGUNA */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, akademikData: !prev.akademikData }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">MANAJEMEN PENGGUNA</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.akademikData ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.akademikData || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Manajemen Akun" onClick={() => handleMenuNavigation('manajemen_akun')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_akun' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <IconUsers /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Akun</span>}
-              </button>
-              <button title="Kartu Pelajar" onClick={() => handleMenuNavigation('kartu_pelajar')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kartu_pelajar' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="16" rx="3" />
-                  <circle cx="9" cy="10" r="2" />
-                  <line x1="15" y1="8" x2="19" y2="8" />
-                  <line x1="15" y1="12" x2="19" y2="12" />
-                  <line x1="7" y1="16" x2="17" y2="16" />
-                </svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Kartu Pelajar</span>}
-              </button>
-              <button title="Kartu Ujian" onClick={() => handleMenuNavigation('kartu_ujian')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kartu_ujian' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
-                </svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Kartu Ujian</span>}
-              </button>
-              <button title="Log Aktivitas" onClick={() => handleMenuNavigation('log_aktivitas')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'log_aktivitas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <IconActivity /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Log Aktivitas</span>}
-              </button>
-              <button title="Jadwal Pelajaran" onClick={() => handleMenuNavigation('jadwal_pelajaran')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'jadwal_pelajaran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Pelajaran</span>}
-              </button>
-              <button title="Tabungan Siswa" onClick={() => handleMenuNavigation('tabungan_siswa')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tabungan_siswa' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Tabungan Siswa</span>}
-              </button>
-              <button title="Tagihan & SPP Siswa" onClick={() => handleMenuNavigation('tagihan_spp')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tagihan_spp' ? 'bg-emerald-50 text-emerald-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Tagihan & SPP Siswa</span>}
-              </button>
-            </div>
-          )}
-
-          {/* Group: KEHADIRAN & PRESENSI */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, kehadiranPresensi: !prev.kehadiranPresensi }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">KEHADIRAN & PRESENSI</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.kehadiranPresensi ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.kehadiranPresensi || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Presensi QR Code" onClick={() => handleMenuNavigation('presensi_qr')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'presensi_qr' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 14v3M14 17h3"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Presensi QR Code</span>}
-              </button>
-              <button title="Laporan Keterlambatan" onClick={() => handleMenuNavigation('laporan_keterlambatan')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'laporan_keterlambatan' ? 'bg-amber-50 text-amber-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Laporan Keterlambatan</span>}
-              </button>
-              <button title="Denah Kehadiran" onClick={() => handleMenuNavigation('denah_kehadiran')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'denah_kehadiran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Denah Kehadiran</span>}
-              </button>
-            </div>
-          )}
-
-          {/* Group: INFORMASI & DOKUMEN */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, informasiDokumen: !prev.informasiDokumen }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">INFORMASI & DOKUMEN</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.informasiDokumen ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.informasiDokumen || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Berita Sekolah" onClick={() => handleMenuNavigation('berita_sekolah')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'berita_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="M2 15h10"/><path d="M2 18h10"/><path d="M2 12h10"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Berita Sekolah</span>}
-              </button>
-              <button title="Notifikasi Siswa" onClick={() => handleMenuNavigation('notifikasi')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'notifikasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi Siswa</span>}
-              </button>
-              <button title="Surat Sebaran (CKG & Mail Merge)" onClick={() => handleMenuNavigation('surat_sebaran')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'surat_sebaran' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Surat Sebaran</span>}
-              </button>
-              <button title="Notifikasi LINE" onClick={() => handleMenuNavigation('line_config')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'line_config' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <span className="w-5 h-5 shrink-0 flex items-center justify-center text-sm font-black text-emerald-600">🟢</span>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Notifikasi LINE</span>}
-              </button>
-              <button title="Kelola Pengumuman" onClick={() => handleMenuNavigation('kelola_pengumuman')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kelola_pengumuman' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Kelola Pengumuman</span>}
-              </button>
-              <button title="Kumpulan Dokumen" onClick={() => handleMenuNavigation('kumpulan_dokumen')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'kumpulan_dokumen' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <IconFile /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Kumpulan Dokumen</span>}
-              </button>
-              {menuTypes.map(t => (
-                <button key={t.id} onClick={() => handleMenuNavigation(t.id)}
-                  className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === t.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                  <IconFile />
-                  {!sidebarCollapsed && <span className="animate-fade-in truncate">{t.nama}</span>}
-                </button>
-              ))}
-              <button title="Dokumen Guru" onClick={() => handleMenuNavigation('dokumen_guru')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dokumen_guru' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <IconFile /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Dokumen Guru</span>}
-              </button>
-            </div>
-          )}
-
-          {/* Group: SISTEM POIN & KESISWAAN */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, sistemPoin: !prev.sistemPoin }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">SISTEM POIN & KESISWAAN</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.sistemPoin ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.sistemPoin || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Tata Tertib" onClick={() => handleMenuNavigation('tata_tertib')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tata_tertib' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Tata Tertib</span>}
-              </button>
-              <button title="Katalog Poin" onClick={() => handleMenuNavigation('katalog_poin')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'katalog_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Katalog Poin</span>}
-              </button>
-              <button title="Tahap Pembinaan" onClick={() => handleMenuNavigation('tahap_pembinaan')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'tahap_pembinaan' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Tahap Pembinaan</span>}
-              </button>
-              <button title="Catat Poin" onClick={() => handleMenuNavigation('catat_poin')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'catat_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Catat Poin</span>}
-              </button>
-              <button title="Pengaturan Poin" onClick={() => handleMenuNavigation('pengaturan_poin')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengaturan_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Poin</span>}
-              </button>
-              <button title="Rekap & Analitik Poin" onClick={() => handleMenuNavigation('rekap_poin')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'rekap_poin' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83" /><path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Rekap & Analitik Poin</span>}
-              </button>
-              <button title="Jadwal Konsultasi BK" onClick={() => handleMenuNavigation('konsultasi_bk')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konsultasi_bk' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal Konsultasi BK</span>}
-              </button>
-              <button title="Prestasi & Lomba Siswa" onClick={() => handleMenuNavigation('prestasi_siswa')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'prestasi_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Prestasi & Lomba</span>}
-              </button>
-              <button title="Pendamping Lomba" onClick={() => handleMenuNavigation('pendamping_lomba')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pendamping_lomba' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate font-semibold">Pendamping Lomba</span>}
-              </button>
-              {/* Pengajuan Poin Positif */}
-              <button title="Pengajuan Poin Positif" onClick={() => handleMenuNavigation('pengajuan_poin')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengajuan_poin' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5 relative' : 'gap-3 px-3 py-2.5'}`}>
-                <div className="relative shrink-0">
-                  <svg className="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-                  {pendingPengajuanCount > 0 && sidebarCollapsed && (
-                    <span className="absolute -top-1 -right-1 bg-emerald-500 text-white text-[8px] font-black px-1 py-0.5 rounded-full ring-1 ring-white min-w-[14px] text-center animate-pulse">
-                      {pendingPengajuanCount > 99 ? '99+' : pendingPengajuanCount}
-                    </span>
-                  )}
-                </div>
-                {!sidebarCollapsed && (
-                  <span className="animate-fade-in truncate font-semibold flex items-center gap-1.5 flex-1">
-                    Pengajuan Poin
-                    {pendingPengajuanCount > 0 && (
-                      <span className="ml-auto bg-emerald-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-                        {pendingPengajuanCount > 99 ? '99+' : pendingPengajuanCount}
-                      </span>
-                    )}
-                  </span>
-                )}
-              </button>
-            </div>
-          )}
-
-          {/* Group: PENILAIAN (CBT) */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, penilaianCbt: !prev.penilaianCbt }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">PENILAIAN & LEGER NILAI</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.penilaianCbt ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.penilaianCbt || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Leger Nilai (Kurikulum)" onClick={() => handleMenuNavigation('leger_nilai')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'leger_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                {!sidebarCollapsed && (
-                  <div className="flex items-center justify-between flex-1 truncate">
-                    <span className="animate-fade-in truncate font-semibold">Leger Nilai (Kurikulum)</span>
-                    <span className="ml-1 text-[9px] font-black bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Live</span>
-                  </div>
-                )}
-              </button>
-              <button title="Rapor Siswa" onClick={() => handleMenuNavigation('rapor_siswa')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'rapor_siswa' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-                {!sidebarCollapsed && (
-                  <div className="flex items-center justify-between flex-1 truncate">
-                    <span className="animate-fade-in truncate font-semibold">Rapor Siswa</span>
-                    <span className="ml-1 text-[9px] font-black bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Cetak</span>
-                  </div>
-                )}
-              </button>
-              <button title="Nilai Ekstrakurikuler" onClick={() => handleMenuNavigation('ekskul_nilai')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'ekskul_nilai' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                </svg>
-                {!sidebarCollapsed && (
-                  <div className="flex items-center justify-between flex-1 truncate">
-                    <span className="animate-fade-in truncate font-semibold">Nilai Ekstrakurikuler</span>
-                    <span className="ml-1 text-[9px] font-black bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Ekskul</span>
-                  </div>
-                )}
-              </button>
-              <button title="Bank Soal" onClick={() => handleMenuNavigation('cbt_bank_soal')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_bank_soal' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
-                </svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Bank Soal</span>}
-              </button>
-
-              <button title="Jadwal & Sesi Ujian" onClick={() => handleMenuNavigation('cbt_sesi')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_sesi' || activeMenu === 'cbt_pengawas' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Jadwal &amp; Sesi Ujian</span>}
-              </button>
-
-              <button title="Pengaturan CBT" onClick={() => handleMenuNavigation('cbt_config')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'cbt_config' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan CBT</span>}
-              </button>
-            </div>
-          )}
-
-          {/* Group: ANALITIK & LAPORAN */}
-          <div onClick={() => !sidebarCollapsed && setCollapsedGroups(prev => ({ ...prev, analitikLaporan: !prev.analitikLaporan }))}
-            className={`pt-4 pb-2 flex items-center justify-between ${!sidebarCollapsed ? 'cursor-pointer hover:opacity-80' : ''}`}>
-            {!sidebarCollapsed ? (
-              <><p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider select-none">ANALITIK & LAPORAN</p>
-              <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 mr-3 ${collapsedGroups.analitikLaporan ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg></>
-            ) : <div className="w-full border-t border-slate-100 my-2" />}
-          </div>
-          {(!collapsedGroups.analitikLaporan || sidebarCollapsed) && (
-            <div className="space-y-1 animate-fade-in">
-              <button title="Dashboard Eksekutif" onClick={() => handleMenuNavigation('dashboard_eksekutif')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'dashboard_eksekutif' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Dashboard Eksekutif</span>}
-              </button>
-              <button title="Program Sekolah" onClick={() => handleMenuNavigation('program_sekolah')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'program_sekolah' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Program Sekolah</span>}
-              </button>
-              <button title="Laporan Pengumuman Resmi" onClick={() => handleMenuNavigation('pengumuman_resmi_kepsek')}
-                className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'pengumuman_resmi_kepsek' ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-                <svg className="w-5 h-5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg>
-                {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengumuman Resmi</span>}
-              </button>
-            </div>
-          )}
-        </nav>
-
-        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-2">
-          
-          <button title="Manajemen Role & Akses" onClick={() => handleMenuNavigation('manajemen_role')}
-            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'manajemen_role' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-            <IconShield /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Manajemen Role</span>}
-          </button>
-
-          <button title="Pengaturan Sistem" onClick={() => handleMenuNavigation('konfigurasi')}
-            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all duration-300 ${activeMenu === 'konfigurasi' ? 'bg-indigo-50 text-indigo-700 shadow-sm scale-100' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:scale-[1.02]'} ${sidebarCollapsed ? 'justify-center aspect-square px-0 py-3.5' : 'gap-3 px-3 py-2.5'}`}>
-            <IconSettings /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Pengaturan Sistem</span>}
-          </button>
-          
-          <button onClick={cycleFont}
-            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
-            {!sidebarCollapsed && <span className="animate-fade-in truncate">Font: {currentFont === 'jakarta' ? 'Plus Jakarta' : currentFont === 'ubuntu' ? 'Ubuntu' : 'Bricolage'}</span>}
-          </button>
-          <button onClick={handleLogout}
-            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 transition-colors ${sidebarCollapsed ? "aspect-square px-0" : "gap-2 px-4 py-2.5"}`}>
-            <IconLogout /> {!sidebarCollapsed && <span className="animate-fade-in truncate">Keluar Sesi</span>}
-          </button>
-
-          {/* App Fullscreen Button */}
-          <button
-            onClick={toggleAppFullScreen}
-            title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh Aplikasi'}
-            className={`w-full flex items-center justify-center rounded-xl text-sm font-medium border transition-colors ${isNativeFullScreen ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'text-slate-600 bg-white hover:bg-slate-100 border-slate-200'} ${sidebarCollapsed ? 'aspect-square px-0' : 'gap-2 px-4 py-2.5'}`}
-          >
-            {isNativeFullScreen ? (
-              <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
-            ) : (
-              <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
-            )}
-            {!sidebarCollapsed && <span className="animate-fade-in truncate">{isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}</span>}
-          </button>
-        </div>
-      </aside>
+      {/* Spotlight Search Modal (⌘K) */}
+      <AdminSpotlightSearch
+        isOpen={showSpotlight}
+        onClose={() => setShowSpotlight(false)}
+        onSelectMenu={handleMenuNavigation}
+        menuTypes={menuTypes}
+      />
 
       {/* iOS Fullscreen Hint Modal */}
       {showIosHint && (
         <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowIosHint(false)}>
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-slide-up" onClick={e => e.stopPropagation()}>
             <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
-              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+              <svg className="w-6 h-6 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
               <div>
                 <p className="text-white font-bold text-sm">Cara Layar Penuh di iPhone/iPad</p>
                 <p className="text-indigo-200 text-xs mt-0.5">Safari tidak mendukung fullscreen langsung</p>
@@ -3209,39 +2850,17 @@ function Admin() {
         </div>
       )}
 
-      {/* Floating Fullscreen FAB – visible on mobile */}
-      <button
-        onClick={toggleAppFullScreen}
-        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
-        className={`fixed bottom-5 right-5 z-[100] md:hidden w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-300 border ${
-          isNativeFullScreen
-            ? 'bg-indigo-600 border-indigo-700 text-white'
-            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-        }`}
-      >
-        {isNativeFullScreen ? (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
-        ) : (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
-        )}
-      </button>
-
-      <main className="flex-1 min-w-0 overflow-y-auto bg-slate-50/50 print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
-        <header className="md:hidden px-4 pb-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] border-b border-slate-200 bg-white flex items-center gap-3 sticky top-0 z-20 print:hidden app-header-safe">
-          <button 
-            type="button"
-            onClick={openSidebar} 
-            className="w-11 h-11 flex items-center justify-center rounded-xl border border-slate-300 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-95 text-slate-800 shadow-xs touch-manipulation cursor-pointer shrink-0"
-            title="Buka Menu"
-            aria-label="Buka Menu"
-          >
-            <svg className="w-6 h-6 shrink-0 text-slate-800 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
-            </svg>
-          </button>
-          <p className="font-semibold text-slate-800 text-sm">Panel Admin</p>
-        </header>
-        <div className="p-4 md:p-6 lg:p-8 w-full print:p-0 print:m-0">
+      {/* Main Content Area with Smooth Entry Motion */}
+      <main className="flex-1 w-full max-w-[1720px] mx-auto overflow-y-auto print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
+        <div className="p-3 sm:p-5 lg:p-8 w-full print:p-0 print:m-0">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeMenu}
+              initial={{ opacity: 0, y: 12, scale: 0.995 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.995 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            >
           {activeMenu === 'dashboard' && (
             <AdminDashboardSection onNavigate={handleMenuNavigation} />
           )}
@@ -4044,6 +3663,8 @@ function Admin() {
               />
             </div>
           )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </main>
 
