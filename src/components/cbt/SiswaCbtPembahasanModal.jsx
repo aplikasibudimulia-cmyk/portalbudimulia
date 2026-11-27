@@ -171,7 +171,7 @@ export default function SiswaCbtPembahasanModal({
   const isMenjodohkan = currentItem?.tipe_soal === 'menjodohkan'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 bg-slate-950/70 backdrop-blur-xs">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-0 md:p-6 bg-slate-950/70 backdrop-blur-xs">
       <div className="bg-white md:rounded-3xl w-full max-w-5xl h-full md:h-[92vh] flex flex-col shadow-2xl border-0 md:border border-slate-100 overflow-hidden animate-scale-up">
         
         {/* HEADER MODAL PEMBAHASAN */}
@@ -548,7 +548,7 @@ export default function SiswaCbtPembahasanModal({
 
         {/* MOBILE BOTTOM SHEET MODAL (PALET SEMUA NOMOR UNTUK HP) */}
         {showMobileGridModal && (
-          <div className="fixed inset-0 z-60 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs md:hidden animate-fade-in">
+          <div className="fixed inset-0 z-[210] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs md:hidden animate-fade-in">
             <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up">
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                 <div>

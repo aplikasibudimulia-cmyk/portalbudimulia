@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
@@ -266,6 +267,10 @@ function DashboardOrangTua() {
 
   // Detect iOS (Safari doesn't support requestFullscreen)
   const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+
+  // Deteksi apakah sedang berjalan di aplikasi native iOS/Android (Capacitor) atau Standalone PWA
+  const isNativeApp = Capacitor.isNativePlatform() || 
+    (typeof window !== 'undefined' && (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true))
 
   const toggleAppFullScreen = () => {
     if (isIos) {
@@ -2389,18 +2394,20 @@ function DashboardOrangTua() {
         </div>
       )}
 
-      {/* Floating Fullscreen FAB – always visible on mobile */}
-      <button
-        onClick={toggleAppFullScreen}
-        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
-        className="fixed bottom-6 right-6 z-[150] w-12 h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group border border-indigo-400"
-      >
-        {isNativeFullScreen ? (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0l5-5M4 4v5M15 9l5-5m0 0l-5-5m5 5v5M9 15l-5 5m0 0l5 5m-5-5v-5M15 15l5 5m0 0l-5 5m5-5v-5"/></svg>
-        ) : (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
-        )}
-      </button>
+      {/* Floating Fullscreen FAB – hanya muncul di browser web biasa, disembunyikan di aplikasi native & standalone PWA */}
+      {!isNativeApp && (
+        <button
+          onClick={toggleAppFullScreen}
+          title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+          className="fixed bottom-6 right-6 z-[150] w-12 h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group border border-indigo-400"
+        >
+          {isNativeFullScreen ? (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0l5-5M4 4v5M15 9l5-5m0 0l-5-5m5 5v5M9 15l-5 5m0 0l5 5m-5-5v-5M15 15l5 5m0 0l-5 5m5-5v-5"/></svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+          )}
+        </button>
+      )}
 
       {/* iOS Fullscreen Hint Modal */}
       {showIosFsHint && (

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { lazyRetry } from '../utils/lazyRetry'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
@@ -336,6 +337,10 @@ function Dashboard() {
   // Detect iOS (Safari doesn't support requestFullscreen)
   const isIOS = /ipad|iphone|ipod/i.test(navigator.userAgent) || 
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+  // Deteksi apakah sedang berjalan di aplikasi native iOS/Android (Capacitor) atau Standalone PWA
+  const isNativeApp = Capacitor.isNativePlatform() || 
+    (typeof window !== 'undefined' && (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true))
 
   const toggleAppFullScreen = () => {
     if (isIOS) {
@@ -1972,22 +1977,24 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Floating Fullscreen FAB – always visible on mobile */}
-      <button
-        onClick={toggleAppFullScreen}
-        title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
-        className={`fixed bottom-5 right-5 z-[100] md:hidden w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-300 border ${
-          isNativeFullScreen
-            ? 'bg-indigo-600 border-indigo-700 text-white'
-            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-        }`}
-      >
-        {isNativeFullScreen ? (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
-        ) : (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
-        )}
-      </button>
+      {/* Floating Fullscreen FAB – hanya muncul di browser web biasa, disembunyikan di aplikasi iOS/Android native & standalone PWA */}
+      {!isNativeApp && (
+        <button
+          onClick={toggleAppFullScreen}
+          title={isNativeFullScreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+          className={`fixed bottom-5 right-5 z-[100] md:hidden w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-300 border ${
+            isNativeFullScreen
+              ? 'bg-indigo-600 border-indigo-700 text-white'
+              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          {isNativeFullScreen ? (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v4m0-4h4m12 0l-5 5m5-5v4m0-4h-4M4 20l5-5m-5 5v-4m0 4h4m12 0l-5-5m5 5v-4m0 4h-4"/></svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5"/></svg>
+          )}
+        </button>
+      )}
       <div className="flex-1 flex flex-col min-h-0 min-w-0 max-w-full overflow-x-hidden bg-slate-50/50 dashboard-content-area">
         
         {/* Top Header Navbar (Mirip Desain Guru) */}
