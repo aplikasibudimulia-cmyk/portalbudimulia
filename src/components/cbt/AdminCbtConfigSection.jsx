@@ -20,6 +20,7 @@ export default function AdminCbtConfigSection() {
   const [frozenCount, setFrozenCount] = useState(0)
   const [filterRole, setFilterRole] = useState('all')
   const [searchKeyword, setSearchKeyword] = useState('')
+  const [selectedIds, setSelectedIds] = useState(new Set())
   
   // Modal Tambah Tester
   const [showAddModal, setShowAddModal] = useState(false)
@@ -256,6 +257,32 @@ export default function AdminCbtConfigSection() {
     }
   }
 
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    const visibleIds = filteredWhitelist.map(u => u.id)
+    const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        visibleIds.forEach(id => next.delete(id))
+      } else {
+        visibleIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
   const handleDeleteWhitelist = async (id) => {
     const confirmed = await requestConfirm({
       title: 'Hapus Akun Penguji?',
@@ -274,9 +301,82 @@ export default function AdminCbtConfigSection() {
 
       if (error) throw error
       setWhitelistUsers(prev => prev.filter(u => u.id !== id))
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       showToast('Akun penguji berhasil dihapus dari whitelist.', 'success')
     } catch (err) {
       showToast('Gagal menghapus penguji: ' + err.message, 'error')
+    }
+  }
+
+  const handleDeleteSelected = async () => {
+    const count = selectedIds.size
+    if (count === 0) return
+
+    const confirmed = await requestConfirm({
+      title: `Hapus ${count} Akun Penguji?`,
+      message: `Apakah Anda yakin ingin menghapus ${count} akun penguji terpilih dari daftar whitelist CBT?`,
+      confirmLabel: `Ya, Hapus (${count})`,
+      confirmColor: 'red',
+      icon: 'warning'
+    })
+    if (!confirmed) return
+
+    setSaving(true)
+    try {
+      const ids = Array.from(selectedIds)
+      const chunkSize = 100
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize)
+        const { error } = await supabase
+          .from('cbt_whitelist_user')
+          .delete()
+          .in('id', chunk)
+        if (error) throw error
+      }
+
+      setWhitelistUsers(prev => prev.filter(u => !selectedIds.has(u.id)))
+      setSelectedIds(new Set())
+      showToast(`Berhasil menghapus ${count} akun penguji dari whitelist.`, 'success')
+    } catch (err) {
+      showToast('Gagal menghapus akun terpilih: ' + err.message, 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteAllWhitelist = async () => {
+    const total = whitelistUsers.length
+    if (total === 0) return
+
+    const confirmed = await requestConfirm({
+      title: 'Hapus SEMUA Penguji CBT?',
+      message: `⚠️ PERINGATAN: Seluruh ${total} akun penguji akan dihapus dari daftar whitelist CBT.\n\nSetelah ini, hanya akun dengan saklar publik aktif atau kelas yang memiliki jadwal ujian yang dapat membuka menu CBT. Lanjutkan?`,
+      confirmLabel: `Hapus Semua (${total})`,
+      confirmColor: 'red',
+      icon: 'warning'
+    })
+    if (!confirmed) return
+
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('cbt_whitelist_user')
+        .delete()
+        .neq('id', 0)
+
+      if (error) throw error
+
+      setWhitelistUsers([])
+      setSelectedIds(new Set())
+      showToast('Seluruh daftar penguji CBT berhasil dikosongkan.', 'success')
+    } catch (err) {
+      showToast('Gagal mengosongkan penguji: ' + err.message, 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -552,21 +652,50 @@ export default function AdminCbtConfigSection() {
                   Akun berikut dapat melihat dan mencoba menu CBT meskipun mode publik masih ditutup.
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedUser(null)
-                  setSearchUserQuery('')
-                  setSearchResults([])
-                  setInputKeterangan('')
-                  setShowAddModal(true)
-                }}
-                className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 self-start sm:self-auto"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                <span>Tambah Penguji</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={saving}
+                    className="py-2 px-3.5 bg-rose-600 hover:bg-rose-700 active:scale-98 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Hapus Terpilih ({selectedIds.size})</span>
+                  </button>
+                )}
+
+                {whitelistUsers.length > 0 && (
+                  <button
+                    onClick={handleDeleteAllWhitelist}
+                    disabled={saving}
+                    className="py-2 px-3.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 active:scale-98 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    title="Kosongkan seluruh daftar akun penguji"
+                  >
+                    <svg className="w-3.5 h-3.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Hapus Semua</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setSelectedUser(null)
+                    setSearchUserQuery('')
+                    setSearchResults([])
+                    setInputKeterangan('')
+                    setShowAddModal(true)
+                  }}
+                  className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span>Tambah Penguji</span>
+                </button>
+              </div>
             </div>
 
             {/* Filter & Search Bar */}
@@ -609,7 +738,23 @@ export default function AdminCbtConfigSection() {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold sticky top-0 z-10">
                     <tr>
-                      <th className="py-2.5 px-4">ROLE</th>
+                      <th className="py-2.5 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={filteredWhitelist.length > 0 && filteredWhitelist.every(u => selectedIds.has(u.id))}
+                          ref={el => {
+                            if (el) {
+                              const isAll = filteredWhitelist.length > 0 && filteredWhitelist.every(u => selectedIds.has(u.id))
+                              const isSome = filteredWhitelist.some(u => selectedIds.has(u.id))
+                              el.indeterminate = isSome && !isAll
+                            }
+                          }}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                          title="Pilih Semua yang Ditampilkan"
+                        />
+                      </th>
+                      <th className="py-2.5 px-3">ROLE</th>
                       <th className="py-2.5 px-4">IDENTITAS / NISN</th>
                       <th className="py-2.5 px-4">KETERANGAN</th>
                       <th className="py-2.5 px-4 text-right">AKSI</th>
@@ -618,14 +763,25 @@ export default function AdminCbtConfigSection() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredWhitelist.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="py-8 text-center text-slate-400">
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
                           Belum ada akun penguji yang didaftarkan.
                         </td>
                       </tr>
                     ) : (
                       filteredWhitelist.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-3 px-4">
+                        <tr 
+                          key={u.id} 
+                          className={`hover:bg-slate-50/80 transition-colors ${selectedIds.has(u.id) ? 'bg-indigo-50/50' : ''}`}
+                        >
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(u.id)}
+                              onChange={() => toggleSelect(u.id)}
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                            />
+                          </td>
+                          <td className="py-3 px-3">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
                               u.role === 'guru' 
                                 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' 

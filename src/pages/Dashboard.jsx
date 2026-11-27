@@ -350,10 +350,25 @@ function Dashboard() {
   }
 
   useEffect(() => {
-    if (!studentData?.nisn) return
+    const rawNisn = String(studentData?.nisn || studentData?.id || '').trim()
+    if (!rawNisn) return
     const checkCbtAccess = async () => {
       try {
-        // 1. Cek Mode Rilis Publik di cbt_pengaturan
+        const cleanKelas = String(studentData?.kelas || '').trim()
+
+        // 1. Coba verifikasi lewat RPC (Security Definer) jika fungsi database sudah dibuat
+        try {
+          const { data: rpcAllowed, error: rpcErr } = await supabase.rpc('fn_is_cbt_accessible_for_student', {
+            p_nisn: rawNisn,
+            p_kelas: cleanKelas
+          })
+          if (!rpcErr && typeof rpcAllowed === 'boolean') {
+            setCanAccessCbt(rpcAllowed)
+            return
+          }
+        } catch (_) {}
+
+        // 2. Cek Mode Rilis Publik di cbt_pengaturan
         const { data: config } = await supabase
           .from('cbt_pengaturan')
           .select('is_cbt_active')
@@ -365,11 +380,11 @@ function Dashboard() {
           return
         }
 
-        // 2. Cek Whitelist Siswa Penguji
+        // 3. Cek Whitelist Siswa Penguji
         const { data: whitelist } = await supabase
           .from('cbt_whitelist_user')
           .select('id')
-          .eq('nisn', studentData.nisn)
+          .eq('nisn', rawNisn)
           .eq('role', 'siswa')
           .maybeSingle()
 
@@ -378,9 +393,9 @@ function Dashboard() {
           return
         }
 
-        // 3. Cek apakah ada Sesi Ujian aktif / mendatang untuk kelas siswa ini
-        if (studentData.kelas) {
-          const rawK = String(studentData.kelas).trim()
+        // 4. Cek apakah ada Sesi Ujian aktif / mendatang untuk kelas siswa ini
+        if (cleanKelas) {
+          const rawK = cleanKelas
           const cleanK = rawK.replace(/^kelas\s*/i, '').trim()
           const checkClasses = Array.from(new Set([rawK, cleanK, `Kelas ${cleanK}`]))
           const orFilter = checkClasses.map(c => `kelas_ids.cs.{${c}}`).join(',')
@@ -402,7 +417,7 @@ function Dashboard() {
       }
     }
     checkCbtAccess()
-  }, [studentData?.nisn, studentData?.kelas])
+  }, [studentData?.nisn, studentData?.id, studentData?.kelas])
 
   useEffect(() => {
     const checkMenuParam = () => {
