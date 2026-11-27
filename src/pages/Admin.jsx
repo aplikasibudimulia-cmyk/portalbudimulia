@@ -14,6 +14,7 @@ import SmartPhotoUploadModal from '../components/SmartPhotoUploadModal'
 import { downloadWorkbook } from '../utils/fileDownloader'
 import AdminV55Navbar from '../components/admin/AdminV55Navbar'
 import AdminSpotlightSearch from '../components/admin/AdminSpotlightSearch'
+import { getMenuFlatIndex } from '../components/admin/adminMenuConfig'
 
 const lazySection = (loader) => {
   const Comp = lazyRetry(loader)
@@ -1914,6 +1915,17 @@ function Admin() {
     setSearchParams({ menu: resolved })
   }
   const [authLoading, setAuthLoading] = useState(true)
+  const [slideDirection, setSlideDirection] = useState(1)
+  const prevMenuRef = useRef(activeMenu)
+
+  useEffect(() => {
+    if (activeMenu !== prevMenuRef.current) {
+      const oldIdx = getMenuFlatIndex(prevMenuRef.current)
+      const newIdx = getMenuFlatIndex(activeMenu)
+      setSlideDirection(newIdx >= oldIdx ? 1 : -1)
+      prevMenuRef.current = activeMenu
+    }
+  }, [activeMenu])
   const [menuTypes, setMenuTypes] = useState([])
   const [students, setStudents] = useState([])
   const [fotos, setFotos] = useState([])
@@ -2850,16 +2862,44 @@ function Admin() {
         </div>
       )}
 
-      {/* Main Content Area with Smooth Entry Motion */}
+      {/* Main Content Area with Directional Smooth Horizontal Motion */}
       <main className="flex-1 w-full max-w-[1720px] mx-auto overflow-y-auto print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
         <div className="p-3 sm:p-5 lg:p-8 w-full print:p-0 print:m-0">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" custom={slideDirection}>
             <motion.div
               key={activeMenu}
-              initial={{ opacity: 0, y: 12, scale: 0.995 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.995 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              custom={slideDirection}
+              variants={{
+                enter: (direction) => ({
+                  x: direction > 0 ? 36 : -36,
+                  opacity: 0,
+                  filter: 'blur(3px)'
+                }),
+                center: {
+                  x: 0,
+                  opacity: 1,
+                  filter: 'blur(0px)',
+                  transition: {
+                    x: { type: 'spring', stiffness: 360, damping: 32 },
+                    opacity: { duration: 0.18 },
+                    filter: { duration: 0.18 }
+                  }
+                },
+                exit: (direction) => ({
+                  x: direction > 0 ? -36 : 36,
+                  opacity: 0,
+                  filter: 'blur(3px)',
+                  transition: {
+                    x: { type: 'spring', stiffness: 360, damping: 32 },
+                    opacity: { duration: 0.14 },
+                    filter: { duration: 0.14 }
+                  }
+                })
+              }}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              className="w-full"
             >
           {activeMenu === 'dashboard' && (
             <AdminDashboardSection onNavigate={handleMenuNavigation} />

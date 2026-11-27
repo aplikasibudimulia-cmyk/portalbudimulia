@@ -112,6 +112,20 @@ export function getAdminCategories() {
   return Array.isArray(ADMIN_CATEGORIES) ? ADMIN_CATEGORIES : []
 }
 
+// Hitung indeks urutan flat menu untuk menentukan arah geser animasi (kiri ke kanan / kanan ke kiri)
+export function getMenuFlatIndex(menuId) {
+  if (!menuId || menuId === 'dashboard') return 0
+  const cats = getAdminCategories()
+  let index = 0
+  for (const cat of cats) {
+    for (const item of (cat?.items || [])) {
+      if (item.id === menuId) return index
+      index++
+    }
+  }
+  return 0
+}
+
 export function getCategoryByMenuId(menuId) {
   if (!menuId || menuId === 'dashboard') return 'overview'
   const cats = getAdminCategories()
