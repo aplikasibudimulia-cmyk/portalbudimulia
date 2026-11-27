@@ -2862,45 +2862,16 @@ function Admin() {
         </div>
       )}
 
-      {/* Main Content Area with Directional Smooth Horizontal Motion */}
+      {/* Main Content Area with Instant Smooth Directional Motion */}
       <main className="flex-1 w-full max-w-[1720px] mx-auto overflow-y-auto print:overflow-visible print:p-0 print:m-0 print:bg-white print:block">
         <div className="p-3 sm:p-5 lg:p-8 w-full print:p-0 print:m-0">
-          <AnimatePresence mode="wait" custom={slideDirection}>
-            <motion.div
-              key={activeMenu}
-              custom={slideDirection}
-              variants={{
-                enter: (direction) => ({
-                  x: direction > 0 ? 36 : -36,
-                  opacity: 0,
-                  filter: 'blur(3px)'
-                }),
-                center: {
-                  x: 0,
-                  opacity: 1,
-                  filter: 'blur(0px)',
-                  transition: {
-                    x: { type: 'spring', stiffness: 360, damping: 32 },
-                    opacity: { duration: 0.18 },
-                    filter: { duration: 0.18 }
-                  }
-                },
-                exit: (direction) => ({
-                  x: direction > 0 ? -36 : 36,
-                  opacity: 0,
-                  filter: 'blur(3px)',
-                  transition: {
-                    x: { type: 'spring', stiffness: 360, damping: 32 },
-                    opacity: { duration: 0.14 },
-                    filter: { duration: 0.14 }
-                  }
-                })
-              }}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              className="w-full"
-            >
+          <motion.div
+            key={activeMenu}
+            initial={{ opacity: 0, x: slideDirection > 0 ? 24 : -24 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="w-full"
+          >
           {activeMenu === 'dashboard' && (
             <AdminDashboardSection onNavigate={handleMenuNavigation} />
           )}
@@ -3704,7 +3675,6 @@ function Admin() {
             </div>
           )}
             </motion.div>
-          </AnimatePresence>
         </div>
       </main>
 
